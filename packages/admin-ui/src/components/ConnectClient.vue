@@ -53,6 +53,7 @@ const url = computed(() => knownUrl.value ?? `https://<your-mcp-host>/${props.in
 const auth = computed(() => props.instance.effectiveAuthMode ?? 'oauth');
 const oauth = computed(() => auth.value === 'oauth' || auth.value === 'bearer+oauth');
 const bearer = computed(() => auth.value === 'bearer');
+const external = computed(() => auth.value === 'external');
 
 const CF_HEADERS = ['CF-Access-Client-Id: <client-id>', 'CF-Access-Client-Secret: <client-secret>'];
 const headers = computed(() => (bearer.value ? ['Authorization: Bearer <token>'] : CF_HEADERS));
@@ -186,12 +187,17 @@ async function copy(text: string) {
 
     <!-- Cloudflare MCP portal -->
     <template v-else>
-      <p v-if="!oauth" class="alert warn" data-warn="auth">
-        Cloudflare MCP portals sign in to servers with OAuth. Switch this endpoint to <strong>OAuth</strong> or
-        <strong>Bearer or OAuth</strong> on its
+      <p v-if="bearer" class="alert warn" data-warn="auth">
+        Cloudflare MCP portals sign in to servers with OAuth. Switch this endpoint to <strong>OAuth</strong>,
+        <strong>Bearer or OAuth</strong> or <strong>External (proxy)</strong> with Cloudflare Access on its
         <RouterLink :to="`/endpoints/${slug}/settings`">Settings</RouterLink> tab first.
       </p>
-      <p v-if="dynamicRegistration === false" class="alert warn" data-warn="dcr">
+      <p v-if="external" class="small muted note" data-note="cf-access">
+        This endpoint leaves sign-in to Cloudflare Access. Set up the Access application with
+        <strong>Managed OAuth</strong> first, as described under
+        <RouterLink to="/settings/mcp">Settings → MCP access</RouterLink>; the portal then signs in through Access.
+      </p>
+      <p v-if="!external && dynamicRegistration === false" class="alert warn" data-warn="dcr">
         The portal's <strong>Automatic</strong> OAuth option registers itself with Synoikia. Turn on
         <strong>Let MCP clients register themselves</strong> under
         <RouterLink to="/settings/mcp">Settings → MCP</RouterLink>.
@@ -210,7 +216,11 @@ async function copy(text: string) {
           <strong>Save and connect server</strong>.
         </li>
         <li>
-          Sign in to Synoikia when asked and choose <strong>Read &amp; write</strong> if the portal should reach writes.
+          <template v-if="external">Sign in with Cloudflare Access when asked.</template>
+          <template v-else>
+            Sign in to Synoikia when asked and choose <strong>Read &amp; write</strong> if the portal should reach
+            writes.
+          </template>
           This sign-in becomes the server's admin credential.
         </li>
         <li>

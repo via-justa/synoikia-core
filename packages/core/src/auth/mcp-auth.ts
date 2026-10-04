@@ -99,7 +99,15 @@ export async function checkCloudflareAccess(
   const issuer = `https://${domain}`;
   try {
     const { payload } = await jwtVerify(assertion, jwks, { issuer, audience: aud });
-    return { ok: true, who: typeof payload.email === 'string' ? payload.email : (payload.sub ?? 'cf-access') };
+    // A service token's assertion has an empty `sub` and names the token's client ID in `common_name`.
+    // An email must contain `@`, so it can't pose as a service token; one that names nobody is refused.
+    const named = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+    const email = named(payload.email);
+    const service = named(payload.common_name);
+    const who = (email?.includes('@') ? email : undefined) ?? (service && `service:${service}`) ?? named(payload.sub);
+    return who
+      ? { ok: true, who }
+      : { ok: false, reason: 'valid assertion that names nobody (no email, common_name or sub)' };
   } catch (err) {
     const why = err instanceof Error ? err.message : String(err);
     const claimed = claimedIssuer(assertion);

@@ -32,6 +32,22 @@ describe('verifyCloudflareAccess', () => {
     );
   });
 
+  it('names a service token by its client ID, since its subject is empty', async () => {
+    const { keys, sign } = await team();
+    await expect(
+      verifyCloudflareAccess(TEAM, AUD, await sign({ sub: '', common_name: 'abc.access' }), keys),
+    ).resolves.toBe('service:abc.access');
+  });
+
+  it('refuses an assertion that names nobody, and an email that could pose as a service token', async () => {
+    const { keys, sign } = await team();
+    for (const claims of [{}, { sub: '' }, { email: '' }])
+      await expect(verifyCloudflareAccess(TEAM, AUD, await sign(claims), keys)).resolves.toBeNull();
+    await expect(
+      verifyCloudflareAccess(TEAM, AUD, await sign({ email: 'service:abc.access', sub: 'u-1' }), keys),
+    ).resolves.toBe('u-1');
+  });
+
   it('rejects a wrong audience, a wrong issuer, an expired token, another key and garbage', async () => {
     const { keys, sign } = await team();
     const other = await team();
