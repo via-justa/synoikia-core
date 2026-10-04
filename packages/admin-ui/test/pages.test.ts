@@ -540,6 +540,15 @@ describe('Connect a client', () => {
     expect(c.text()).toContain('Add MCP server');
   });
 
+  it('points an External endpoint’s Cloudflare portal setup at Cloudflare Access, without OAuth warnings', async () => {
+    api('external', { dcr: false });
+    const { card: c } = await card();
+    await c.get('select').setValue('cloudflare');
+    expect(c.findAll('.alert')).toHaveLength(0);
+    expect(c.find('[data-note="cf-access"]').text()).toContain('Managed OAuth');
+    expect(c.text()).toContain('Sign in with Cloudflare Access');
+  });
+
   it('shows a placeholder host, never the portal’s own address, when PUBLIC_MCP_URL is unset', async () => {
     api('oauth', { publicMcpUrl: null });
     const { card: c } = await card();
@@ -621,5 +630,35 @@ describe('Shell and settings', () => {
     expect(about.text()).toContain('https://mcp.example.com/<slug>');
     expect(about.text()).toContain('search');
     expect(about.text()).toContain('execute');
+  });
+
+  it('explains OAuth and Cloudflare Access setup on MCP access, and warns when OAuth is off', async () => {
+    const mcp = {
+      defaultAuthMode: 'oauth',
+      allowDynamicRegistration: true,
+      accessTokenTtlMinutes: 60,
+      refreshTokenTtlDays: 30,
+      cfAccess: { teamDomain: '', aud: '' },
+      trustedIdentityHeader: '',
+    };
+    fakeApi({
+      'GET /api/session': signedIn,
+      'GET /api/overview': overview,
+      'GET /api/settings': { mcp, publicMcpUrl: null },
+    });
+    const { wrapper } = await mountAt('/settings/mcp');
+    const headings = wrapper.findAll('section.card h2').map((h) => h.text());
+    expect(headings).toContain('Cloudflare Access');
+    expect(headings).toContain('Other reverse proxies');
+    expect(headings).not.toContain('External mode');
+    const oauthCard = wrapper.findAll('section.card').find((s) => s.get('h2').text() === 'OAuth')!;
+    expect(oauthCard.text()).toContain('Applies to endpoints set to OAuth and to endpoints set to Bearer or OAuth.');
+    expect(oauthCard.find('[data-explain="oauth"]').text()).toContain('no provider, client ID or secret');
+    expect(oauthCard.find('[data-warn="oauth-public-url"]').exists()).toBe(true);
+    const steps = wrapper.get('[data-explain="cf-access"]').text();
+    expect(steps).toContain('Managed OAuth');
+    expect(steps).toContain('https://claude.ai/api/mcp/auth_callback');
+    expect(steps).toContain('https://<portal-hostname>/servers-callback');
+    expect(steps).toContain('Optional');
   });
 });
