@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { AppContext } from '../app.js';
-import { errorResponse } from './common.js';
+import { clientIp, errorResponse } from './common.js';
 import { McpEndpoints } from './mcp/endpoint.js';
 import { registerApprovalRoutes } from './mcp/approval-routes.js';
 import { registerOAuthRoutes } from './mcp/oauth-routes.js';
@@ -18,6 +18,20 @@ const jsonRpcError = (code: number, message: string) => ({
 export function createMcpApp(ctx: AppContext): Hono {
   const app = new Hono();
   app.onError(errorResponse);
+  // LOG_LEVEL=debug: one line per request, so a client's discovery and sign-in steps can be followed.
+  // The path only: query strings carry OAuth state and PKCE values.
+  app.use('*', async (c, next) => {
+    const started = Date.now();
+    await next();
+    ctx.log.debug('MCP listener request', {
+      method: c.req.method,
+      path: c.req.path,
+      status: c.res.status,
+      ms: Date.now() - started,
+      ip: clientIp(c, ctx.config.TRUST_PROXY),
+      ua: c.req.header('user-agent'),
+    });
+  });
   const endpoints = new McpEndpoints(ctx, ctx.oauth);
   ctx.onStop(() => endpoints.closeAll());
 

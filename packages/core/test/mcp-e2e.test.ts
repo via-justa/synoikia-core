@@ -13,6 +13,8 @@ import { auditLog, operations } from '../src/db/schema.js';
 import { hostAllowed, MAX_SESSIONS_PER_PRINCIPAL } from '../src/http/mcp/endpoint.js';
 import { createAdminApp } from '../src/http/admin-app.js';
 import { createMcpApp } from '../src/http/mcp-app.js';
+import { createLogger } from '../src/log.js';
+import type { Logger, LogLevel } from '../src/log.js';
 import { startServers } from '../src/server.js';
 import type { RunningServers } from '../src/server.js';
 import { updateSettings } from '../src/settings.js';
@@ -880,5 +882,96 @@ describe('OAuth 2.1 authorization server', () => {
       'registration_endpoint',
     );
     updateSettings(ctx.db, 'mcp', { allowDynamicRegistration: true });
+  });
+});
+
+describe('server log for refused connections', () => {
+  const capture = () => {
+    const lines: { level: LogLevel; line: string }[] = [];
+    const saved = ctx.log;
+    (ctx as { log: Logger }).log = createLogger('debug', (line, level) => lines.push({ level, line }));
+    return { lines, restore: () => ((ctx as { log: Logger }).log = saved) };
+  };
+  const initialize = (slug: string, headers: Record<string, string> = {}) =>
+    fetch(`${base}/${slug}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'log', version: '1' } },
+      }),
+    });
+  // Shaped like a token another issuer (a proxy's OAuth server) gave the client.
+  const foreignJwt = `${Buffer.from('{"alg":"RS256"}').toString('base64url')}.${Buffer.from(
+    '{"iss":"https://home.cloudflareaccess.com","aud":"x"}',
+  ).toString('base64url')}.c2ln`;
+
+  it('explains a token the endpoint cannot use, without logging its value', async () => {
+    const { lines, restore } = capture();
+    try {
+      const res = await initialize('echo', {
+        authorization: `Bearer ${foreignJwt}`,
+        'cf-access-jwt-assertion': foreignJwt,
+      });
+      expect(res.status).toBe(401);
+      const warn = lines.find((l) => l.level === 'warn')!;
+      expect(warn.line).toContain('MCP request refused');
+      expect(warn.line).toContain('a JWT from another issuer (iss=https://home.cloudflareaccess.com)');
+      expect(warn.line).toContain('set the endpoint to External auth');
+      expect(warn.line).toContain('mode=bearer+oauth');
+      expect(lines.map((l) => l.line).join('\n')).not.toContain(foreignJwt);
+    } finally {
+      restore();
+    }
+  });
+
+  it('names the mismatched Cloudflare Access claim in External mode', async () => {
+    updateSettings(ctx.db, 'mcp', { cfAccess: { teamDomain: 'home.cloudflareaccess.com', aud: 'right-aud' } });
+    await ctx.instances.update(otherInstanceId, { authMode: 'external' });
+    const { lines, restore } = capture();
+    try {
+      expect((await initialize('echo-two', { 'cf-access-jwt-assertion': 'not-a-jwt' })).status).toBe(401);
+      expect((await initialize('echo-two')).status).toBe(401);
+      const [bad, missing] = lines.filter((l) => l.line.includes('MCP request refused'));
+      expect(bad).toMatchObject({ level: 'warn' });
+      expect(bad!.line).toContain('Cloudflare Access assertion rejected');
+      expect(bad!.line).toContain('not a JWT');
+      // No credentials at all: a probe, kept out of the default log.
+      expect(missing).toMatchObject({ level: 'debug' });
+      expect(missing!.line).toContain('no Cf-Access-Jwt-Assertion header');
+    } finally {
+      restore();
+      updateSettings(ctx.db, 'mcp', { cfAccess: { teamDomain: '', aud: '' } });
+      await ctx.instances.update(otherInstanceId, { authMode: null });
+    }
+  });
+
+  it('logs a refused Host, an opened session and transport errors', async () => {
+    const { token } = ctx.tokens.create({ name: 'log', scope: [instanceId] });
+    const { lines, restore } = capture();
+    try {
+      // fetch won't set Host; a foreign Origin goes through the same check.
+      const origin = await fetch(`${base}/echo`, { method: 'POST', headers: { origin: 'https://evil.example' } });
+      expect(origin.status).toBe(403);
+      expect((await initialize('echo', { authorization: `Bearer ${token}` })).status).toBe(200);
+      const notInit = await fetch(`${base}/echo`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+      });
+      expect(notInit.status).toBeGreaterThanOrEqual(400);
+      const text = lines.map((l) => `${l.level} ${l.line}`).join('\n');
+      expect(text).toMatch(
+        /warn WARN MCP request refused: Host or Origin not allowed.* origin=https:\/\/evil\.example/,
+      );
+      expect(text).toMatch(/info INFO MCP session opened slug=echo client=token:log/);
+      expect(text).toMatch(/warn WARN MCP request rejected by the transport method=POST slug=echo status=4\d\d error=/);
+      expect(text).toContain('debug DEBUG MCP listener request method=POST path=/echo');
+      expect(text).not.toContain(token);
+    } finally {
+      restore();
+    }
   });
 });

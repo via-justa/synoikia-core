@@ -152,6 +152,10 @@ Pulls the published image from `ghcr.io/via-justa/synoikia` — `latest` tracks 
 
 On first start, open the admin portal and create the first account (or set `ADMIN_BOOTSTRAP_USERNAME`/`ADMIN_BOOTSTRAP_PASSWORD` once). Then install and enable plugins, create an endpoint, raise the access groups you want above Read, and connect your MCP client to `PUBLIC_MCP_URL/<slug>`.
 
+### Debugging a client that can't connect
+
+A refused MCP request is logged with its reason: the auth mode, the kind of credential the client sent, a Cloudflare Access claim that didn't match, a Host outside `PUBLIC_MCP_URL`/`MCP_ALLOWED_HOSTS`, or an endpoint that is unavailable. Watch `docker compose logs -f synoikia` while the client connects. Set `LOG_LEVEL=debug` to also see every request on the MCP port, including OAuth discovery. If nothing shows up, the request was stopped before it reached Synoikia: check your proxy's log (for Cloudflare Access, Zero Trust → Logs → Access). See design §11.
+
 ### Plugin repositories
 
 On first start Synoikia adds the [Synoikia plugins repository][core-plugins] with its signing key pinned:

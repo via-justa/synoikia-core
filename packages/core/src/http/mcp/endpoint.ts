@@ -8,12 +8,14 @@ import { z } from 'zod';
 import type { AppContext } from '../../app.js';
 import type { Config } from '../../config/env.js';
 import type { ClientPrompts } from '../../approvals/service.js';
-import { authenticateMcp, publicMcpBase } from '../../auth/mcp-auth.js';
+import { authenticateMcp, effectiveAuthMode, publicMcpBase } from '../../auth/mcp-auth.js';
 import type { McpIdentity } from '../../auth/mcp-auth.js';
 import type { OAuthService } from '../../auth/oauth.js';
 import type { CallerContext } from '../../gate/pipeline.js';
 import { executeCode, searchCode } from '../../runtime/index.js';
 import type { SandboxResult } from '../../sandbox/index.js';
+import type { LogFields } from '../../log.js';
+import { clientIp } from '../common.js';
 
 /**
  * `/{slug}` Streamable HTTP endpoints (design §2.2): one McpServer + transport per MCP session,
@@ -269,17 +271,69 @@ export class McpEndpoints {
     return !!this.ctx.tokens.verify(token) || !!this.oauth.verifyAccess(token, '');
   }
 
+  /**
+   * Why a request was refused, on the server log only (the client gets the generic answer). Requests
+   * that presented credentials are `warn`: someone is trying to connect and failing. Bare probes
+   * (scanners, a client's first unauthenticated step of OAuth discovery) are `debug`.
+   */
+  private refused(c: Context, slug: string, status: number, reason: string, fields: LogFields = {}) {
+    const credentials = !!c.req.header('authorization') || !!c.req.header('cf-access-jwt-assertion');
+    this.ctx.log[credentials ? 'warn' : 'debug'](`MCP request refused: ${reason}`, {
+      method: c.req.method,
+      slug,
+      status,
+      ...fields,
+      ip: clientIp(c, this.ctx.config.TRUST_PROXY),
+      ua: c.req.header('user-agent'),
+    });
+  }
+
+  /** A 4xx/5xx from the MCP transport itself (bad JSON-RPC, wrong Accept header, …), with its message. */
+  private async logTransportError(c: Context, slug: string, response: Response, principal: string) {
+    if (response.status < 400) return;
+    let message = '';
+    if (response.headers.get('content-type')?.includes('application/json')) {
+      const body = (await response
+        .clone()
+        .json()
+        .catch(() => undefined)) as { error?: { message?: unknown } } | undefined;
+      if (typeof body?.error?.message === 'string') message = body.error.message;
+    }
+    this.ctx.log.warn('MCP request rejected by the transport', {
+      method: c.req.method,
+      slug,
+      status: response.status,
+      error: message,
+      client: principal,
+      accept: c.req.header('accept'),
+      ip: clientIp(c, this.ctx.config.TRUST_PROXY),
+      ua: c.req.header('user-agent'),
+    });
+  }
+
   async handle(c: Context, slug: string): Promise<Response> {
     if (
       !hostAllowed(this.ctx.config, c.req.header('host')) ||
       !originAllowed(this.ctx.config, c.req.header('origin'))
     ) {
+      this.ctx.log.warn(
+        'MCP request refused: Host or Origin not allowed; add it to PUBLIC_MCP_URL or MCP_ALLOWED_HOSTS',
+        {
+          method: c.req.method,
+          slug,
+          status: 403,
+          host: c.req.header('host'),
+          origin: c.req.header('origin'),
+          ip: clientIp(c, this.ctx.config.TRUST_PROXY),
+        },
+      );
       return c.json(jsonRpcError(-32003, 'Host or Origin not allowed; set PUBLIC_MCP_URL or MCP_ALLOWED_HOSTS'), 403);
     }
     // Before authentication, an unknown slug looks like any endpoint that needs credentials, and a
     // disabled one answers like an enabled one: neither existence nor state is told to strangers.
     const found = this.ctx.instances.bySlug(slug);
     if (!found) {
+      this.refused(c, slug, 404, 'no endpoint has this slug');
       if (this.holdsLiveCredential(c)) return c.json(jsonRpcError(-32001, 'Unknown MCP endpoint'), 404);
       c.header('WWW-Authenticate', 'Bearer');
       return c.json({ error: 'unauthorized', error_description: 'Authentication required' }, 401);
@@ -288,31 +342,46 @@ export class McpEndpoints {
 
     const auth = await authenticateMcp(this.ctx, this.oauth, c, instance);
     if (!auth.ok) {
+      this.refused(c, slug, auth.status, auth.detail, { mode: effectiveAuthMode(this.ctx, instance.authMode) });
       if (auth.wwwAuthenticate) c.header('WWW-Authenticate', auth.wwwAuthenticate);
       return c.json({ error: auth.error, error_description: auth.message }, auth.status);
     }
-    if (!this.ctx.instances.isServing(instance, plugin))
+    const client = auth.identity.label;
+    if (!this.ctx.instances.isServing(instance, plugin)) {
+      this.refused(c, slug, 503, 'endpoint or its plugin is disabled', { client });
       return c.json(jsonRpcError(-32002, 'This endpoint is disabled'), 503);
+    }
 
     const sessionId = c.req.header('mcp-session-id');
     if (sessionId) {
       const s = this.sessions.get(sessionId);
       // A session id is only valid for the endpoint and principal that created it.
       if (!s || s.instanceId !== instance.id || s.principal !== auth.identity.principal) {
+        // Usually a session that ended (idle, restart): the client is expected to initialize again.
+        this.ctx.log.info('MCP request refused: unknown or expired session', {
+          method: c.req.method,
+          slug,
+          status: 404,
+          client,
+        });
         return c.json(jsonRpcError(-32001, 'Session not found'), 404);
       }
       s.lastSeen = Date.now();
-      return s.transport.handleRequest(c.req.raw);
+      const response = await s.transport.handleRequest(c.req.raw);
+      await this.logTransportError(c, slug, response, client);
+      return response;
     }
 
-    if (c.req.method !== 'POST') return c.json(jsonRpcError(-32000, 'Missing Mcp-Session-Id'), 400);
+    if (c.req.method !== 'POST') {
+      this.refused(c, slug, 400, 'no Mcp-Session-Id on a non-POST request', { client });
+      return c.json(jsonRpcError(-32000, 'Missing Mcp-Session-Id'), 400);
+    }
     try {
       await this.ctx.instances.ensureFresh(instance.id, { forceVersionCheck: true });
     } catch (err) {
-      return c.json(
-        jsonRpcError(-32002, `Endpoint unavailable: ${err instanceof Error ? err.message : String(err)}`),
-        503,
-      );
+      const message = err instanceof Error ? err.message : String(err);
+      this.refused(c, slug, 503, 'endpoint unavailable', { client, error: message });
+      return c.json(jsonRpcError(-32002, `Endpoint unavailable: ${message}`), 503);
     }
 
     // One principal can't pile up servers: past the cap, its least recently used session goes.
@@ -339,10 +408,13 @@ export class McpEndpoints {
     });
     await server.connect(transport);
     const response = await transport.handleRequest(c.req.raw);
+    await this.logTransportError(c, slug, response, client);
     if (!transport.sessionId) {
       // Not a valid initialize request: nothing to keep.
       await transport.close().catch(() => undefined);
       await server.close().catch(() => undefined);
+    } else {
+      this.ctx.log.info('MCP session opened', { slug, client, ua: c.req.header('user-agent') });
     }
     return response;
   }

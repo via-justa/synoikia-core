@@ -1,6 +1,6 @@
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
-import { verifyCloudflareAccess } from '../src/auth/mcp-auth.js';
+import { checkCloudflareAccess, verifyCloudflareAccess } from '../src/auth/mcp-auth.js';
 
 /** Cloudflare Access assertions (design §6.2 `external` mode; review test gap 9). */
 describe('verifyCloudflareAccess', () => {
@@ -43,5 +43,16 @@ describe('verifyCloudflareAccess', () => {
       'not-a-jwt',
     ];
     for (const assertion of cases) await expect(verifyCloudflareAccess(TEAM, AUD, assertion, keys)).resolves.toBeNull();
+  });
+
+  it('says which claim did not match, for the server log', async () => {
+    const { keys, sign } = await team();
+    const wrongAud = await checkCloudflareAccess(TEAM, AUD, await sign({}, { aud: 'someone-elses-app' }), keys);
+    expect(wrongAud.ok).toBe(false);
+    expect(!wrongAud.ok && wrongAud.reason).toMatch(
+      /"aud".*aud=someone-elses-app; expected iss=https:\/\/home\..* aud=aud-tag-123/,
+    );
+    const garbage = await checkCloudflareAccess(TEAM, AUD, 'not-a-jwt', keys);
+    expect(!garbage.ok && garbage.reason).toContain('(not a JWT)');
   });
 });
