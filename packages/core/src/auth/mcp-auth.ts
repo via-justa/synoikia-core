@@ -68,7 +68,14 @@ export async function verifyCloudflareAccess(
   }
   try {
     const { payload } = await jwtVerify(assertion, jwks, { issuer: `https://${domain}`, audience: aud });
-    return typeof payload.email === 'string' ? payload.email : (payload.sub ?? 'cf-access');
+    // A service token's assertion has an empty `sub` and names the token's client ID in `common_name`.
+    // An email must contain `@`, so it can't pose as a service token; one that names nobody is refused.
+    const named = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+    const email = named(payload.email);
+    const service = named(payload.common_name);
+    return (
+      (email?.includes('@') ? email : undefined) ?? (service && `service:${service}`) ?? named(payload.sub) ?? null
+    );
   } catch {
     return null;
   }
