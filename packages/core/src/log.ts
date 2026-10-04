@@ -24,7 +24,8 @@ function formatValue(value: string | number | boolean): string {
 }
 
 export function formatLine(level: LogLevel, message: string, fields: LogFields = {}): string {
-  const parts = [level.toUpperCase(), message];
+  // Messages are meant to be constant; anything variable belongs in a field. Escaped all the same.
+  const parts = [level.toUpperCase(), /^[\x20-\x7e]*$/.test(message) ? message : JSON.stringify(message)];
   for (const [key, value] of Object.entries(fields)) {
     if (value === undefined || value === null || value === '') continue;
     parts.push(`${key}=${formatValue(value)}`);

@@ -52,6 +52,10 @@ describe('verifyCloudflareAccess', () => {
     expect(!wrongAud.ok && wrongAud.reason).toMatch(
       /"aud".*aud=someone-elses-app; expected iss=https:\/\/home\..* aud=aud-tag-123/,
     );
+    const hostile = `e30.${Buffer.from(JSON.stringify({ iss: { toString: 1 }, aud: [{}, 'z'.repeat(500)] })).toString('base64url')}.`;
+    const odd = await checkCloudflareAccess(TEAM, AUD, hostile, keys);
+    expect(odd.ok).toBe(false);
+    expect(!odd.ok && odd.reason).toMatch(/iss=- aud=z{120}…;/);
     const garbage = await checkCloudflareAccess(TEAM, AUD, 'not-a-jwt', keys);
     expect(!garbage.ok && garbage.reason).toContain('(not a JWT)');
   });

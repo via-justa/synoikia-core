@@ -56,14 +56,26 @@ export function effectiveAuthMode(ctx: AppContext, instanceAuthMode: string | nu
 
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
-/** Issuer and audience a JWT claims, read without verifying it: only for explaining a rejection. */
+const MAX_CLAIM = 120;
+const clip = (v: string) => (v.length > MAX_CLAIM ? `${v.slice(0, MAX_CLAIM)}…` : v);
+
+/**
+ * Issuer and audience a JWT claims, read without verifying it: only for explaining a rejection.
+ * Unverified claims are attacker text of any type, so only strings are kept, and clipped.
+ */
 function claimedIssuer(token: string): { iss?: string; aud?: string } | null {
+  let payload: Record<string, unknown>;
   try {
-    const { iss, aud } = decodeJwt(token);
-    return { iss, aud: Array.isArray(aud) ? aud.join(',') : aud };
+    payload = decodeJwt(token);
   } catch {
     return null;
   }
+  const { iss, aud } = payload;
+  const auds = (Array.isArray(aud) ? aud : [aud]).filter((a): a is string => typeof a === 'string');
+  return {
+    iss: typeof iss === 'string' ? clip(iss) : undefined,
+    aud: auds.length ? clip(auds.join(',')) : undefined,
+  };
 }
 
 /**

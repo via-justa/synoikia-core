@@ -9,6 +9,8 @@ import type { AppContext } from '../../app.js';
 import type { Config } from '../../config/env.js';
 import type { ClientPrompts } from '../../approvals/service.js';
 import { authenticateMcp, effectiveAuthMode, publicMcpBase } from '../../auth/mcp-auth.js';
+import { TOKEN_PREFIX } from '../../auth/mcp-tokens.js';
+import { ACCESS_PREFIX } from '../../auth/oauth.js';
 import type { McpIdentity } from '../../auth/mcp-auth.js';
 import type { OAuthService } from '../../auth/oauth.js';
 import type { CallerContext } from '../../gate/pipeline.js';
@@ -133,8 +135,44 @@ function originAllowed(config: Config, origin: string | undefined): boolean {
   }
 }
 
+/** A bearer token or Access assertion shaped like one this server could accept: a Synoikia token or a JWT. */
+const TOKEN_SHAPE = new RegExp(`^(${TOKEN_PREFIX}|${ACCESS_PREFIX})\\S+$|^[\\w-]+\\.[\\w-]+\\.[\\w-]*$`);
+
+function presentsCredential(c: Context): boolean {
+  const bearer = c.req.header('authorization')?.match(/^Bearer\s+(\S+)$/i)?.[1];
+  const assertion = c.req.header('cf-access-jwt-assertion');
+  return (!!bearer && TOKEN_SHAPE.test(bearer)) || (!!assertion && TOKEN_SHAPE.test(assertion));
+}
+
+const THROTTLE_WINDOW_MS = 60_000;
+const THROTTLE_MAX_KEYS = 1000;
+
+/**
+ * One refusal line per key (level, client IP, status) per minute, so a flood of refused requests
+ * can't flood the log. The next line after a window reports how many were dropped.
+ */
+export class LogThrottle {
+  private readonly windows = new Map<string, { until: number; dropped: number }>();
+
+  /** The number of lines dropped since the last one for this key, or null to drop this one too. */
+  admit(key: string, now: number): number | null {
+    const w = this.windows.get(key);
+    if (w && now < w.until) {
+      w.dropped++;
+      return null;
+    }
+    if (!w && this.windows.size >= THROTTLE_MAX_KEYS) {
+      for (const [k, v] of this.windows) if (v.until <= now) this.windows.delete(k);
+      if (this.windows.size >= THROTTLE_MAX_KEYS) this.windows.clear();
+    }
+    this.windows.set(key, { until: now + THROTTLE_WINDOW_MS, dropped: 0 });
+    return w?.dropped ?? 0;
+  }
+}
+
 export class McpEndpoints {
   private readonly sessions = new Map<string, Session>();
+  private readonly refusals = new LogThrottle();
   private readonly sweeper: NodeJS.Timeout;
 
   constructor(
@@ -273,18 +311,24 @@ export class McpEndpoints {
 
   /**
    * Why a request was refused, on the server log only (the client gets the generic answer). Requests
-   * that presented credentials are `warn`: someone is trying to connect and failing. Bare probes
-   * (scanners, a client's first unauthenticated step of OAuth discovery) are `debug`.
+   * that presented a token-shaped credential are `warn`: someone is trying to connect and failing.
+   * Bare probes (scanners, a client's first unauthenticated step of OAuth discovery) are `debug`. The
+   * reason is a quoted field, never part of the message: it can carry client-controlled text.
    */
   private refused(c: Context, slug: string, status: number, reason: string, fields: LogFields = {}) {
-    const credentials = !!c.req.header('authorization') || !!c.req.header('cf-access-jwt-assertion');
-    this.ctx.log[credentials ? 'warn' : 'debug'](`MCP request refused: ${reason}`, {
+    const ip = clientIp(c, this.ctx.config.TRUST_PROXY);
+    const level = presentsCredential(c) ? 'warn' : 'debug';
+    const suppressed = this.refusals.admit(`${level}|${ip}|${status}`, Date.now());
+    if (suppressed === null) return;
+    this.ctx.log[level]('MCP request refused', {
       method: c.req.method,
       slug,
       status,
+      reason,
       ...fields,
-      ip: clientIp(c, this.ctx.config.TRUST_PROXY),
+      ip,
       ua: c.req.header('user-agent'),
+      suppressed: suppressed || undefined,
     });
   }
 
@@ -316,17 +360,10 @@ export class McpEndpoints {
       !hostAllowed(this.ctx.config, c.req.header('host')) ||
       !originAllowed(this.ctx.config, c.req.header('origin'))
     ) {
-      this.ctx.log.warn(
-        'MCP request refused: Host or Origin not allowed; add it to PUBLIC_MCP_URL or MCP_ALLOWED_HOSTS',
-        {
-          method: c.req.method,
-          slug,
-          status: 403,
-          host: c.req.header('host'),
-          origin: c.req.header('origin'),
-          ip: clientIp(c, this.ctx.config.TRUST_PROXY),
-        },
-      );
+      this.refused(c, slug, 403, 'Host or Origin not allowed: add it to PUBLIC_MCP_URL or MCP_ALLOWED_HOSTS', {
+        host: c.req.header('host'),
+        origin: c.req.header('origin'),
+      });
       return c.json(jsonRpcError(-32003, 'Host or Origin not allowed; set PUBLIC_MCP_URL or MCP_ALLOWED_HOSTS'), 403);
     }
     // Before authentication, an unknown slug looks like any endpoint that needs credentials, and a
