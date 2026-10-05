@@ -53,7 +53,7 @@ interface Live {
   catalogChangedTimer?: NodeJS.Timeout;
   /**
    * The version of the bundle the running child was spawned from, read from its own manifest.json on
-   * every (re)spawn: files copied in by hand, or a crash restart after them, run code the plugin row
+   * every (re)spawn, just before the fork: files copied in by hand, or a crash restart after them, run code the plugin row
    * doesn't describe yet. The catalog must have been synced from this version (`ensureFresh`).
    */
   version?: string;
@@ -229,6 +229,15 @@ export class InstanceManager {
         const live = this.live.get(instanceId);
         if (!live) throw new PluginUnavailableError();
         return live.supervisor.client;
+      },
+      catalogVersion: () => {
+        const version = this.live.get(instanceId)?.version;
+        const synced = this.db
+          .select({ v: pluginInstances.catalogPluginVersion })
+          .from(pluginInstances)
+          .where(eq(pluginInstances.id, instanceId))
+          .get()?.v;
+        return version && synced === version ? version : undefined;
       },
     };
   }

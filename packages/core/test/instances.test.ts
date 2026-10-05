@@ -200,9 +200,13 @@ describe('InstanceManager', () => {
       t.seen.length = 0;
       await waitFor(() => t.manager.status(inst.id) === 'ready');
     };
+    expect(t.manager.runtime(inst.id).catalogVersion()).toBe(installed);
     swap('9.9.9');
     await crash();
+    // Until the resync, the gate refuses calls: the catalog describes other code.
+    expect(t.manager.runtime(inst.id).catalogVersion()).toBeUndefined();
     await t.manager.ensureFresh(inst.id);
+    expect(t.manager.runtime(inst.id).catalogVersion()).toBe('9.9.9');
     expect(syncs()).toBe(1);
     expect(synced()).toBe('9.9.9');
     await t.manager.ensureFresh(inst.id);

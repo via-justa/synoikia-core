@@ -42,6 +42,8 @@ async function setup(settings: Partial<InstanceSettings> = {}) {
   const approvals = new ApprovalService(db, new ApprovalLinkService(db));
   cleanup.push(() => approvals.cancelAll());
   const deps: GateDeps = { db, approvals, limiter: new SlidingWindowLimiter(), attestationKey: randomBytes(32) };
+  /** What `catalogVersion()` reports: the running bundle's version while the catalog was synced from it. */
+  const bundle: { catalog: string | undefined } = { catalog: '1.0.0' };
   const rt: InstanceRuntime = {
     instanceId,
     slug: 'echo',
@@ -49,6 +51,7 @@ async function setup(settings: Partial<InstanceSettings> = {}) {
     settings: { ...parseInstanceSettings({}), ...settings },
     redact: createRedactor(GLOBAL_SENSITIVE_KEYS, manifest.sensitiveKeys),
     plugin: () => proc,
+    catalogVersion: () => bundle.catalog,
   };
   const opId = (key: string) => db.select().from(operations).where(eq(operations.key, key)).get()!.id;
   const setLevel = (level: AccessLevel) => setGroupLevel(db, instanceId, 'echo', level);
@@ -61,7 +64,7 @@ async function setup(settings: Partial<InstanceSettings> = {}) {
     executeCode(deps, rt, caller(prompts, ceiling), code);
   const audits = () => db.select().from(auditLog).where(eq(auditLog.kind, 'call')).all();
   const pending = () => db.select().from(pendingApprovals).where(eq(pendingApprovals.status, 'pending')).all();
-  return { db, instanceId, proc, deps, rt, opId, setLevel, exec, audits, approvals, caller, pending };
+  return { db, instanceId, proc, deps, rt, opId, setLevel, exec, audits, approvals, caller, pending, bundle };
 }
 
 /**
@@ -222,6 +225,38 @@ describe('execute → gate → plugin', () => {
         ['human-approved', 'read'],
         ['human-approved', 'read'],
       ]);
+    });
+
+    it('refuses an approved call when the plugin changed while it waited, without invoking it', async () => {
+      const t = await setup();
+      t.setLevel('ask');
+      // The admin updates the plugin (or it restarts onto other code) while the approval is open.
+      const client = urlClient((req) => {
+        t.bundle.catalog = undefined;
+        t.approvals.decide(req.approvalId, { approve: true, decidedBy: 'admin' });
+      });
+      const r = await t.exec(
+        `try { await echo.call('echo.set', { name: 'vol/a' }); } catch (e) { return e.code; }`,
+        client.prompts,
+      );
+      expect(r).toMatchObject({ ok: true, value: 'PLUGIN_UNAVAILABLE' });
+      expect(t.audits()[0]).toMatchObject({ decision: 'error:PLUGIN_UNAVAILABLE', resultStatus: 'error' });
+
+      // Synced again from the new code: a fresh call runs.
+      t.bundle.catalog = '2.0.0';
+      const again = urlClient((req) => t.approvals.decide(req.approvalId, { approve: true, decidedBy: 'admin' }));
+      await expect(
+        t.exec(`return await echo.call('echo.set', { name: 'vol/a' });`, again.prompts),
+      ).resolves.toMatchObject({
+        ok: true,
+      });
+    });
+
+    it('refuses a call gated while the catalog did not describe the running code', async () => {
+      const t = await setup();
+      t.bundle.catalog = undefined;
+      const r = await t.exec(`try { await echo.call('echo.query'); } catch (e) { return e.code; }`);
+      expect(r).toMatchObject({ ok: true, value: 'PLUGIN_UNAVAILABLE' });
     });
 
     it('sends the human to the approval page (URL prompt) and runs the call once approved there', async () => {

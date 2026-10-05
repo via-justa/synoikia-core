@@ -111,10 +111,13 @@ export class PluginSupervisor {
       this.scheduleRestart(`plugin exited unexpectedly (${signal ?? `code ${code}`})`);
     });
     try {
+      // Before the fork: what loadInit records about the bundle (its version) describes the code the
+      // child is about to load, not whatever replaced it after.
+      const init = this.opts.loadInit();
       proc.start();
       await proc.call(
         'init',
-        { ...this.opts.loadInit(), instanceId: this.opts.instanceId, sdkVersion: SDK_VERSION },
+        { ...init, instanceId: this.opts.instanceId, sdkVersion: SDK_VERSION },
         this.opts.initTimeoutMs ?? 30_000,
       );
     } catch (err) {

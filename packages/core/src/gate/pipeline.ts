@@ -48,6 +48,13 @@ export interface InstanceRuntime {
   redact: Redactor;
   /** The live plugin process; throws PluginUnavailableError while it is down. */
   plugin: () => PluginProcess;
+  /**
+   * The plugin version the catalog was synced from, while that is the version of the running child;
+   * undefined when they differ (an update or a restart onto other code, before the resync). Read when
+   * a call is gated and again before it is invoked: descriptors (locks, `sensitiveResult`) belong to
+   * one bundle.
+   */
+  catalogVersion: () => string | undefined;
 }
 
 export interface CallerContext {
@@ -184,6 +191,7 @@ export function createGateBindings(
       // 0. Map the raw binding call onto a catalog key (path templates, split keys…).
       const resolved = await rt.plugin().call('resolveOperation', { fn, args });
       audit.operationKey = resolved.key;
+      const catalogAt = rt.catalogVersion();
       const op = deps.db
         .select()
         .from(operations)
@@ -383,6 +391,17 @@ export function createGateBindings(
             ),
           );
         }
+      }
+
+      // The catalog this call was gated and is masked by must still describe the code that answers
+      // it: an update or a restart onto other code during an approval wait, or before the resync
+      // after one, would run it under another bundle's locks and `sensitiveResult`.
+      const catalogNow = rt.catalogVersion();
+      if (catalogAt === undefined || catalogNow !== catalogAt) {
+        throw new BindingError(
+          'PLUGIN_UNAVAILABLE',
+          'The plugin changed while this call was pending (an update or restart); call it again',
+        );
       }
 
       // 9. The real upstream call, within what's left of the sandbox budget.
