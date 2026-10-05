@@ -15,6 +15,8 @@ import { CoreEvents } from './events.js';
 import { SlidingWindowLimiter } from './gate/rate-limit.js';
 import type { GateDeps } from './gate/pipeline.js';
 import { InstanceManager } from './instances/manager.js';
+import { createLogger } from './log.js';
+import type { Logger } from './log.js';
 import { runHousekeeping } from './maintenance.js';
 import type { ManagerOptions } from './instances/manager.js';
 import { NotifierService } from './notify/service.js';
@@ -32,6 +34,8 @@ import { normalizeStoredSettings } from './settings.js';
 
 export interface AppContext {
   config: Config;
+  /** Server log, filtered by LOG_LEVEL. */
+  log: Logger;
   db: Db;
   secrets: SecretBox;
   events: CoreEvents;
@@ -80,6 +84,8 @@ export interface AppOptions {
   /** Outbound HTTP for plugin repositories (tests). */
   repoFetch?: FetchBytes;
   repoAllowHttp?: boolean;
+  /** Replaces the LOG_LEVEL logger (tests). */
+  log?: Logger;
 }
 
 export async function createAppContext(config: Config, opts: AppOptions = {}): Promise<AppContext> {
@@ -159,6 +165,7 @@ export async function createAppContext(config: Config, opts: AppOptions = {}): P
   };
   const ctx: AppContext = {
     config,
+    log: opts.log ?? createLogger(config.LOG_LEVEL),
     db,
     secrets,
     events,

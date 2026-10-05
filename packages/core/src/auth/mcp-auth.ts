@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createRemoteJWKSet, decodeJwt, jwtVerify } from 'jose';
 import type { JWTVerifyGetKey } from 'jose';
 import type { AppContext } from '../app.js';
 import { getSettings } from '../settings.js';
@@ -30,7 +30,15 @@ export interface McpIdentity {
 
 export type McpAuthResult =
   | { ok: true; identity: McpIdentity }
-  | { ok: false; status: 401 | 403; error: string; message: string; wwwAuthenticate?: string };
+  | {
+      ok: false;
+      status: 401 | 403;
+      error: string;
+      message: string;
+      wwwAuthenticate?: string;
+      /** Why, in enough detail to fix a client or proxy. For the server log only, never the client. */
+      detail: string;
+    };
 
 /**
  * The MCP listener's public origin: PUBLIC_MCP_URL, or — only where no security decision depends on
@@ -48,17 +56,39 @@ export function effectiveAuthMode(ctx: AppContext, instanceAuthMode: string | nu
 
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
+const MAX_CLAIM = 120;
+const clip = (v: string) => (v.length > MAX_CLAIM ? `${v.slice(0, MAX_CLAIM)}…` : v);
+
 /**
- * Verifies a `Cf-Access-Jwt-Assertion` against the team's signing keys: signature, issuer (the team
- * domain), audience (the Access application's AUD tag) and expiry. Returns who it names, or null.
- * `keys` replaces the team's published key set (tests).
+ * Issuer and audience a JWT claims, read without verifying it: only for explaining a rejection.
+ * Unverified claims are attacker text of any type, so only strings are kept, and clipped.
  */
-export async function verifyCloudflareAccess(
+function claimedIssuer(token: string): { iss?: string; aud?: string } | null {
+  let payload: Record<string, unknown>;
+  try {
+    payload = decodeJwt(token);
+  } catch {
+    return null;
+  }
+  const { iss, aud } = payload;
+  const auds = (Array.isArray(aud) ? aud : [aud]).filter((a): a is string => typeof a === 'string');
+  return {
+    iss: typeof iss === 'string' ? clip(iss) : undefined,
+    aud: auds.length ? clip(auds.join(',')) : undefined,
+  };
+}
+
+/**
+ * Checks a `Cf-Access-Jwt-Assertion` against the team's signing keys: signature, issuer (the team
+ * domain), audience (the Access application's AUD tag) and expiry. Returns who it names, or why it
+ * was rejected. `keys` replaces the team's published key set (tests).
+ */
+export async function checkCloudflareAccess(
   teamDomain: string,
   aud: string,
   assertion: string,
   keys?: JWTVerifyGetKey,
-): Promise<string | null> {
+): Promise<{ ok: true; who: string } | { ok: false; reason: string }> {
   const domain = teamDomain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
   let jwks = keys ?? jwksCache.get(domain);
   if (!jwks) {
@@ -66,19 +96,48 @@ export async function verifyCloudflareAccess(
     jwksCache.set(domain, remote);
     jwks = remote;
   }
+  const issuer = `https://${domain}`;
   try {
-    const { payload } = await jwtVerify(assertion, jwks, { issuer: `https://${domain}`, audience: aud });
+    const { payload } = await jwtVerify(assertion, jwks, { issuer, audience: aud });
     // A service token's assertion has an empty `sub` and names the token's client ID in `common_name`.
     // An email must contain `@`, so it can't pose as a service token; one that names nobody is refused.
     const named = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
     const email = named(payload.email);
     const service = named(payload.common_name);
-    return (
-      (email?.includes('@') ? email : undefined) ?? (service && `service:${service}`) ?? named(payload.sub) ?? null
-    );
-  } catch {
-    return null;
+    const who = (email?.includes('@') ? email : undefined) ?? (service && `service:${service}`) ?? named(payload.sub);
+    return who
+      ? { ok: true, who }
+      : { ok: false, reason: 'valid assertion that names nobody (no email, common_name or sub)' };
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    const claimed = claimedIssuer(assertion);
+    if (!claimed) return { ok: false, reason: `${why} (not a JWT)` };
+    // The AUD tag and team domain are not secrets: every assertion Access issues carries them.
+    return {
+      ok: false,
+      reason: `${why} (assertion iss=${claimed.iss ?? '-'} aud=${claimed.aud ?? '-'}; expected iss=${issuer} aud=${aud})`,
+    };
   }
+}
+
+/** {@link checkCloudflareAccess}, returning who the assertion names, or null. */
+export async function verifyCloudflareAccess(
+  teamDomain: string,
+  aud: string,
+  assertion: string,
+  keys?: JWTVerifyGetKey,
+): Promise<string | null> {
+  const result = await checkCloudflareAccess(teamDomain, aud, assertion, keys);
+  return result.ok ? result.who : null;
+}
+
+/** What kind of bearer token this is, for the log: never any part of its value. */
+function describeToken(token: string): string {
+  if (token.startsWith(TOKEN_PREFIX)) return 'a Synoikia bearer token';
+  if (token.startsWith(ACCESS_PREFIX)) return 'a Synoikia OAuth access token';
+  const claimed = claimedIssuer(token);
+  if (claimed) return `a JWT from another issuer (iss=${claimed.iss ?? '-'})`;
+  return 'a token this server did not issue';
 }
 
 export async function authenticateMcp(
@@ -94,14 +153,18 @@ export async function authenticateMcp(
     const { teamDomain, aud } = settings.cfAccess;
     if (teamDomain && aud) {
       const assertion = c.req.header('cf-access-jwt-assertion');
-      const who = assertion ? await verifyCloudflareAccess(teamDomain, aud, assertion) : null;
-      if (!who)
+      const checked = assertion ? await checkCloudflareAccess(teamDomain, aud, assertion) : null;
+      if (!checked?.ok)
         return {
           ok: false,
           status: 401,
           error: 'unauthorized',
           message: 'Cloudflare Access assertion missing or invalid',
+          detail: checked
+            ? `Cloudflare Access assertion rejected: ${checked.reason}`
+            : 'no Cf-Access-Jwt-Assertion header: the request did not come through the Cloudflare Access application',
         };
+      const who = checked.who;
       return {
         ok: true,
         identity: { kind: 'external', principal: `cf:${who}`, label: `external:${who}`, access: 'write' },
@@ -139,6 +202,13 @@ export async function authenticateMcp(
     return params.length ? `Bearer ${params.join(', ')}` : 'Bearer';
   };
 
+  // A proxy that authenticated the caller is the usual reason a client sends what this mode can't use.
+  const hint = c.req.header('cf-access-jwt-assertion')
+    ? '; the request carries a Cloudflare Access assertion: set the endpoint to External auth to accept it'
+    : '';
+  const oauthOff =
+    (mode === 'oauth' || mode === 'bearer+oauth') && !allowOauth ? '; OAuth is off until PUBLIC_MCP_URL is set' : '';
+
   const auth = c.req.header('authorization');
   const token = auth?.match(/^Bearer\s+(\S+)$/i)?.[1];
   if (!token)
@@ -148,6 +218,7 @@ export async function authenticateMcp(
       error: 'unauthorized',
       message: 'Authentication required',
       wwwAuthenticate: challenge(),
+      detail: `${auth ? 'Authorization header is not a bearer token' : 'no Authorization header'}${oauthOff}${hint}`,
     };
 
   if (allowBearer && token.startsWith(TOKEN_PREFIX)) {
@@ -159,6 +230,7 @@ export async function authenticateMcp(
         error: 'invalid_token',
         message: 'Invalid or expired token',
         wwwAuthenticate: challenge('invalid_token'),
+        detail: 'bearer token is unknown, revoked or expired',
       };
     if (!McpTokenService.inScope(row, instance.id)) {
       return {
@@ -166,6 +238,7 @@ export async function authenticateMcp(
         status: 403,
         error: 'insufficient_scope',
         message: 'This token is not valid for this endpoint',
+        detail: `bearer token "${row.name}" is not scoped to this endpoint`,
       };
     }
     return {
@@ -183,6 +256,7 @@ export async function authenticateMcp(
         error: 'invalid_token',
         message: 'Invalid or expired token',
         wwwAuthenticate: challenge('invalid_token'),
+        detail: 'OAuth access token is unknown, revoked or expired',
       };
     if (!found.inAudience) {
       return {
@@ -190,6 +264,7 @@ export async function authenticateMcp(
         status: 403,
         error: 'insufficient_scope',
         message: 'This token was not granted for this endpoint',
+        detail: `OAuth grant of client "${found.client.name}" does not include this endpoint`,
       };
     }
     return {
@@ -209,5 +284,6 @@ export async function authenticateMcp(
     error: 'invalid_token',
     message: 'This endpoint does not accept that kind of token',
     wwwAuthenticate: challenge('invalid_token'),
+    detail: `got ${describeToken(token)}, which ${mode} auth does not accept${oauthOff}${hint}`,
   };
 }
