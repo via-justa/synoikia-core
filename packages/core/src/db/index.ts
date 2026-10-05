@@ -17,10 +17,7 @@ const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 
 const DB_FILENAME = 'synoikia.sqlite';
 
-/**
- * Opens (creating if needed) the single SQLite database and applies pending migrations
- * (design §7). Pass `':memory:'` for tests.
- */
+/** Opens the SQLite database and applies pending migrations (design §7); `':memory:'` for tests. */
 export function openDatabase(location: { dataDir: string } | ':memory:'): Db {
   let file = ':memory:';
   if (location !== ':memory:') {

@@ -1,11 +1,8 @@
 import { ErrorCodes, PluginError } from './errors.js';
 import type { InitParams, InvokeContext, PluginHandlers } from './rpc.js';
 
-/**
- * The lifecycle every plugin repeats, written once: build a client in `init` (closing the previous
- * one), refuse calls before `init`, reset per-instance caches, close on `shutdown`, report connection
- * tests as `{ ok: false }` instead of throwing, and derive the upstream version and timeouts.
- */
+/** The lifecycle every plugin repeats: client per `init`, no calls before it, cache resets, close on
+ * `shutdown`, `{ ok: false }` connection tests, upstream version and timeouts. */
 
 export interface Lazy<T> {
   /** The cached value, loading it on first use (concurrent callers share one load). */

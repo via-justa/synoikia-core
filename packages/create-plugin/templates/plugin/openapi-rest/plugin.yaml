@@ -1,8 +1,6 @@
 # yaml-language-server: $schema=./node_modules/@synoikia/plugin-sdk/plugin-settings.schema.json
-#
-# What {{name}} tells Synoikia about its operations. The OpenAPI spec lists them (GET reads, every other
-# verb writes, an action-shaped GET is a write flagged for review); these rules lock, split, classify
-# and describe them on top. Core decides what is allowed. Reference: docs/plugin-authoring.md.
+# Rules on top of {{name}}'s OpenAPI catalog (GET reads, other verbs write); core decides what is allowed.
+# Reference: docs/plugin-authoring.md.
 
 defaults:
   # The literal an approver types for a locked operation with no `confirm` of its own.

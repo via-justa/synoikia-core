@@ -2,10 +2,7 @@ import type { Context } from 'hono';
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
 
-/**
- * The few server-rendered pages on the public MCP port (design §2.1): sign-in, TOTP, OAuth consent,
- * approval decisions and errors. Every interpolated value is HTML-escaped by `html`. No scripts.
- */
+/** Server-rendered pages on the MCP port (design §2.1); every value HTML-escaped by `html`, no scripts. */
 
 type Body = HtmlEscapedString | Promise<HtmlEscapedString>;
 

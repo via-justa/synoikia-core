@@ -9,11 +9,7 @@ import { isPlainObject, truncate } from './plugin-kit.js';
 import type { InvokeContext } from './rpc.js';
 import type { CompiledRules, StaticOperation } from './rules.js';
 
-/**
- * A catalog declared outright in `plugin.yaml` `operations:`, for upstreams with nothing to discover
- * (a small REST API with no spec) or for commands discovery doesn't list. Every operation states its
- * own classification; rules lock and describe on top, as for discovered catalogs.
- */
+/** A catalog declared in `plugin.yaml` `operations:` for upstreams with nothing to discover. */
 
 export interface StaticCatalogOptions {
   /** `classificationReason` prefix when an operation gives no `reason`: `declared:read`. */

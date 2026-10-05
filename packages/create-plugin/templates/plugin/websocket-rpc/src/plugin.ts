@@ -16,10 +16,8 @@ import raw from '../plugin.yaml';
 import { authHeaders } from './auth.js';
 import { RpcClient } from './client.js';
 
-/**
- * The {{name}} plugin: JSON-RPC methods declared in plugin.yaml. The sandbox calls
- * `{{namespace}}.call(method, params)`.
- */
+/** The {{name}} plugin: JSON-RPC methods declared in plugin.yaml; the sandbox calls
+ * `{{namespace}}.call(method, params)`. */
 
 const SERVICE = '{{name}}';
 

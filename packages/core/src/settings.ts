@@ -67,10 +67,7 @@ export function getSettings<S extends SettingsSection>(db: Db, section: S): Sett
   return parseLeniently(SETTINGS_SCHEMAS[section], row?.value, `settings.${section}`) as Settings<S>;
 }
 
-/**
- * Startup step: removes stored settings fields the current schema rejects, once (and warned about
- * once) rather than on every read. Valid fields are left exactly as stored.
- */
+/** Startup: removes stored settings fields the schema rejects, once; valid fields stay as stored. */
 export function normalizeStoredSettings(db: Db): string[] {
   const changed: string[] = [];
   for (const row of db.select().from(settings).all()) {

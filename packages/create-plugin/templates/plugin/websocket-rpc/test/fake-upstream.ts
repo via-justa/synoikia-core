@@ -2,10 +2,7 @@ import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import { authorized } from './fake-auth.js';
 
-/**
- * A fake {{name}} speaking JSON-RPC 2.0 over WebSocket: just enough to exercise the plugin, including
- * a response that holds a secret, so the tests prove it never reaches the sandbox.
- */
+/** A fake {{name}} over JSON-RPC/WebSocket, including a secret that must never reach the sandbox. */
 
 export const UPSTREAM_SECRET = 'fake-upstream-secret-123';
 

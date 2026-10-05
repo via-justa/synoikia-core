@@ -9,11 +9,8 @@ import { notifierChannels } from '../db/schema.js';
 import { NotFoundError, ValidationError } from '../errors.js';
 import type { CoreEventMap, CoreEventName, CoreEvents } from '../events.js';
 
-/**
- * Notification channels (design §9): ntfy and signed webhooks, subscribed to core events and
- * optionally filtered by instance. Informational only: approvals happen in the MCP client (§5.3).
- * Payloads carry summaries, never raw params or secrets.
- */
+/** Notification channels (design §9): ntfy and signed webhooks, informational only; payloads carry
+ * summaries, never raw params or secrets. */
 
 const NOTIFY_EVENTS = [
   'instance.error',

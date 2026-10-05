@@ -5,10 +5,8 @@ import { sessions, users } from '../db/schema.js';
 import { randomToken } from './tokens.js';
 import type { UserRow } from './users.js';
 
-/**
- * Server-side sessions (design §6.1). The cookie holds a random 256-bit id; the DB stores only its
- * HMAC under a pepper derived from the master key, so a DB leak doesn't yield usable cookies.
- */
+/** Server-side sessions (design §6.1): the cookie holds a random id, the DB only its HMAC under a
+ * master-key-derived pepper. */
 
 export type SessionKind = 'admin' | 'oauth_ui' | 'approval_ui';
 

@@ -17,10 +17,8 @@ import type { PluginHandlers } from '@synoikia/plugin-sdk';
 import raw from '../plugin.yaml';
 import { authHeaders } from './auth.js';
 
-/**
- * The {{name}} plugin: the catalog is {{name}}'s OpenAPI spec, and the sandbox calls
- * `{{namespace}}.request({ method, path, query, body })`. Locks and secrets are in plugin.yaml.
- */
+/** The {{name}} plugin: catalog from its OpenAPI spec; the sandbox calls
+ * `{{namespace}}.request({ method, path, query, body })`. */
 
 const SERVICE = '{{name}}';
 

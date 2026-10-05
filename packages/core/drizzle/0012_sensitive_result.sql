@@ -1,12 +1,7 @@
 ALTER TABLE `operations` ADD `sensitive_result` text;--> statement-breakpoint
 ALTER TABLE `plugin_instances` ADD `catalog_plugin_version` text;--> statement-breakpoint
--- Catalogs synced before this release came from the plugin version installed now, and none of them
--- needs core to mask results: plugins built before SDK 0.4 mask their own, and an SDK 0.4+ plugin on an
--- older core refuses to sync and to run any operation that declares `sensitiveResult`. Only where the
--- last sync succeeded: after a failed one (an update whose sync failed), the stored catalog may be an
--- older bundle's, so that endpoint syncs before serving instead. Recording the
--- version keeps upgrades from forcing a blocking resync of every endpoint; the next bundle change
--- (install, update, files copied in and a restart) still does.
+-- A successful sync before this release came from the installed version, and no such catalog needs core
+-- masking (older SDKs mask their own; SDK 0.4+ refuses older cores). Saves every endpoint a blocking resync.
 UPDATE `plugin_instances` SET `catalog_plugin_version` = (
   SELECT `version` FROM `plugins` WHERE `plugins`.`id` = `plugin_instances`.`plugin_id`
 ) WHERE `last_synced_at` IS NOT NULL AND `last_sync_status` = 'ok';

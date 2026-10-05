@@ -1,10 +1,7 @@
 import { ErrorCodes, PluginError } from './errors.js';
 
-/**
- * Request/response bookkeeping for message-based upstream protocols (JSON-RPC over WebSocket, a
- * command/result socket…): numeric ids, one timer per request, and failing everything pending when
- * the connection drops. Transport-agnostic: the plugin sends the frame and routes replies here.
- */
+/** Request/response bookkeeping for message-based protocols: ids, a timer per request, and failing all
+ * pending calls when the connection drops. */
 
 interface Entry {
   label: string;
@@ -75,10 +72,7 @@ export class PendingRequests {
   }
 }
 
-/**
- * Shares one in-flight call between concurrent callers: while the first call runs, later calls get
- * its promise; once it settles, the next call starts a new one. For connecting and signing in.
- */
+/** Shares one in-flight call between concurrent callers (for connecting and signing in). */
 export function singleFlight<A extends unknown[], T>(fn: (...args: A) => Promise<T>): (...args: A) => Promise<T> {
   let inFlight: Promise<T> | undefined;
   return (...args: A) => {

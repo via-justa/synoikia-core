@@ -3,11 +3,8 @@ import type { Db } from '../db/index.js';
 import { approvalLinks } from '../db/schema.js';
 import { randomToken, sha256 } from '../auth/tokens.js';
 
-/**
- * Approval page tokens (design §5.3): single-use, stored hashed, bound to one approval, expiring with
- * it. The MCP client receives the page URL in a URL-mode elicitation; the token only opens the page,
- * and deciding still needs a signed-in human with TOTP, so the client holding it gains nothing.
- */
+/** Approval page tokens (design §5.3): single-use, hashed, expiring with their approval. A token only
+ * opens the page; deciding needs a signed-in human with TOTP. */
 export class ApprovalLinkService {
   constructor(
     private readonly db: Db,

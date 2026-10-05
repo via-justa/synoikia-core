@@ -8,15 +8,8 @@ import { rotateSecrets } from './crypto/rotate.js';
 import { openDatabase } from './db/index.js';
 import { assertServerStopped } from './lock.js';
 
-/**
- * Operator commands, run with the server stopped:
- *
- *   node dist/cli.js rotate-master-key [--force]
- *
- * With `MASTER_KEY` set, the new key must be supplied as `NEW_MASTER_KEY` (so it exists before any
- * data depends on it); update `MASTER_KEY` to it afterwards. With a key file, a new key is generated,
- * written next to it as `master.key.new` before the database changes, then moved into place.
- */
+/** Operator commands, server stopped: `node dist/cli.js rotate-master-key [--force]`. With MASTER_KEY set,
+ * pass the new key as NEW_MASTER_KEY; with a key file, the new key is written as master.key.new first. */
 
 const USAGE =
   'Usage: cli.js rotate-master-key [--force]   (stop the server first; --force skips the running-server check)';

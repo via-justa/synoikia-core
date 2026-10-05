@@ -28,10 +28,7 @@ const EnvSchema = z
     ADMIN_PORT: port.default(8081),
     PUBLIC_MCP_URL: optionalUrl,
     PUBLIC_ADMIN_URL: optionalUrl,
-    /**
-     * How many reverse proxies in front of core to trust: `true`/`1` for one, `2` for two chained, and so
-     * on. X-Forwarded-For is read from the right, skipping only what those proxies appended.
-     */
+    /** How many reverse proxies to trust (`true`/`1`, `2`, …); X-Forwarded-For is read from the right. */
     TRUST_PROXY: z
       .string()
       .optional()
@@ -43,10 +40,8 @@ const EnvSchema = z
         ctx.addIssue({ code: 'custom', message: 'TRUST_PROXY must be true, false or a hop count (0–10)' });
         return z.NEVER;
       }),
-    /**
-     * Extra host names the MCP listener answers to (comma-separated), besides PUBLIC_MCP_URL's host,
-     * localhost and IP addresses. Anything else is refused, which stops DNS rebinding.
-     */
+    /** Extra host names the MCP listener answers to, besides PUBLIC_MCP_URL's host, localhost and IPs
+     * (DNS-rebinding defence). */
     MCP_ALLOWED_HOSTS: z
       .string()
       .optional()

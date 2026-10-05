@@ -17,10 +17,7 @@ import {
 import type { ErrorCode, PluginHandlers, RpcMethod, RpcNotification, RpcResponse } from '@synoikia/plugin-sdk';
 import { z } from 'zod';
 
-/**
- * One plugin child process and the core side of its JSON-RPC-over-IPC channel (design §3.3, §4.4).
- * Every result is validated before it is returned: plugin output is untrusted.
- */
+/** One plugin child and its JSON-RPC-over-IPC channel (design §3.3, §4.4); every result is validated. */
 
 export class PluginRpcError extends Error {
   constructor(

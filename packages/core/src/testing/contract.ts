@@ -1,13 +1,8 @@
 import type { AccessLevel } from '../gate/access.js';
 import type { PluginHarness } from './index.js';
 
-/**
- * The end-to-end checks every plugin's suite repeats, as one framework-agnostic call on a running
- * harness: a read works at Read, a write is refused while its group is at Read, a locked operation
- * waits for a human who must type its confirmation literal, upstream secrets never reach the
- * sandbox, and each call is audited. Use as `expect(await checkPluginContract(h, …)).toEqual([])`.
- * It leaves the read and write operations' groups at Read.
- */
+/** The end-to-end checks every plugin repeats (read, refused write, locked with literal, secrets kept
+ * out, audit): `expect(await checkPluginContract(h, …)).toEqual([])`. Leaves those groups at Read. */
 
 export interface ContractCall {
   /** Sandbox code that makes the call and returns its result, e.g. `return await acme.call('x');`. */

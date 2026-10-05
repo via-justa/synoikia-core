@@ -2,11 +2,8 @@
 import { computed } from 'vue';
 import type { ConnectionSchema, JsonSchemaProp, UiHint } from '../types';
 
-/**
- * Renders a plugin's connection schema with the declarative UI hints (design §8.3). Secrets
- * (`writeOnly` or the `secret` widget) are never shown: the admin sees whether one is set and can
- * replace or clear it. `secretPatch` follows the API merge rules — omitted keeps, null clears.
- */
+/** Renders a plugin's connection schema (design §8.3). Secrets are never shown, only set/replace/clear;
+ * `secretPatch` follows the API merge rules: omitted keeps, null clears. */
 const props = defineProps<{
   schema: ConnectionSchema;
   ui: Record<string, UiHint>;

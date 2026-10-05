@@ -2,10 +2,7 @@ import type { SensitiveResult } from '@synoikia/plugin-sdk';
 import { sql } from 'drizzle-orm';
 import { blob, index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
-/**
- * Single SQLite schema for the whole server (design §7.1). JSON is stored as TEXT, timestamps as
- * epoch milliseconds, encrypted values as AES-256-GCM blobs (design §7.2).
- */
+/** The SQLite schema (design §7.1): JSON as TEXT, timestamps as epoch ms, secrets as AES-256-GCM blobs. */
 
 const id = () => text('id').primaryKey();
 const ts = (name: string) => integer(name, { mode: 'timestamp_ms' });
@@ -120,10 +117,7 @@ export const pluginInstances = sqliteTable('plugin_instances', {
   sourceRef: text('source_ref'),
   lastSyncedAt: ts('last_synced_at'),
   lastSyncStatus: text('last_sync_status'),
-  /**
-   * The plugin version the catalog was last synced from. A different installed version is synced
-   * before its endpoint serves another call: descriptors (and `sensitiveResult`) belong to one bundle.
-   */
+  /** The plugin version the catalog was synced from; another bundle is synced before serving again. */
   catalogPluginVersion: text('catalog_plugin_version'),
   createdAt: createdAt(),
 });
@@ -376,11 +370,8 @@ export const oauthGrants = sqliteTable('oauth_grants', {
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
   resources: json('resources').$type<string[]>().notNull(),
-  /**
-   * The instance each consented resource URL named at consent time (same order as `resources`).
-   * Tokens are checked against these ids, so renaming a slug or re-using it for another instance
-   * never carries a grant over (design §6.2). NULL only for grants from before this column.
-   */
+  /** Instance ids the consented resources named at consent; tokens are checked against these, not slugs
+   * (design §6.2). NULL only for grants from before this column. */
   instanceIds: json('instance_ids').$type<string[]>(),
   /** Chosen on the consent page (design §6.3); `read` hides and blocks every write. */
   access: text('access', { enum: ['read', 'write'] })

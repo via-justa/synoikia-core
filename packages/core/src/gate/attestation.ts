@@ -3,12 +3,8 @@ import { and, desc, eq } from 'drizzle-orm';
 import type { DbLike } from '../db/index.js';
 import { guides } from '../db/schema.js';
 
-/**
- * Best-practice attestation (design §5.1/§5.2 step 1). `search` hands out a key bound to
- * (instance, operation, guide version, MCP session); `execute` must present it from the same session.
- * Revising the guide invalidates every outstanding key at once, because the version is part of the
- * MAC, and a key read in one session (or leaked into a prompt) is useless in any other.
- */
+/** Best-practice attestation (design §5.1): `search` hands out a key MACed over instance, operation,
+ * guide version and MCP session; `execute` must present it from the same session. */
 
 export function issueAttestationKey(
   macKey: Buffer,

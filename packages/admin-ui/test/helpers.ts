@@ -11,10 +11,7 @@ export function json(status: number, body: unknown) {
 
 type Handler = (body: unknown, url: URL) => Response | unknown;
 
-/**
- * A tiny fake Admin API: `routes['GET /api/x']` returns a Response or a JSON body (200). Every call
- * is recorded with its parsed body.
- */
+/** A fake Admin API: `routes['GET /api/x']` returns a Response or a JSON body; calls are recorded. */
 export function fakeApi(routes: Record<string, Handler | unknown>) {
   const calls: { method: string; path: string; body: unknown }[] = [];
   const fetchMock = vi.fn(async (input: string, init: RequestInit = {}) => {

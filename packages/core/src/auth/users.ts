@@ -10,10 +10,8 @@ import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
 import { randomToken, sha256 } from './tokens.js';
 import { generateTotpSecret, otpauthUri, verifyTotp } from './totp.js';
 
-/**
- * Portal accounts (design §6.1): local users with argon2id passwords, optional TOTP with recovery
- * codes, optional OIDC link. No roles — every user is an admin.
- */
+/** Portal accounts (design §6.1): argon2id passwords, optional TOTP with recovery codes and OIDC link;
+ * no roles. */
 
 // argon2id, m = 64 MiB, t = 3, p = 1 (design §6.1). @node-rs/argon2 defaults to argon2id.
 const ARGON = { memoryCost: 65536, timeCost: 3, parallelism: 1 };
@@ -257,10 +255,7 @@ export class UserService {
     });
   }
 
-  /**
-   * A TOTP code only (replay-protected), for checks that must not accept, or use up, a recovery code
-   * (the approval page).
-   */
+  /** A TOTP code only, replay-protected, for checks that must not take a recovery code (the approval page). */
   verifyTotpCode(userId: string, code: string): boolean {
     const user = this.get(userId);
     const secret = this.totpSecret(user);

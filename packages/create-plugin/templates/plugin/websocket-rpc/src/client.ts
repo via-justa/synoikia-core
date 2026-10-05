@@ -1,11 +1,8 @@
 import { ErrorCodes, joinApiPath, PendingRequests, PluginError, singleFlight } from '@synoikia/plugin-sdk';
 import WebSocket from 'ws';
 
-/**
- * JSON-RPC 2.0 over one WebSocket: connects lazily (authenticating on the upgrade), reconnects on the
- * next call after a drop, and fails pending calls when the socket closes. Errors name the method,
- * never its params or the credentials.
- */
+/** JSON-RPC 2.0 over one WebSocket: lazy connect (auth on upgrade), reconnect after a drop, pending calls
+ * fail on close; errors name the method, never params or credentials. */
 
 export interface RpcConnection {
   baseUrl: string;

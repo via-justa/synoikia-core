@@ -1,11 +1,5 @@
-/**
- * Brute-force protection (design §6.1): 5 failed logins per username per 15 minutes locks that
- * username for 15 minutes, plus a per-IP budget for everything under /auth and connection tests.
- * In memory on purpose: a restart resets it, which is acceptable for a single-process server.
- *
- * Failures are counted **per surface**: attempts on the internet-facing MCP-port sign-in can lock a
- * username there, but never lock it out of the LAN admin portal.
- */
+/** Brute-force protection (design §6.1): 5 failures per username per 15 min lock it 15 min, plus a per-IP
+ * budget; in memory, and counted per surface so MCP-port failures never lock the admin portal. */
 
 import { HitWindows } from '../gate/rate-limit.js';
 

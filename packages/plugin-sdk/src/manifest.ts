@@ -2,10 +2,7 @@ import semver from 'semver';
 import { z } from 'zod';
 import { SDK_VERSION } from './version.js';
 
-/**
- * Core widget library (design §8.3). Plugins can only reference these; an unknown widget fails
- * validation instead of silently degrading to a free-text field.
- */
+/** Core widget library (design §8.3); an unknown widget fails validation rather than degrading. */
 export const WIDGETS = [
   'text',
   'url',
@@ -54,11 +51,7 @@ export type UiHint = z.infer<typeof UiHintSchema>;
 
 const scopeKey = z.string().regex(/^[a-z][a-z0-9_-]*$/, 'must be lowercase letters, digits, _ or -');
 
-/**
- * What a plugin's resolved targets are and how rules can select them (design §3.4). Each target from
- * `resolveTargets` reports its value for every declared scope in `scopes[key]`; a `$targets` rule
- * condition selects by target id and by those scope values. Core knows nothing more about them.
- */
+/** What a plugin's resolved targets are and the scopes rules select them by (design §3.2). */
 export const TargetsSchema = z.object({
   /** What one target is called in the portal, e.g. "Entity", "Host", "Container". */
   label: z.string().min(1).default('Target'),
@@ -98,11 +91,7 @@ export const MatchFieldSchema = z
     options: z.record(z.string(), z.unknown()).optional(),
     /** Source name passed to the plugin's `optionsFor` RPC to populate pickers. */
     optionsSource: z.string().optional(),
-    /**
-     * `$targets` only: the params subtrees the target selector stands for (e.g. `["/selector"]`). A rule
-     * with a `$targets` condition already checks every resolved target, so core lets it cover those
-     * subtrees under strict matching instead of requiring an "any value" condition on each.
-     */
+    /** `$targets` only: the params subtrees the selector stands for, covered under strict matching. */
     covers: z.array(z.string().regex(/^\/.+/, 'must be a JSON pointer')).min(1).optional(),
   })
   .superRefine((f, ctx) => {

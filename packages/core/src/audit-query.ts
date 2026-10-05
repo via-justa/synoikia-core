@@ -85,11 +85,7 @@ function csvCell(v: unknown): string {
 
 const CSV_PAGE = 1000;
 
-/**
- * The audit CSV, one page of rows at a time, so an export of a large log never sits in memory at once.
- * Pages continue from the last row seen (keyset), not by offset: rows written during the export
- * neither shift nor repeat what follows.
- */
+/** The audit CSV, paged by keyset (last row seen), so large exports neither sit in memory nor shift. */
 export function* auditCsvChunks(db: DbLike, raw: unknown): Generator<string> {
   const q = AuditQuerySchema.parse({ ...(raw as object), limit: CSV_PAGE });
   yield `${CSV_COLUMNS.join(',')}\n`;

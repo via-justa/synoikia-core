@@ -2,11 +2,7 @@ import http from 'node:http';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-/**
- * A tiny fake HTTP upstream for plugin tests: routes by `METHOD /path` (with `{param}` segments),
- * JSON in and out, and a record of every request. Plugins describe just enough of their upstream to
- * exercise it, including responses that hold secrets so redaction gets tested.
- */
+/** A fake HTTP upstream for plugin tests: `METHOD /path` routes with `{param}`, JSON, request log. */
 
 export interface FakeRequest {
   method: string;

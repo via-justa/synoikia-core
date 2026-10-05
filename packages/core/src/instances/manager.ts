@@ -24,10 +24,8 @@ import { mergeSecrets, storedSecretsFor, summarizeSecrets, validateConnection } 
 import { cleanInstanceSettings, parseInstanceSettings, readInstanceSettings } from './settings.js';
 import type { InstanceSettings } from './settings.js';
 
-/**
- * Instance lifecycle (design §4, §10): creation and connection config (secrets encrypted), one
- * supervised plugin child per enabled instance, and catalog/registry sync scheduling.
- */
+/** Instance lifecycle (design §4, §10): connection config, one supervised plugin child per enabled
+ * instance, and sync scheduling. */
 
 export const AUTH_MODES = ['external', 'bearer', 'oauth', 'bearer+oauth'] as const;
 export type AuthMode = (typeof AUTH_MODES)[number];
@@ -51,11 +49,8 @@ interface Live {
   syncing?: Promise<SyncSummary>;
   lastVersionCheck: number;
   catalogChangedTimer?: NodeJS.Timeout;
-  /**
-   * The version of the bundle the running child was spawned from, read from its own manifest.json on
-   * every (re)spawn, just before the fork: files copied in by hand, or a crash restart after them, run code the plugin row
-   * doesn't describe yet. The catalog must have been synced from this version (`ensureFresh`).
-   */
+  /** The running child's bundle version, read from its manifest.json just before each fork; the catalog
+   * must have been synced from it (`ensureFresh`). */
   version?: string;
 }
 
@@ -182,10 +177,7 @@ export class InstanceManager {
     return readInstanceSettings(instance.settings, `/${instance.slug} settings`);
   }
 
-  /**
-   * Scrubs an instance's secret values out of plugin/upstream error text before it is stored, audited
-   * or sent to notification channels (an init error can echo a config value or token).
-   */
+  /** Scrubs an instance's secret values out of plugin/upstream error text before it is stored or sent. */
   private scrubError(instanceId: string, message: string): string {
     try {
       const instance = this.row(instanceId);
@@ -436,10 +428,7 @@ export class InstanceManager {
     return this.getConnection(id);
   }
 
-  /**
-   * "Test connection": runs `testConnection` in a throwaway child, so an unsaved candidate config
-   * can be tried without disturbing the running instance. Omitted secrets fall back to stored ones.
-   */
+  /** "Test connection" in a throwaway child, so a candidate config never disturbs the running instance. */
   async testConnection(
     id: string,
     candidate?: { config: Record<string, unknown>; secrets?: Record<string, string | null> },
@@ -662,14 +651,8 @@ export class InstanceManager {
     return run;
   }
 
-  /**
-   * Called before serving MCP traffic (session start, and cheaply on each tool call):
-   * - never synced, or synced from another version than the running child's bundle → sync now; failure
-   *   means the endpoint can't serve (per instance): the catalog describes different code (what it
-   *   masks, what it locks);
-   * - stale beyond `syncMaxAgeMs` → sync, but keep serving the last catalog if it fails;
-   * - otherwise compare the upstream version (throttled) and sync on a mismatch.
-   */
+  /** Before serving MCP traffic: sync now if never synced or synced from other code (failure refuses
+   * service), sync if stale (serving the last catalog on failure), else sync on an upstream version change. */
   async ensureFresh(instanceId: string, opts: { forceVersionCheck?: boolean } = {}): Promise<void> {
     const row = this.row(instanceId);
     const live = this.live.get(instanceId);

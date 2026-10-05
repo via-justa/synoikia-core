@@ -7,11 +7,8 @@ import { PluginTimeoutError, PluginUnavailableError } from '../plugins/process.j
 
 /** Helpers shared by the admin and MCP listeners. */
 
-/**
- * The client's IP. Behind `trustProxy` proxies, X-Forwarded-For is read from the right: each trusted
- * proxy appends the address it saw, so the entry `trustProxy` places from the end is the one the
- * outermost proxy recorded. Anything further left was sent by the client and can be forged.
- */
+/** The client's IP: X-Forwarded-For read from the right, `trustProxy` entries in; anything further left
+ * came from the client and can be forged. */
 export function clientIp(c: Context, trustProxy: number | boolean): string | undefined {
   const hops = Number(trustProxy);
   if (hops > 0) {

@@ -17,11 +17,8 @@ import type {
   TargetsDecl,
 } from '../../types';
 
-/**
- * Pre-approval rules (design §5.2): an operation picked from the catalog (never locked), a structured
- * match built only from the fields the plugin declared for it, a required reason, optional rate
- * limit and expiry.
- */
+/** Pre-approval rules (design §5.2): a catalog operation (never locked), a match from its declared
+ * fields, a required reason, optional rate limit and expiry. */
 const props = defineProps<{ instance: Instance }>();
 const base = computed(() => `/api/instances/${props.instance.id}`);
 

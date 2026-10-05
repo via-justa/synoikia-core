@@ -1,7 +1,5 @@
 <script setup lang="ts">
-// The Synoikia mark (design system assets/Logo/synoikia-mark.svg): four dwellings converging on one
-// hearth. Colors come from the theme tokens so it follows light/dark; the outer frame is dropped
-// below 32px, as the brand book asks.
+// The Synoikia mark, colored from theme tokens; the outer frame is dropped below 32px.
 withDefaults(defineProps<{ size?: number; frame?: boolean }>(), { size: 32, frame: undefined });
 </script>
 

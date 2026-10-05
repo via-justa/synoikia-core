@@ -10,11 +10,8 @@ import { ServiceError, ValidationError } from '../errors.js';
 import { signPayload, verifyPayload } from './tokens.js';
 import type { UserRow, UserService } from './users.js';
 
-/**
- * Optional OIDC sign-in (design §6.1): authorization code + PKCE, `state` and `nonce`. An identity
- * must pass the allow policy, and must be linked to a local user unless auto-provisioning is on.
- * Used by both the admin login and the MCP-port login pages (OAuth consent, approval links).
- */
+/** Optional OIDC sign-in (design §6.1): code + PKCE, state and nonce; the identity must pass the allow
+ * policy and be linked unless auto-provisioning. Used by the admin and MCP-port logins. */
 
 const AllowPolicySchema = z
   .object({
@@ -235,10 +232,7 @@ export class OidcService {
     return false;
   }
 
-  /**
-   * Finds the local user for a sign-in: the linked user, or (auto-provision only) a new user.
-   * Returns null when the identity is not allowed or not linked.
-   */
+  /** The local user for a sign-in (linked, or new with auto-provision); null when not allowed or linked. */
   async resolveUser(users: UserService, identity: OidcIdentity): Promise<UserRow | null> {
     if (!this.isAllowed(identity)) return null;
     const linked = users.byOidc(identity.issuer, identity.subject);

@@ -3,12 +3,7 @@ import path from 'node:path';
 import { parsePluginSettings } from '@synoikia/plugin-sdk';
 import { parse } from 'yaml';
 
-/**
- * How a plugin's data files become part of its bundle: `plugin.yaml` (and any other `.yaml`) is
- * parsed at build time and inlined as JSON, and `.md` files are inlined as text. Nothing is read
- * from disk at runtime, where the permission model would refuse it anyway. `plugin.yaml` is also
- * validated against the SDK schema, so a malformed one fails the build, not the install.
- */
+/** Inlines a plugin's data files at build time: `.yaml` as validated JSON, `.md` as text. */
 
 /** Parses YAML as plain data: no custom tags, and aliases capped against expansion bombs. */
 export function parseYamlFile(file: string): unknown {

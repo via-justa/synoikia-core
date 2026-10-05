@@ -15,15 +15,10 @@ const olderCoreError = (core: unknown, keys: Iterable<string>) =>
       `this core implements ${String(core)}. Upgrade Synoikia, or require ^${SENSITIVE_RESULT_SINCE} in manifest.sdk.`,
   );
 
-/**
- * Builds the request dispatcher used by `runPlugin`. Exposed separately so plugins can unit-test
- * their handlers through the exact same error mapping core will see.
- */
+/** The dispatcher `runPlugin` uses, exposed so plugin tests see core's exact error mapping. */
 export function createDispatcher(handlers: PluginHandlers): (req: RpcRequest) => Promise<RpcResponse> {
-  // Core masks an operation's `sensitiveResult` itself from contract 0.2.2 (design §5.5), so the
-  // bindings return raw results. An older core drops the field: fail closed there, whatever the
-  // manifest's `sdk` range let through. Its catalog sync is refused, and so is any call to an
-  // operation that declares result secrets (it may still serve a catalog synced before).
+  // An older core (contract < 0.2.2) drops `sensitiveResult`, and bindings return raw results: refuse the
+  // catalog sync and calls to operations that declare one there.
   let coreVersion: unknown;
   let olderCore = false;
   let sensitive: Promise<Set<string>> | undefined;
@@ -82,10 +77,7 @@ export function notify(notification: Omit<RpcNotification, 'jsonrpc'>): void {
   process.send?.({ jsonrpc: '2.0', ...notification });
 }
 
-/**
- * Entry point for a plugin child process. Core forks the plugin's `manifest.entry` with an IPC
- * channel; this wires incoming JSON-RPC requests to `handlers` and exits after `shutdown`.
- */
+/** Plugin child entry point: wires IPC JSON-RPC requests to `handlers` and exits after `shutdown`. */
 export function runPlugin(handlers: PluginHandlers): void {
   if (typeof process.send !== 'function') {
     throw new Error('runPlugin() must be started by the Synoikia core (no IPC channel)');

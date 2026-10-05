@@ -55,10 +55,7 @@ export function totpAt(secret: string, step: number): string {
 
 export const currentStep = (nowMs = Date.now()) => Math.floor(nowMs / 1000 / STEP_SECONDS);
 
-/**
- * Checks a code against the current step ±1 (clock drift) and returns the matched step, or null.
- * Callers must reject steps ≤ the last accepted one to prevent replay.
- */
+/** Checks a code against the current step ±1 and returns the matched step; callers reject replays. */
 export function verifyTotp(
   secret: string,
   code: string,

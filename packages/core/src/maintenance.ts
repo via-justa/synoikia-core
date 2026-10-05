@@ -4,11 +4,8 @@ import { writeAudit } from './audit.js';
 import { auditLog, pendingApprovals, preApprovalHits, preApprovalRules } from './db/schema.js';
 import { getSettings } from './settings.js';
 
-/**
- * Housekeeping (design §10): expired sessions, OAuth codes/tokens and approval links, rate-limit hits
- * older than any rule's window, decided approvals past a week, and — only when an admin configured a
- * retention — old audit rows. Runs hourly; every step is idempotent.
- */
+/** Hourly, idempotent housekeeping (design §10): expired sessions, tokens and links, old rule hits and
+ * decided approvals, and old audit rows only when a retention is set. */
 
 const DAY = 24 * 60 * 60_000;
 

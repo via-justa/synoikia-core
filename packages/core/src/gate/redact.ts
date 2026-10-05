@@ -1,16 +1,8 @@
 import { maskSensitiveResult } from '@synoikia/plugin-sdk';
 import type { SensitiveResult } from '@synoikia/plugin-sdk';
 
-/**
- * Redaction (design §5.5): replaces values under sensitive keys before anything reaches the model,
- * the audit log, pending approvals or the portal. Keys match case-insensitively, ignoring `_`/`-`,
- * so `apiKey`, `api_key` and `API-KEY` are one rule.
- *
- * A key matches a rule exactly, or by containing it (`db_password`, `X-Api-Key`, `ssh_private_key`);
- * rules shorter than five characters (`pass`, `pwd`) only match as the key's last word (`smtp_pass`,
- * `authPass`), so words like `bypass` or `passive` stay visible. Under a contained match, booleans and numbers stay visible
- * (`password_set: true`, `max_tokens: 4096`); under an exact match every non-empty value is hidden.
- */
+/** Redaction (design §5.5) of values under sensitive keys, matched case-insensitively ignoring `_`/`-`,
+ * exactly or by containment (short rules only as the last word; contained matches keep booleans/numbers). */
 
 export const REDACTED = '[REDACTED]';
 
@@ -48,11 +40,7 @@ export function createRedactor(...keyLists: (readonly string[] | undefined)[]): 
   return createInstanceRedactor({ keyLists });
 }
 
-/**
- * The redactor for one instance: values under sensitive keys, plus the instance's actual secret values
- * wherever they appear inside a string (log lines, previews, error messages, notification text), since
- * text has no keys to go by.
- */
+/** One instance's redactor: sensitive keys, plus its actual secret values wherever they appear in text. */
 export function createInstanceRedactor(opts: {
   keyLists: (readonly string[] | undefined)[];
   secretValues?: readonly string[];
@@ -114,11 +102,7 @@ const pointerSegments = (path: string) =>
     .slice(1)
     .map((p) => p.replace(/~1/g, '/').replace(/~0/g, '~'));
 
-/**
- * Hides values at JSON-pointer `paths` (`/1`, `/0/password`): secrets the plugin declared by position
- * (`sensitiveParams`) because they have no key name to catch. Returns a copy; paths that don't exist
- * are ignored. Applied on top of the instance redactor wherever params are shown or stored.
- */
+/** Hides values at JSON-pointer `paths` (`sensitiveParams`), on a copy; missing paths are ignored. */
 export function redactPaths<T>(value: T, paths: readonly string[] | null | undefined): T {
   if (!paths?.length || value === null || typeof value !== 'object') return value;
   const out = structuredClone(value) as unknown;
@@ -137,13 +121,8 @@ export function redactPaths<T>(value: T, paths: readonly string[] | null | undef
   return out as T;
 }
 
-/**
- * Masks the secrets an operation declared in its result (`sensitiveResult`, design §5.5): the whole
- * result, or every non-empty value under one of `keys` in the result or each row of it (at any depth
- * with `deep`), whatever its type. Exact key names, unlike the instance redactor's fuzzy matching:
- * these are names like `key` or `file` that would hide far too much as a global rule. Runs on the
- * plugin's raw result, before the instance redactor and before anything else sees it. Returns a copy.
- */
+/** Masks an operation's declared `sensitiveResult` (design §5.5) on the raw result, before the instance
+ * redactor; exact key names, since names like `key` would hide too much as a global rule. */
 export function redactResult<T>(value: T, spec: SensitiveResult | null | undefined): T {
   return maskSensitiveResult(value, spec);
 }
@@ -154,12 +133,8 @@ export interface DiffEntry {
   after?: unknown;
 }
 
-/**
- * Redacts a config diff (`prepareWrite`). Entries name the changed field in their `path`, so key-based
- * redaction alone would show a secret's `before`/`after`: an entry whose path has a sensitive segment,
- * or sits at or under one of the operation's `sensitiveParams` paths, has both values hidden. Every
- * other entry goes through the instance redactor.
- */
+/** Redacts a `prepareWrite` diff: entries whose path has a sensitive segment or sits under a
+ * `sensitiveParams` path hide `before`/`after`; the rest go through the instance redactor. */
 export function redactDiff(
   diff: readonly DiffEntry[] | undefined,
   redact: Redactor,

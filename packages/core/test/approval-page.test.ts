@@ -43,10 +43,7 @@ function formBrowser(app: Pick<Hono, 'request'>) {
 }
 const hidden = (page: string, name: string) => new RegExp(`name="${name}" value="([^"]*)"`).exec(page)?.[1] ?? '';
 
-/**
- * An echo endpoint at level Ask, a signed-up admin (with TOTP unless `totp: false`), and one call
- * waiting for approval from a client that supports URL prompts.
- */
+/** An echo endpoint at Ask, an admin (with TOTP unless `totp: false`) and one call awaiting approval. */
 async function withPendingCall(code: string, opts: { totp?: boolean; lockedAsk?: boolean } = {}) {
   const dataDir = mkdtempSync(path.join(tmpdir(), 'synoikia-approval-'));
   cleanup.push(() => rmSync(dataDir, { recursive: true, force: true }));

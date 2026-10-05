@@ -67,10 +67,7 @@ async function setup(settings: Partial<InstanceSettings> = {}) {
   return { db, instanceId, proc, deps, rt, opId, setLevel, exec, audits, approvals, caller, pending, bundle };
 }
 
-/**
- * A client that supports URL prompts. `onOpen` plays the human on the approval page; without it the
- * page is opened and nobody decides.
- */
+/** A URL-prompt client; `onOpen` plays the human on the approval page, otherwise nobody decides. */
 function urlClient(onOpen?: (req: UrlPromptRequest) => void, action: 'accept' | 'decline' | 'cancel' = 'accept') {
   const opened: UrlPromptRequest[] = [];
   const completed: string[] = [];

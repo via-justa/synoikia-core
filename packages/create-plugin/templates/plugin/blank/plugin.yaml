@@ -1,7 +1,6 @@
 # yaml-language-server: $schema=./node_modules/@synoikia/plugin-sdk/plugin-settings.schema.json
-#
-# What {{name}} tells Synoikia about its operations. Declare them here (or discover them in
-# src/plugin.ts and keep only the rules). Core decides what is allowed. Reference: docs/plugin-authoring.md.
+# {{name}}'s operations (or discover them in src/plugin.ts and keep only the rules).
+# Reference: docs/plugin-authoring.md.
 
 defaults:
   timeouts: { request: 15000, lookup: 10000 }

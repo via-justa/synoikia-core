@@ -28,13 +28,8 @@ export interface VerifiedPlugin {
   signatureVerified: boolean;
 }
 
-/**
- * Checks a plugin repository before it is published: core's own repository service adds it as a
- * signed repo with `publicKey` pinned, installs the newest version of every plugin (sha256, minisign
- * signature, archive checks), requires its manifest to be valid, and starts it: the bundle runs as a
- * permission-confined child, exactly as in production, and must answer core over IPC. Throws on the
- * first failure.
- */
+/** Checks a repository before publishing: installs the newest version of each plugin as core would
+ * (pinned key, sha256, signature, archive checks) and starts each bundle. Throws on the first failure. */
 export async function verifyPluginRepository(opts: VerifyRepositoryOptions): Promise<VerifiedPlugin[]> {
   const indexBytes = readFileSync(opts.index);
   const index = IndexSchema.parse(JSON.parse(indexBytes.toString('utf8')));
@@ -76,11 +71,7 @@ export async function verifyPluginRepository(opts: VerifyRepositoryOptions): Pro
   }
 }
 
-/**
- * Starts the installed bundle the way core runs it and asks it to shut down. An answer, even an error,
- * shows that the bundle imports under the permission model and speaks the RPC protocol; no `init` is
- * sent, so nothing reaches for an upstream.
- */
+/** Starts an installed bundle as core does and asks it to shut down (no `init`, so no upstream). */
 async function startsAndAnswers(dir: string, entry: string, label: string) {
   const proc = new PluginProcess({ dir, entry, instanceId: 'repository-check', defaultTimeoutMs: 10_000 });
   const stderr: string[] = [];

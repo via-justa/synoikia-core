@@ -3,11 +3,8 @@ import { SDK_VERSION } from '@synoikia/plugin-sdk';
 import { PluginProcess, PluginUnavailableError } from './process.js';
 import type { SpawnOptions } from './process.js';
 
-/**
- * Keeps one plugin instance's child process alive (design §4.4): spawn → `init` → ready. On an
- * unexpected exit the instance goes to `error` and restarts with exponential backoff. A crashed or
- * restarting plugin never makes the gate fail open: callers just get `PluginUnavailableError`.
- */
+/** Keeps one instance's child alive (design §4.4): spawn → init → ready, restarting with backoff after
+ * a crash; while it is down callers get `PluginUnavailableError`, never a fail-open gate. */
 
 export type InstanceStatus = 'stopped' | 'starting' | 'ready' | 'error';
 
@@ -66,10 +63,7 @@ export class PluginSupervisor {
     });
   }
 
-  /**
-   * Lifecycle changes run one at a time, so concurrent restarts can't leave two children alive and a
-   * stop can't be undone by a start that was already under way.
-   */
+  /** Lifecycle changes run one at a time, so at most one child lives and a stop is never undone. */
   private serial(fn: () => Promise<void>): Promise<void> {
     const run = this.queue.then(fn);
     this.queue = run.catch(() => undefined);

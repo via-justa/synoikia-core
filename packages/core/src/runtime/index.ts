@@ -13,16 +13,10 @@ import type { CallerContext, GateDeps, InstanceRuntime } from '../gate/pipeline.
 import { BindingError, runInSandbox } from '../sandbox/index.js';
 import type { Binding, SandboxResult } from '../sandbox/index.js';
 
-/**
- * The two MCP tools' engines (design §5.1–§5.2). The MCP transport layer (phase 14) only has to
- * turn a tool call into `executeCode` / `searchCode` and the result back into tool output.
- */
+/** The engines behind the `search` and `execute` tools (design §5.1–§5.2). */
 
-/**
- * Caps on sandbox work (design §5.2): `executePerMinute` counts `execute` and `search` runs per
- * principal and instance, and only so many isolates (up to `memoryMb` each) run at once per instance
- * and in total. Over either cap the run is refused before an isolate is created.
- */
+/** Sandbox caps (design §5.2): runs per minute per principal and instance, and concurrent isolates per
+ * instance and in total; over a cap the run is refused before an isolate exists. */
 export const SANDBOX_CONCURRENCY = { perInstance: 4, total: 16 };
 const running = new Map<string, number>();
 let runningTotal = 0;
@@ -170,11 +164,8 @@ function catalogBindings(db: Db, instanceId: string, principal: AccessPrincipal)
   };
 }
 
-/**
- * `guides.get(key)`: fetches the plugin's current best-practice guide, records its version, and
- * hands out the attestation key `execute` must present from the same MCP session (design §5.1). Revising
- * a guide rotates the key. Every read is audited: the key attests that this session was shown it.
- */
+/** `guides.get(key)`: returns the current guide and the session-bound attestation key `execute` must
+ * present (design §5.1); every read is audited. */
 function guideBindings(deps: GateDeps, rt: InstanceRuntime, caller: CallerContext): Record<string, Binding> {
   return {
     get: async ([key]) => {

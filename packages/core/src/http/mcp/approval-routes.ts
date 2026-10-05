@@ -11,12 +11,8 @@ import { approvalPage, errorPage } from './pages.js';
 /** A locked operation needs a TOTP code proved this recently (design §5.3). */
 const LOCKED_TOTP_MAX_AGE_MS = 5 * 60_000;
 
-/**
- * The approval page (design §5.3). The MCP client is asked to open it (URL-mode elicitation); the
- * link only opens this page. Deciding needs a signed-in user with TOTP enrolled, a TOTP proof in this
- * session (a fresh one for locked operations) and a CSRF-protected POST, so neither the client that
- * holds the link nor a prefetch can decide anything.
- */
+/** The approval page (design §5.3): deciding needs a signed-in user with TOTP (fresh for locked ops) and
+ * a CSRF-protected POST, so neither the link holder nor a prefetch decides anything. */
 export function registerApprovalRoutes(app: Hono, ctx: AppContext) {
   const gone = (c: Context) =>
     errorPage(c, 'Link expired', 'This approval request has expired or was already decided.', 404);

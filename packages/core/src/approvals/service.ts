@@ -6,18 +6,8 @@ import { pendingApprovals } from '../db/schema.js';
 import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
 import type { ApprovalLinkService } from './links.js';
 
-/**
- * Human approval (design §5.3). Approvals happen only through the MCP client's own prompts, and an
- * answer the client relays is never taken as a human's approval of a risky call:
- *
- * - **URL mode** (the approval path): the client is asked to open our approval page. A signed-in
- *   human with TOTP decides there; the client never sees the decision form. Its own reply only says
- *   whether the user opened the page (`accept`) or refused (`decline`/`cancel` → denied).
- * - **Form mode**, only where the endpoint opted in (`formElicitationApprovals`) and the operation is
- *   a plain write (not locked, no typed confirmation): the client's answer decides.
- * - Anything else is denied at once. Unanswered requests are denied at the timeout; nothing is ever
- *   approved by default.
- */
+/** Human approval (design §5.3): URL mode sends a human to our page to decide; form mode only for opted-in
+ * plain writes; anything else, and any timeout, is denied. A client's answer never approves a risky call. */
 
 export type DecisionOutcome = 'approved' | 'denied' | 'timed_out' | 'cancelled';
 export type DecisionChannel = 'elicitation' | 'url';
@@ -97,10 +87,7 @@ export class ApprovalService {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  /**
-   * Called once at startup: pending rows from a previous process can never be approved, because the
-   * exact params they cover only ever lived in memory (design §5.5). They are denied and audited.
-   */
+  /** At startup, deny and audit pending rows from a previous process: their params lived only in memory (§5.5). */
   static denyOrphans(db: Db, now = new Date()): number {
     return db.transaction((tx) => {
       const orphans = tx.select().from(pendingApprovals).where(eq(pendingApprovals.status, 'pending')).all();

@@ -21,11 +21,8 @@ import { updateSettings } from '../src/settings.js';
 import { browser } from './admin-client.js';
 import { createTestApp } from './helpers.js';
 
-/**
- * End to end over real HTTP: the MCP SDK client ↔ `/{slug}` ↔ gate ↔ sandboxed plugin child, with
- * bearer tokens, the full OAuth 2.1 flow (DCR → sign-in → consent → PKCE → tokens), and URL-mode
- * elicitation for approvals.
- */
+/** End to end over HTTP: MCP SDK client ↔ `/{slug}` ↔ gate ↔ plugin child, with bearer tokens, the
+ * full OAuth 2.1 flow and URL-mode approvals. */
 
 const PASSWORD = 'correct horse battery';
 
@@ -75,10 +72,7 @@ afterAll(async () => {
 
 type ElicitParams = { mode?: string; message: string; url?: string; elicitationId?: string };
 
-/**
- * `form`: an old-style client (`elicitation: {}`) that answers every form it is shown. `url`: a client
- * that supports URL prompts; `onElicit` plays the user, and its answer is the client's reply.
- */
+/** `form`: a client answering every form; `url`: a URL-prompt client whose `onElicit` plays the user. */
 async function connect(
   slug: string,
   token: string,

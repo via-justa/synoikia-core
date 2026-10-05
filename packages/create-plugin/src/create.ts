@@ -4,9 +4,7 @@ import { parseArgs } from 'node:util';
 import { askPluginOptions, PLUGIN_FLAGS, prompts } from './prompts.js';
 import { createRepo, install, newPlugin } from './scaffold.js';
 
-/**
- * `pnpm create @synoikia/plugin <dir>`: a new plugin repository, then its first plugin.
- */
+/** `pnpm create @synoikia/plugin <dir>`: a new plugin repository, then its first plugin. */
 
 const USAGE = `create-plugin <dir> [--repository owner/name] [--release] [--claude] [--no-plugin]
                    [plugin flags, see: synoikia-plugin new]`;

@@ -79,11 +79,8 @@ export function discoverPlugins(root: string): DiscoveredPlugin[] {
 
 const pluginIdOf = (p: DiscoveredPlugin) => (p.status === 'ok' ? p.manifest.id : p.pluginId);
 
-/**
- * Upserts discovery results into `plugins`. New plugins start disabled: enabling one is the admin's
- * review of what it may do (design §4.2). Two directories declaring the same id keep only the first.
- * Plugins no longer on disk are marked invalid, never deleted, so their instances and history remain.
- */
+/** Upserts discovered plugins: new ones start disabled (design §4.2), duplicate ids keep the first, and
+ * missing ones are marked invalid, never deleted. */
 export function syncPluginRegistry(
   db: Db,
   discovered: DiscoveredPlugin[],

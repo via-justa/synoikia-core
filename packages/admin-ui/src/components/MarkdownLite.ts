@@ -1,11 +1,7 @@
 import { defineComponent, h } from 'vue';
 import type { VNode } from 'vue';
 
-/**
- * Renders the small Markdown subset plugin manifests use for setup help (`connection.help`):
- * paragraphs, `1.` / `-` lists, **bold**, *italic* and `code`. It builds elements, never HTML
- * strings, so a manifest can't inject markup.
- */
+/** Renders the Markdown subset manifests use for setup help, as elements, never HTML strings. */
 
 type Block = { kind: 'p'; text: string } | { kind: 'ol' | 'ul'; items: string[] };
 

@@ -37,6 +37,7 @@ pnpm format                                                                     
 
 - TypeScript is strict with `noUncheckedIndexedAccess` and `verbatimModuleSyntax`: use `import type` for types, and `.js` extensions on relative imports.
 - Unused variables are allowed only with a `_` prefix.
+- Keep comments minimal: one or two lines, only for what the code can't say (a reason, a constraint, a design § reference). No multi-line comment blocks, in code, YAML, SQL or workflows; the design doc and READMEs carry the long explanations.
 - Prettier formats everything (a hook runs it after each edit). Template layout in `.vue` files is Prettier's job, not ESLint's.
 - Keep changes focused, add tests for new behavior, and update the README or design doc when behavior changes (see `.github/PULL_REQUEST_TEMPLATE.md`).
 

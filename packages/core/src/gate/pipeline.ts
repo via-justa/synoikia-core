@@ -20,17 +20,8 @@ import type { SlidingWindowLimiter } from './rate-limit.js';
 import { redactDiff, redactPaths, redactResult } from './redact.js';
 import type { Redactor } from './redact.js';
 
-/**
- * The permission gate (design §5.2): the only path from sandboxed code to a plugin's `invoke`.
- *
- *   resolveOperation → attestation → access level → resolveTargets → prepareWrite
- *   → [level ask: pre-approval rule (never for locked) → human approval] → invoke → redact → audit
- *
- * Reads run straight away; acknowledged writes at level `write` are auto-approved.
- *
- * Every branch, including every rejection, writes one `call` audit event. Calls within one
- * `execute` run strictly one at a time, so a pending approval blocks the whole script.
- */
+/** The permission gate (design §5.2), the only path from sandboxed code to `invoke`: resolve → attest →
+ * access → targets → prepareWrite → [rule | human] → invoke → redact → audit (every branch audited). */
 
 export interface GateDeps {
   db: Db;
@@ -48,21 +39,13 @@ export interface InstanceRuntime {
   redact: Redactor;
   /** The live plugin process; throws PluginUnavailableError while it is down. */
   plugin: () => PluginProcess;
-  /**
-   * The plugin version the catalog was synced from, while that is the version of the running child;
-   * undefined when they differ (an update or a restart onto other code, before the resync). Read when
-   * a call is gated and again before it is invoked: descriptors (locks, `sensitiveResult`) belong to
-   * one bundle.
-   */
+  /** The catalog's plugin version while it matches the running child's, else undefined; checked when a
+   * call is gated and again before `invoke`, since descriptors belong to one bundle. */
   catalogVersion: () => string | undefined;
 }
 
 export interface CallerContext {
-  /**
-   * `id` is the readable label recorded in the audit log (`token:Claude`); `key` is the stable
-   * principal (token id, grant id, external identity) that per-principal limits are keyed on, since
-   * two tokens may share a name.
-   */
+  /** `id` is the audit label (`token:Claude`); `key` the stable principal per-principal limits use. */
   client: { kind: 'mcp_client'; id?: string; key?: string };
   mcpSessionId?: string;
   /** The authenticated principal's access ceiling (consent page / bearer token). */
@@ -121,11 +104,8 @@ const DENIAL_MESSAGES: Record<string, string> = {
   endpoint_stopped: 'was cancelled: the endpoint was stopped or reconfigured while it waited for approval',
 };
 
-/**
- * The gate bindings for one `execute` run. `signal` ends the run: once it is aborted (the sandbox
- * settled, the MCP request was cancelled, or the session closed), calls the script left behind are
- * refused and an approval still open is cancelled, so nothing runs after the tool call has returned.
- */
+/** The gate bindings for one `execute` run; once `signal` aborts, leftover calls are refused and open
+ * approvals cancelled, so nothing runs after the tool call returned. */
 export function createGateBindings(
   deps: GateDeps,
   rt: InstanceRuntime,
@@ -393,9 +373,8 @@ export function createGateBindings(
         }
       }
 
-      // The catalog this call was gated and is masked by must still describe the code that answers
-      // it: an update or a restart onto other code during an approval wait, or before the resync
-      // after one, would run it under another bundle's locks and `sensitiveResult`.
+      // The catalog that gated and masks this call must still describe the running code (an update or
+      // restart during an approval wait would otherwise run it under another bundle's rules).
       const catalogNow = rt.catalogVersion();
       if (catalogAt === undefined || catalogNow !== catalogAt) {
         throw new BindingError(

@@ -16,11 +16,8 @@ import { CORE_VERSION } from '../version.js';
 import { inspectPluginDir } from './discovery.js';
 import { MinisignError, parsePublicKey, verifySignature } from './minisign.js';
 
-/**
- * Plugin repositories and installs (design §4.2–4.3). An index is only ever read; installing is an
- * explicit admin action on a pinned version, verified by sha256 and — for signed repos — a minisign
- * signature from the key the admin pinned when adding the repo.
- */
+/** Plugin repositories and installs (design §4.2–4.3): explicit installs of pinned versions, verified by
+ * sha256 and, for signed repos, a minisign signature from the admin-pinned key. */
 
 const LIMITS = {
   indexBytes: 2 * 1024 * 1024,
@@ -59,10 +56,7 @@ export type RepoIndex = z.infer<typeof IndexSchema>;
 const AddRepoSchema = z.object({
   url: z.url(),
   signingMode: z.enum(['signed', 'unsigned']),
-  /**
-   * Signed repos: the full public key (`RW…`) as the publisher advertises it out of band. A key id alone
-   * is not enough — it is chosen by the key owner, so a hijacked index could reuse it with another key.
-   */
+  /** The full public key (`RW…`) as advertised out of band; a key id alone could be reused by another key. */
   confirmPublicKey: z.string().optional(),
 });
 
@@ -121,10 +115,7 @@ const canonical = (v: unknown): string =>
       : x,
   ) ?? 'null';
 
-/**
- * Replaces `target` with `next`, keeping the previous copy at `backup` until the swap succeeded. If
- * moving `next` in fails, the previous copy is moved back, so a failed update never leaves no plugin.
- */
+/** Swaps `next` in for `target`, restoring the previous copy if the move fails. */
 export function swapDirectory(
   next: string,
   target: string,
@@ -274,10 +265,7 @@ export class PluginRepoService {
       .map((r) => this.publicRepo(r));
   }
 
-  /**
-   * Adds a repository. Signed repos take two calls: the first answers 409 `confirm_key` with the
-   * public key, the second repeats the request with `confirmPublicKey` once the admin has checked it out of band.
-   */
+  /** Adds a repository; a signed one answers 409 `confirm_key` until repeated with `confirmPublicKey`. */
   async add(raw: unknown, actor: Actor = {}) {
     const input = AddRepoSchema.parse(raw);
     const url = this.checkUrl(input.url);
@@ -322,10 +310,7 @@ export class PluginRepoService {
     return this.publicRepo(this.repoRow(id));
   }
 
-  /**
-   * Adds a signed repository whose key ships with core, without fetching its index (the next refresh
-   * does). Runs once per `marker`: a repo the admin removed stays removed.
-   */
+  /** Adds a signed repo whose key ships with core, once per `marker`, so a removed repo stays removed. */
   addPreconfigured(repo: { url: string; name: string; publicKey: string }, marker = DEFAULT_REPO_MARKER) {
     if (this.db.select().from(settings).where(eq(settings.key, marker)).get()) return null;
     const url = this.checkUrl(repo.url);
@@ -396,10 +381,7 @@ export class PluginRepoService {
     return this.publicRepo(this.repoRow(id));
   }
 
-  /**
-   * Daily refresh (design §10). A repo whose last fetch failed is retried on every call (hourly), so a
-   * start-up network hiccup doesn't leave it empty for a day. Failures are recorded on the row, never thrown.
-   */
+  /** Daily refresh (design §10); failed repos retry hourly, and failures are recorded, never thrown. */
   async refreshStale(maxAgeMs = 24 * 60 * 60_000) {
     for (const row of this.db.select().from(pluginRepos).all()) {
       const fresh = row.lastFetchedAt && this.now().getTime() - row.lastFetchedAt.getTime() < maxAgeMs;

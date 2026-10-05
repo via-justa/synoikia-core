@@ -9,11 +9,8 @@ import { PACKAGE_DIR } from '../src/repo-root.js';
 import { createRepo, newPlugin } from '../src/scaffold.js';
 import type { Archetype, AuthKind } from '../src/scaffold.js';
 
-/**
- * Every template, scaffolded into a fresh repository and held to what a plugin author gets: it passes
- * `check`, typechecks, builds, and its generated unit and e2e tests pass on core's real harness. The
- * workspace SDK and core are used through their sources, so templates are tested against this commit.
- */
+/** Every template scaffolded fresh must pass check, typecheck, build and its own unit and e2e tests,
+ * against this commit's SDK and core sources. */
 
 const SMOKE = path.join(PACKAGE_DIR, '.smoke');
 const require = createRequire(import.meta.url);

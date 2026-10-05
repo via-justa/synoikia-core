@@ -11,10 +11,7 @@ import { ConflictError } from '../../errors.js';
 import { getSettings } from '../../settings.js';
 import { clientIp, isSecure, readJson, requestOrigin } from '../common.js';
 
-/**
- * Admin portal authentication over HTTP (design §6.1): session cookie, double-submit CSRF token plus
- * Origin check on every state-changing request, login with an optional TOTP step, OIDC sign-in.
- */
+/** Admin auth over HTTP (design §6.1): session cookie, double-submit CSRF plus Origin check, TOTP, OIDC. */
 
 export type AdminEnv = { Variables: { user: UserRow; sessionRaw: string } };
 
@@ -56,10 +53,7 @@ export function localLoginEnabled(ctx: AppContext): boolean {
   return ctx.config.ADMIN_FORCE_LOCAL_LOGIN || !getSettings(ctx.db, 'security').disableLocalLogin;
 }
 
-/**
- * While local login is off (setting, not the env override), single sign-on is the only way in: refuse
- * any change that would leave it off or with no enabled user linked to it (design §6.1).
- */
+/** While local login is off, refuse any change that would leave no enabled user linked to SSO (§6.1). */
 export function assertSsoRemains(ctx: AppContext, change: { oidcOff?: boolean; losingUser?: string }) {
   if (!getSettings(ctx.db, 'security').disableLocalLogin) return;
   if (change.oidcOff || !ctx.users.hasOidcLinkedUser(change.losingUser)) {

@@ -1,15 +1,9 @@
 import { z } from 'zod';
 
-/**
- * Shapes a plugin returns over RPC. Core treats plugin output as untrusted and validates every
- * result against these schemas before using it (design §3.3).
- */
+/** Shapes a plugin returns over RPC; core validates every result against them (design §3.3). */
 
-/**
- * Secrets in an operation's result that no key name gives away: the whole result (a generated token),
- * or the fields named `keys` in the result or each row of it, at any depth with `deep`. Core masks
- * them before anything else sees the result (design §5.5).
- */
+/** Secrets in a result no key name gives away: the whole result, or fields named `keys` (any depth with
+ * `deep`). Core masks them before anything else sees the result (design §5.5). */
 export const SensitiveResultSchema = z.union([
   z.literal('whole'),
   z
@@ -25,16 +19,9 @@ export const OperationDescriptorSchema = z.object({
   /** Stable catalog key, unique per instance: `widget.list`, `POST /orders`, `widget.set`. */
   key: z.string().min(1).max(512),
   displayName: z.string().optional(),
-  /**
-   * Plugin-defined kind: 'method' | 'rest' | 'service' | 'ws_command' … The kind `config` is reserved:
-   * writes of that kind go through `prepareWrite` (diff + optimistic lock) when the plugin declares
-   * `capabilities.configTransform`.
-   */
+  /** Plugin-defined kind. `config` is reserved: its writes go through `prepareWrite` with `configTransform`. */
   kind: z.string().min(1),
-  /**
-   * Access group: admins set one none/read/write level per group instead of toggling each operation
-   * (design §5.2). Derived during discovery: a method namespace, an OpenAPI tag, a service domain.
-   */
+  /** Access group admins set levels on (design §5.2.1): a method namespace, OpenAPI tag or service domain. */
   group: z
     .string()
     .max(128)
@@ -53,12 +40,8 @@ export const OperationDescriptorSchema = z.object({
   needsReview: z.boolean().default(false),
   matchProfile: z.string().optional(),
   paramsSchema: z.record(z.string(), z.unknown()).optional(),
-  /**
-   * Params that hold a secret but have no key name for `sensitiveKeys` to catch, such as a positional
-   * password: JSON-pointer paths into the params (`/1`, `/0/password`). Core replaces them with
-   * `[REDACTED]` wherever params are shown or stored (summaries, approvals, notifications, audit); the
-   * plugin's `invoke` still gets the real values.
-   */
+  /** JSON pointers to params that hold a secret with no key name (`/1`, `/0/password`); core redacts them
+   * wherever params are shown or stored, while `invoke` gets the real values. */
   sensitiveParams: z
     .array(z.string().regex(/^(\/[^/]{1,128}){1,8}$/, 'a JSON pointer such as /1 or /0/password'))
     .max(32)

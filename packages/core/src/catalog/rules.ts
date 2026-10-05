@@ -9,11 +9,8 @@ import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
 import { MatchSchema } from '../gate/match.js';
 import { resolveAccess } from './groups.js';
 
-/**
- * Pre-approval rules (design §5.2): picked from the synced catalog, never free text; a
- * required reason; structured match; optional rate limit and expiry. Locked operations can never be
- * referenced (409), enforced here regardless of what the UI offers.
- */
+/** Pre-approval rules (design §5.2): from the catalog, with a required reason, structured match and
+ * optional rate limit and expiry. Locked operations are refused here (409), whatever the UI offers. */
 
 const RuleInputSchema = z.object({
   operationId: z.string().min(1),
@@ -84,10 +81,7 @@ function describe(db: Db, instanceId: string, rule: RuleRow, op: OperationRow) {
   return {
     ...rule,
     operation: { id: op.id, key: op.key, locked: op.locked, matchProfile: op.matchProfile },
-    /**
-     * Rules only apply at level `ask`: on an unreachable operation, or one at level `write`, a rule
-     * never fires; the UI flags it (design §5.2.1).
-     */
+    /** Rules only fire at level `ask`; on unreachable or `write` operations they never do (UI flags it). */
     inert: !rule.enabled ? null : !access.reachable ? access.reason : access.level === 'write' ? 'level_write' : null,
   };
 }

@@ -4,11 +4,8 @@ import { notifierChannels, oidcConfig, pluginInstances, sessions, users } from '
 import { aad } from './index.js';
 import type { SecretBox } from './index.js';
 
-/**
- * Master-key rotation (design §7.2): re-encrypts every secret column under the new key in one
- * transaction. Everything is decrypted first, so a wrong current key changes nothing. Sessions are
- * cleared because their ids are peppered with a key derived from the master key.
- */
+/** Master-key rotation (design §7.2): decrypt everything, then re-encrypt in one transaction (a wrong
+ * key changes nothing); sessions are cleared since their pepper derives from the key. */
 
 export interface RotationResult {
   users: number;

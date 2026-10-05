@@ -4,10 +4,7 @@ import type { Instance, Overview } from '../types';
 
 type Listener = (event: string, data: unknown) => void;
 
-/**
- * Shared portal state: the overview (endpoints for the sidebar) and the live
- * event stream from `/api/events`, which pages subscribe to instead of polling.
- */
+/** Shared portal state: the overview and the `/api/events` stream pages subscribe to. */
 export const useAppStore = defineStore('app', {
   state: () => ({
     overview: null as Overview | null,

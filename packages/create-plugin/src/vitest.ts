@@ -1,9 +1,6 @@
 import { moduleSource } from './files.js';
 
-/**
- * Vite/Vitest plugin that loads `.yaml` and `.md` imports the way `synoikia-plugin build` bundles
- * them, so unit tests see exactly what the bundle does. Add it to the repository's `vitest.shared.ts`.
- */
+/** Vitest plugin loading `.yaml` and `.md` imports as `synoikia-plugin build` bundles them. */
 export function pluginFiles() {
   return {
     name: 'synoikia-plugin-files',

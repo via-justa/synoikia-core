@@ -34,23 +34,8 @@ const fingerprint = (op: Pick<OperationRow, 'kind' | 'paramsSchema' | 'matchProf
 const isEffectiveWrite = (op: Pick<OperationRow, 'classification' | 'locked'>) =>
   op.locked || op.classification === 'write';
 
-/**
- * Applies a plugin's `syncCatalog` result to an instance (design §5.2.1, §10). Plugin output is
- * untrusted and re-validated here. Runs in one transaction: either the whole catalog lands or none.
- *
- * - Operations missing from the result are marked `stale`, never deleted (history is kept).
- * - Read or write always comes from the plugin (the upstream API decides); `locked` follows its seed.
- * - New writes, and reads reclassified to writes, arrive unacknowledged (quarantined). So does an
- *   acknowledged write whose parameters, kind, match profile or lock changed, or that returns from
- *   stale: the admin acknowledged what it was, not what it became.
- * - Enabled pre-approval rules are re-checked against the new catalog (and the plugin's match
- *   profiles, when given); rules that no longer fit are disabled and audited.
- * - Plugin groups are mapped through admin aliases; missing groups are created at `ask`.
- * - An operation that appears in a group that already existed gets its own level, so a group an admin
- *   already opened never exposes it by itself: reads at Read, writes at None. In a group at None it
- *   just follows the group. Operations in a brand-new group follow it.
- * - An operation's own level that no longer fits its kind (it became a write, or locked) is narrowed.
- */
+/** Applies a `syncCatalog` result in one transaction (design §5.2.1, §10). Changes are quarantined:
+ * missing ops go stale, changed writes need acknowledgement again, and nothing opens wider by itself. */
 export function applyCatalogSync(
   db: Db,
   instanceId: string,
@@ -168,9 +153,8 @@ export function applyCatalogSync(
       const becameLocked = locked && !prev.locked;
       const changed = fingerprint(prev) !== fingerprint(fields) || prev.stale;
       const becameWrite = nowWrite && (!isEffectiveWrite(prev) || (prev.writeAcknowledged && changed));
-      // Its own level, made to fit what it is now. A newly locked op starts closed again (it needs its
-      // own `ask`). One the plugin moved to another group keeps the access it had there, so a regroup
-      // never opens it wider (a new group starts at `ask`; an existing one may be at `write`).
+      // Its own level, refit to what it is now: newly locked starts closed, and a regrouped operation
+      // keeps the access it had.
       let levelOverride: AccessLevel | null = prev.levelOverride;
       if (becameLocked) levelOverride = null;
       else if (prev.levelOverride !== null)

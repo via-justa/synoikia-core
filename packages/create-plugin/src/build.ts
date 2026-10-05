@@ -3,12 +3,8 @@ import { build } from 'esbuild';
 import type { Plugin } from 'esbuild';
 import { moduleSource } from './files.js';
 
-/**
- * Bundles a plugin into one self-contained `dist/index.js`: under the permission model the child can
- * read nothing outside its own package directory, so every dependency is inlined, and data files
- * (`plugin.yaml`, guides) are compiled in. The banner gives the ESM bundle a `require` for bundled
- * CommonJS (such as `ws`).
- */
+/** Bundles a plugin into one self-contained `dist/index.js` with data files compiled in; the banner
+ * gives bundled CommonJS (such as `ws`) a `require`. */
 
 export interface BuildOptions {
   /** The plugin package directory. */

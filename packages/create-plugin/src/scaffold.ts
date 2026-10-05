@@ -4,14 +4,8 @@ import path from 'node:path';
 import { RESERVED_NAMESPACES, SDK_VERSION } from '@synoikia/plugin-sdk';
 import { dependencyRange, TEMPLATES_DIR } from './repo-root.js';
 
-/**
- * Scaffolding: a new plugin repository (`pnpm create @synoikia/plugin`) and a new plugin inside one
- * (`pnpm new`). Templates are plain files with `{{name}}` placeholders; only known names are replaced
- * and nothing in a template runs. Files whose name starts with `_` are written with a leading `.`
- * (npm drops some dotfiles from published packages). Generated code uses only the published SDK and
- * core APIs, and the generated manifest already follows the secret rules `synoikia-plugin check`
- * enforces.
- */
+/** Scaffolds plugin repositories and plugins from templates with `{{name}}` placeholders (nothing runs;
+ * `_`-prefixed files become dotfiles), using only published SDK and core APIs. */
 
 export const ARCHETYPES = {
   'openapi-rest': 'REST API that serves an OpenAPI spec: the catalog is the spec, rules lock and describe',
@@ -58,10 +52,7 @@ export function validateId(id: string, root?: string): string | undefined {
   return undefined;
 }
 
-/**
- * Display names and descriptions land in generated code (`const SERVICE = '…'`), YAML and Markdown:
- * plain text only, so no quote, backslash or newline can break out of them.
- */
+/** Names and descriptions land in generated code, YAML and Markdown: plain text only. */
 const SAFE_TEXT = /^[\p{L}\p{N}][\p{L}\p{N} .,:()&+_/-]*$/u;
 
 export function validateName(name: string): string | undefined {
