@@ -1,6 +1,6 @@
 # Writing a Synoikia plugin
 
-A plugin connects one kind of self-hosted service (the _upstream_) to Synoikia. It describes the upstream's API: which operations exist, which read and which write, which are destructive, and which fields hold secrets. **It never decides what is allowed.** Core's sandbox, permission gate, approvals, redaction and audit apply to every call. Architecture: [`design/unified-mcp-server.md`](design/unified-mcp-server.md) §3–§5.
+A plugin connects one kind of self-hosted service (the _upstream_) to Synoikia. It describes the upstream's API: which operations exist, which read and which write, which are destructive, and which fields hold secrets. **It never decides what is allowed.** Core's sandbox, permission gate, approvals, redaction and audit apply to every call. Design: [`design/`](design/README.md) §3–§5.
 
 ## Start
 

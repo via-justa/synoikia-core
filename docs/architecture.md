@@ -1,7 +1,7 @@
 # Synoikia architecture diagrams
 
 Mermaid diagrams of the whole system, from the outside in. They illustrate
-[`docs/design/unified-mcp-server.md`](design/unified-mcp-server.md), which stays the source of
+[`docs/design/`](design/README.md), which stays the source of
 truth; section references (`§5.2`) point there.
 
 | #   | Diagram                                                                      | Level     |
@@ -1229,7 +1229,7 @@ flowchart LR
   e2e --> pack["repo pack → index → sign (minisign)"]
   pack --> verify["repo verify<br/>verifyPluginRepository():<br/>install every plugin as core would,<br/>start each as a confined child"]
   verify --> publish["repo publish<br/>GitHub release assets + index.json"]
-  publish --> installs(["Synoikia installs fetch it (§13)"])
+  publish --> installs(["Synoikia installs fetch it (§4.2)"])
 
   subgraph Harness["@synoikia/core/testing harness"]
     hz["copies release files to temp DATA_DIR/plugins<br/>boots real core, in-memory DB<br/>enables plugin, creates + syncs instance<br/>execute / search / setGroupLevel / addRule / audit"]

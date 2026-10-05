@@ -19,7 +19,7 @@ Admin UI with hot reload: run `pnpm start` in one shell and `pnpm --filter @syno
 
 DB schema changes: edit `packages/core/src/db/schema.ts`, then `pnpm --filter @synoikia/core db:generate` ([Drizzle Kit](https://orm.drizzle.team/docs/kit-overview)).
 
-For the architecture and design rationale behind core, the sandbox, the permission gate and the plugin protocol, see [`docs/design/unified-mcp-server.md`](docs/design/unified-mcp-server.md).
+For the architecture and design rationale behind core, the sandbox, the permission gate and the plugin protocol, see the software design description in [`docs/design/`](docs/design/README.md).
 
 ## Before opening a pull request
 

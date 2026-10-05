@@ -1,5 +1,5 @@
 # Example deployment. Publish 8080 through your reverse proxy as https://mcp.example.com and keep
-# 8081 (admin portal) reachable from the LAN/VPN only — see docs/design/unified-mcp-server.md §11.
+# 8081 (admin portal) reachable from the LAN/VPN only — see docs/design/11-deployment.md.
 services:
   synoikia:
     # `latest` tracks the newest stable release; pin an explicit version (e.g. `:0.2.0`) in production.

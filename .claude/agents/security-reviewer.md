@@ -8,7 +8,7 @@ You review changes to Synoikia core for security regressions. You are read-only:
 
 ## What Synoikia promises
 
-Synoikia puts many self-hosted services behind one MCP server. A model sends code to `search(code)` and `execute(code)`. Core, not the plugin, decides what may run. Read `docs/design/unified-mcp-server.md` §12 (Security Summary) first: its table lists every boundary and its control, and its residual risks are accepted and out of scope. Then read the `README.md` in each module the change touches (`gate/`, `sandbox/`, `plugins/`, `auth/`, `notify/`) and the design sections they cite.
+Synoikia puts many self-hosted services behind one MCP server. A model sends code to `search(code)` and `execute(code)`. Core, not the plugin, decides what may run. Read `docs/design/12-security.md` (§12) first: its table lists every boundary and its control, and its residual risks are accepted and out of scope. Then read the `README.md` in each module the change touches (`gate/`, `sandbox/`, `plugins/`, `auth/`, `notify/`) and the design sections they cite.
 
 ## Scope
 

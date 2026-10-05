@@ -1,6 +1,6 @@
 # Synoikia core
 
-One MCP server for many self-hosted services. Each plugin instance gets its own endpoint exposing two tools, `search(code)` and `execute(code)`, and every call goes through one sandbox, permission gate, approval flow, redaction and audit log. Architecture and rationale: `docs/design/unified-mcp-server.md`. Code comments cite its sections (`§5.2`) and phases (`§13`).
+One MCP server for many self-hosted services. Each plugin instance gets its own endpoint exposing two tools, `search(code)` and `execute(code)`, and every call goes through one sandbox, permission gate, approval flow, redaction and audit log. The software design description (SDD) is in `docs/design/`, one file per section; code comments cite its sections (`§5.2`).
 
 **The rule everything follows: security lives in core, once.** A plugin only describes its upstream API; it never decides what is allowed. Don't add a plugin-side switch for anything the gate, sandbox, approvals, redaction or auth already decide. Core stays plugin-agnostic: no plugin names (TrueNAS, Seerr, Home Assistant) in core code, tests or UI placeholders. The plugins live in `via-justa/synoikia-core-plugins`.
 
@@ -40,6 +40,16 @@ pnpm format                                                                     
 - Keep comments minimal: one or two lines, only for what the code can't say (a reason, a constraint, a design § reference). No multi-line comment blocks, in code, YAML, SQL or workflows; the design doc and READMEs carry the long explanations.
 - Prettier formats everything (a hook runs it after each edit). Template layout in `.vue` files is Prettier's job, not ESLint's.
 - Keep changes focused, add tests for new behavior, and update the README or design doc when behavior changes (see `.github/PULL_REQUEST_TEMPLATE.md`).
+
+## Design documents
+
+`docs/design/` is the SDD of core. `docs/design/README.md` is its index, rules and glossary. When behavior changes, update the section it belongs to in the same PR.
+
+- Write in ASD-STE100 Simplified Technical English: short sentences (20 words at most for procedures, 25 for descriptions), active voice, simple tenses, one statement per sentence, and the glossary's terms only, each with one meaning.
+- Describe the current design only. No history: no earlier, reverted or revised designs, no "this replaces", "used to" or migration notes. Those belong in commit messages and PRs.
+- Keep section numbers stable: code comments cite them. A new subsection takes a new number; never renumber or reuse one.
+- State facts that the code confirms. If the code and the SDD disagree, find out which one is wrong before you edit either.
+- Simplify: tables and lists over long paragraphs, and no rationale beyond what a reader needs to keep the design intact.
 
 ## Database
 

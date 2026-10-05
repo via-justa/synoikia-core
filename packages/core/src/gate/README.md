@@ -5,4 +5,4 @@ opt-in, write acknowledgement; `access.ts`) → target resolution → prepareWri
 pre-approval → human approval → invoke → redact (the operation's `sensitiveResult` on the raw result,
 then sensitive keys and secret values; `redact.ts`) → audit.
 
-Design: `docs/design/unified-mcp-server.md` §5.2–§5.3, §5.5. Phases 2, 8 and 9 in §13.
+Design: [`docs/design/05-call-path.md`](../../../../docs/design/05-call-path.md) §5.2–§5.3, §5.5.
