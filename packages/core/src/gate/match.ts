@@ -3,16 +3,8 @@ import type { ResolvedTarget } from '@synoikia/plugin-sdk';
 import { z } from 'zod';
 import { canonicalJson } from './canonical.js';
 
-/**
- * Pre-approval `match` evaluator (design §5.2). A rule's match is a list of conditions that must all
- * hold. It fails closed: a missing field, a type mismatch or zero resolved targets means "no match",
- * which only ever sends the call to a human.
- *
- * Matching is **strict**: every parameter of the call must be covered by a condition. A parameter the
- * rule doesn't mention must be absent, unless the rule accepts it with `{ field, op: 'any' }` (`field: ''`
- * accepts all parameters). Otherwise a rule for one field would also approve whatever else the model
- * chose to send (a quota, an ACL, encryption options).
- */
+/** Pre-approval `match` evaluator (design §5.2): all conditions must hold, failing closed. Matching is
+ * strict: every parameter must be covered, or accepted with `op: 'any'`. */
 
 const PARAM_OPS = [...MATCH_OPS, 'any'] as const;
 
@@ -24,11 +16,7 @@ export const ParamConditionSchema = z
   })
   .refine((c) => c.op === 'any' || c.field !== '', 'only "any" can apply to all parameters');
 
-/**
- * Selects resolved targets by id and by the scope values the plugin declares (design §3.4). Every
- * target must match: its id is in `ids` (when given) and, for each key in `scopes`, its value for that
- * scope is one of the listed values.
- */
+/** Selects resolved targets by id and declared scope values; every target must match (design §3.2). */
 export const TargetConditionSchema = z
   .object({
     field: z.literal('$targets'),
@@ -102,12 +90,8 @@ function targetMatches(target: ResolvedTarget, c: z.infer<typeof TargetCondition
 
 const escapePointer = (key: string) => key.replace(/~/g, '~0').replace(/\//g, '~1');
 
-/**
- * Whether every parameter is covered by some condition: a condition on a path covers everything under
- * it; an object or array only partly covered has each of its keys (or indexes: `/0/name`) checked in
- * turn. Nothing (or `{}` / `[]`) is covered. Arrays matter for positional APIs, whose
- * params are `[{ name, … }]`.
- */
+/** Whether every parameter is covered by a condition: a path covers everything under it; partly covered
+ * objects and arrays are checked key by key. */
 export function coversAllParams(
   match: readonly MatchCondition[],
   params: unknown,

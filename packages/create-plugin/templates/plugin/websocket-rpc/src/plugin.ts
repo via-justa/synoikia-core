@@ -16,10 +16,8 @@ import raw from '../plugin.yaml';
 import { authHeaders } from './auth.js';
 import { RpcClient } from './client.js';
 
-/**
- * The {{name}} plugin: JSON-RPC methods declared in plugin.yaml. The sandbox calls
- * `{{namespace}}.call(method, params)`.
- */
+/** The {{name}} plugin: JSON-RPC methods declared in plugin.yaml; the sandbox calls
+ * `{{namespace}}.call(method, params)`. */
 
 const SERVICE = '{{name}}';
 
@@ -90,7 +88,8 @@ export function create{{Pascal}}Plugin(): PluginHandlers {
         async invoke({ key, params, context }) {
           const method = baseKey(key);
           if (!known.has(method)) throw new PluginError(ErrorCodes.UnknownOperation, `${method} is not a ${SERVICE} method`);
-          return rules.maskResult(key, await kit.client().call(method, params, kit.timeout(context)));
+          // Core masks the result's declared secrets (plugin.yaml `sensitiveResult`).
+          return kit.client().call(method, params, kit.timeout(context));
         },
       };
     },

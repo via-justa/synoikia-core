@@ -19,10 +19,8 @@ import type { SandboxResult } from '../../sandbox/index.js';
 import type { LogFields } from '../../log.js';
 import { clientIp } from '../common.js';
 
-/**
- * `/{slug}` Streamable HTTP endpoints (design §2.2): one McpServer + transport per MCP session,
- * bound to its instance and authenticated principal, exposing exactly `search` and `execute`.
- */
+/** `/{slug}` Streamable HTTP endpoints (design §2.2): one McpServer per session, bound to its instance
+ * and principal, exposing `search` and `execute`. */
 
 const SESSION_IDLE_MS = 30 * 60_000;
 /** Open MCP sessions per authenticated principal; a new one past the cap closes that principal's oldest. */
@@ -107,12 +105,7 @@ function describeExecute(manifest: Manifest): string {
   ].join('\n');
 }
 
-/**
- * DNS-rebinding defence (MCP transport spec): a browser page can make its own domain resolve to this
- * server, but it can't change the Host it sends, nor the Origin. Host must be a name this server was
- * configured for (PUBLIC_MCP_URL, MCP_ALLOWED_HOSTS) or something that can't be rebound (localhost, an
- * IP literal); an Origin, when present, must be one of those too.
- */
+/** DNS-rebinding defence: Host (and Origin, when sent) must be a configured name, localhost or an IP. */
 export function hostAllowed(config: Config, hostHeader: string | undefined): boolean {
   if (!hostHeader) return false;
   let host: string;
@@ -147,10 +140,7 @@ function presentsCredential(c: Context): boolean {
 const THROTTLE_WINDOW_MS = 60_000;
 const THROTTLE_MAX_KEYS = 1000;
 
-/**
- * One refusal line per key (level, client IP, status) per minute, so a flood of refused requests
- * can't flood the log. The next line after a window reports how many were dropped.
- */
+/** At most one refusal log line per key per minute; the next one reports how many were dropped. */
 export class LogThrottle {
   private readonly windows = new Map<string, { until: number; dropped: number }>();
 
@@ -309,12 +299,8 @@ export class McpEndpoints {
     return !!this.ctx.tokens.verify(token) || !!this.oauth.verifyAccess(token, '');
   }
 
-  /**
-   * Why a request was refused, on the server log only (the client gets the generic answer). Requests
-   * that presented a token-shaped credential are `warn`: someone is trying to connect and failing.
-   * Bare probes (scanners, a client's first unauthenticated step of OAuth discovery) are `debug`. The
-   * reason is a quoted field, never part of the message: it can carry client-controlled text.
-   */
+  /** Logs why a request was refused (the client gets the generic answer): `warn` for token-shaped
+   * credentials, `debug` for bare probes; the reason is a quoted field, never the message. */
   private refused(c: Context, slug: string, status: number, reason: string, fields: LogFields = {}) {
     const ip = clientIp(c, this.ctx.config.TRUST_PROXY);
     const level = presentsCredential(c) ? 'warn' : 'debug';

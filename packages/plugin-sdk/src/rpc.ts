@@ -29,18 +29,11 @@ export interface InvokeContext {
   expectedHash?: string;
   /** Milliseconds left in the sandbox budget. */
   deadlineMs: number;
-  /**
-   * For plugins with the `targets` capability: exactly the targets the approver saw (or a rule
-   * matched). Act on these rather than resolving the params again; core has already checked that a
-   * fresh resolution still gives the same set.
-   */
+  /** With `targets`: exactly the targets the approver saw; act on these rather than resolving again. */
   targets?: ResolvedTarget[];
 }
 
-/**
- * The plugin side of the core ⇄ plugin contract (design §3.3). Each handler takes a single params
- * object so it maps 1:1 onto a JSON-RPC request.
- */
+/** The plugin side of the core ⇄ plugin contract (design §3.3), one params object per handler. */
 export interface PluginHandlers {
   init(params: InitParams): MaybePromise<void>;
   testConnection(): MaybePromise<TestConnectionResult>;

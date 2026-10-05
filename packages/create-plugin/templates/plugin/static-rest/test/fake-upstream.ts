@@ -2,10 +2,7 @@ import { startFakeHttp } from '@synoikia/core/testing';
 import type { FakeHttp } from '@synoikia/core/testing';
 import { authorized } from './fake-auth.js';
 
-/**
- * A fake {{name}}: just enough of its API to exercise the plugin, including a response that holds a
- * secret, so the tests prove it never reaches the sandbox. Extend it as the plugin grows.
- */
+/** A fake {{name}}: enough API to exercise the plugin, including a secret that must never reach the sandbox. */
 
 export const UPSTREAM_SECRET = 'fake-upstream-secret-123';
 

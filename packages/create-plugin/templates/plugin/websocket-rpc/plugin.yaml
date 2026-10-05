@@ -1,8 +1,6 @@
 # yaml-language-server: $schema=./node_modules/@synoikia/plugin-sdk/plugin-settings.schema.json
-#
-# What {{name}} tells Synoikia about its JSON-RPC methods. Each method is declared here with its own
-# classification; rules lock and describe them on top. If the upstream can list its methods, build the
-# catalog from that instead and keep only the rules. Reference: docs/plugin-authoring.md.
+# {{name}}'s JSON-RPC methods with their classification, and rules on top (discover them instead if the
+# upstream can list them). Reference: docs/plugin-authoring.md.
 
 defaults:
   confirm: instance

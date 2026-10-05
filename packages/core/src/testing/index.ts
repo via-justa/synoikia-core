@@ -16,12 +16,8 @@ import type { CallerContext } from '../gate/pipeline.js';
 import { executeCode, searchCode } from '../runtime/index.js';
 import type { SandboxResult } from '../sandbox/index.js';
 
-/**
- * End-to-end harness for plugin packages (`@synoikia/core/testing`). A plugin's own test suite
- * boots the real core on its built bundle, which runs as a permission-confined child exactly as in
- * production, and drives it through the same `execute`/`search` path an MCP client uses. Core never
- * names a plugin: each plugin brings its own fake upstream and its own assertions.
- */
+/** Harness for plugin packages (`@synoikia/core/testing`): boots the real core on a built bundle, run
+ * as in production, and drives it the way an MCP client does. */
 
 export interface PluginHarnessOptions {
   /** The plugin package directory (the one holding `manifest.json`); its entry must be built. */
@@ -49,11 +45,7 @@ export interface HarnessApproval {
 }
 
 export interface ExecuteOptions {
-  /**
-   * Called for each approval the code triggers. Without it the caller can't be prompted, so a call
-   * that needs a human is denied. If it throws or leaves the approval open, the approval is denied
-   * and the error is kept in `approvalErrors`.
-   */
+  /** Decides each approval; without it, or if it throws or leaves one open, the approval is denied. */
   onApproval?: (approval: HarnessApproval) => void | Promise<void>;
 }
 

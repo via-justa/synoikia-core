@@ -1,10 +1,7 @@
 import type { z } from 'zod';
 
-/**
- * Parses stored JSON (settings written by an earlier release) without letting one field the current
- * schema no longer accepts take the whole feature down: each invalid field is dropped, so its default
- * applies, and a warning names it. Input from requests is still validated strictly elsewhere.
- */
+/** Parses stored JSON from an earlier release, dropping (and warning about) fields the schema now rejects
+ * so their defaults apply; request input is still validated strictly. */
 export function parseLeniently<S extends z.ZodType>(
   schema: S,
   raw: unknown,
@@ -14,10 +11,7 @@ export function parseLeniently<S extends z.ZodType>(
   return cleanStored(schema, raw, label, warn).value;
 }
 
-/**
- * The lenient parse, plus the stored value with just the rejected fields removed (defaults are not
- * written in, so a later release's new defaults still apply to fields nobody set).
- */
+/** The lenient parse plus the stored value minus rejected fields (defaults aren't written in). */
 export function cleanStored<S extends z.ZodType>(
   schema: S,
   raw: unknown,

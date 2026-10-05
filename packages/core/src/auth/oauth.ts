@@ -8,12 +8,8 @@ import { oauthClients, oauthCodes, oauthGrants, oauthTokens, users } from '../db
 import { NotFoundError, ServiceError } from '../errors.js';
 import { randomToken, safeEqual, sha256 } from './tokens.js';
 
-/**
- * Built-in OAuth 2.1 authorization server for MCP clients (design §6.2): dynamic client
- * registration (RFC 7591), authorization code + PKCE S256 only, resource indicators (RFC 8707)
- * binding tokens to endpoints, short-lived opaque access tokens and rotating refresh tokens with
- * reuse detection. Every secret is stored as a hash.
- */
+/** Built-in OAuth 2.1 server (design §6.2): DCR, code + PKCE S256, resource indicators binding tokens to
+ * endpoints, short opaque access tokens, rotating refresh tokens with reuse detection; secrets hashed. */
 
 export const ACCESS_PREFIX = 'syno_';
 const REFRESH_PREFIX = 'synr_';
@@ -205,10 +201,7 @@ export class OAuthService {
     });
   }
 
-  /**
-   * The user's password changed or they were disabled: every live grant (and its tokens) is revoked,
-   * so a stolen refresh token dies with the old password and re-enabling a user revives nothing.
-   */
+  /** Password changed or user disabled: revoke every live grant and its tokens; re-enabling revives nothing. */
   revokeUserGrants(userId: string, reason: 'password_changed' | 'user_disabled', actor: { userId?: string } = {}) {
     const now = this.now();
     return this.db.transaction((tx) => {
@@ -432,10 +425,7 @@ export class OAuthService {
     });
   }
 
-  /**
-   * Validates an access token for an MCP request to one instance. The token's resources are mapped to
-   * the instance ids recorded at consent, so a slug that was renamed or re-used matches nothing new.
-   */
+  /** Validates an access token for one instance, by the instance ids recorded at consent, not slugs. */
   verifyAccess(token: string, instanceId: string) {
     if (!token.startsWith(ACCESS_PREFIX)) return null;
     const found = this.db
@@ -474,10 +464,7 @@ export class OAuthService {
     });
   }
 
-  /**
-   * One-time upgrade for grants from before `instance_ids`: map each resource URL's slug to the
-   * instance that has it now (what those grants effectively meant). Unmatched resources map to nothing.
-   */
+  /** One-time upgrade for grants from before `instance_ids`: map each resource's slug to its instance now. */
   backfillInstanceIds(instances: { id: string; slug: string }[]): number {
     const bySlug = new Map(instances.map((i) => [i.slug, i.id]));
     let n = 0;

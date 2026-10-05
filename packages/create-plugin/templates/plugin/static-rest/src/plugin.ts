@@ -17,10 +17,8 @@ import type { PluginHandlers } from '@synoikia/plugin-sdk';
 import raw from '../plugin.yaml';
 import { authHeaders } from './auth.js';
 
-/**
- * The {{name}} plugin: operations are declared in plugin.yaml, and the sandbox calls
- * `{{namespace}}.call(operation, { path, query, body })`.
- */
+/** The {{name}} plugin: operations declared in plugin.yaml; the sandbox calls
+ * `{{namespace}}.call(operation, { path, query, body })`. */
 
 const SERVICE = '{{name}}';
 

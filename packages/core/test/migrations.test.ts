@@ -252,3 +252,33 @@ describe('0011 sensitive params migration', () => {
     expect(db.select().from(schema.operations).get()).toMatchObject({ key: 'a.set', sensitiveParams: null });
   });
 });
+
+describe('0012 sensitive result migration', () => {
+  it('adds the columns and records the installed plugin version for successfully synced instances only', () => {
+    const { dir, sqlite } = databaseAt('0011_sensitive_params');
+    const now = Date.now();
+    sqlite.exec(`
+      INSERT INTO plugins (id, plugin_id, version, path, manifest, status) VALUES ('p1', 'echo', '1.4.0', '/x', '{}', 'ok');
+      INSERT INTO plugin_instances (id, plugin_id, slug, display_name, last_synced_at, last_sync_status)
+        VALUES ('i1', 'p1', 'nas', 'NAS', ${now}, 'ok');
+      INSERT INTO plugin_instances (id, plugin_id, slug, display_name) VALUES ('i2', 'p1', 'fresh', 'Never synced');
+      INSERT INTO plugin_instances (id, plugin_id, slug, display_name, last_synced_at, last_sync_status)
+        VALUES ('i3', 'p1', 'failed', 'Last sync failed', ${now}, 'error: upstream down');
+      INSERT INTO operation_groups (id, instance_id, key, label, level, first_seen_at) VALUES ('g', 'i1', 'a', 'A', 'ask', ${now});
+      INSERT INTO operations (id, instance_id, key, kind, plugin_group, group_id, classification, classification_source,
+          inferred_classification, inferred_reason, first_seen_at, last_seen_at)
+        VALUES ('o1', 'i1', 'a.token', 'method', 'a', 'g', 'write', 'inferred', 'write', 'x', ${now}, ${now});
+    `);
+    sqlite.close();
+    const db = openDatabase({ dataDir: dir });
+    expect(db.select().from(schema.operations).get()).toMatchObject({ key: 'a.token', sensitiveResult: null });
+    const version = (id: string) =>
+      db.select().from(schema.pluginInstances).where(eq(schema.pluginInstances.id, id)).get()?.catalogPluginVersion;
+    expect(version('i1')).toBe('1.4.0');
+    // Never synced: its first call syncs anyway.
+    expect(version('i2')).toBeNull();
+    // Its last sync failed (an update whose sync failed?): the stored catalog may be an older
+    // bundle's, so it syncs before serving.
+    expect(version('i3')).toBeNull();
+  });
+});

@@ -7,10 +7,7 @@ import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
 import { ACCESS_LEVELS, FULL_ACCESS, allowedLevels, effectiveAccess, isAccessLevel, minLevel } from '../gate/access.js';
 import type { AccessDecision, AccessLevel, AccessPrincipal } from '../gate/access.js';
 
-/**
- * Group-level access management (design §5.2.1). All mutations are audited `config` events.
- * Levels only change through these functions; nothing here is reachable from sandboxed code.
- */
+/** Group access management (design §5.2.1): audited `config` events, unreachable from sandboxed code. */
 
 type GroupRow = typeof operationGroups.$inferSelect;
 type OperationRow = typeof operations.$inferSelect;
@@ -34,11 +31,7 @@ export const accessInput = (op: OperationRow) => ({
 
 const isPlainWrite = (op: OperationRow) => !op.stale && !op.locked && op.classification === 'write';
 
-/**
- * Writes that run without asking once their group is at `write`. Setting a group's level resets every
- * operation in it to follow the group, so that is every plain write in it; raising a group to `write`
- * acknowledges them (locked ops never auto-run).
- */
+/** The plain writes in a group that run without asking at `write` (raising to `write` acknowledges them). */
 const runsAtGroupWrite = isPlainWrite;
 
 /** Resets every operation in these groups to follow its group; returns the keys that had their own level. */
@@ -144,11 +137,8 @@ export function resolveAccess(
 
 // ── group level ──────────────────────────────────────────────────────────────────────────────────
 
-/**
- * Sets one group's level and resets every operation in it to follow the group (locked operations go
- * back to closed). Raising to `write` acknowledges the plain writes it lets run without asking; the
- * audit event lists them.
- */
+/** Sets a group's level and resets its operations to follow it; raising to `write` acknowledges the
+ * plain writes it opens, listed in the audit event. */
 export function setGroupLevel(
   db: Db,
   instanceId: string,
@@ -196,10 +186,7 @@ function acknowledgeWrites(db: DbLike, groupIds: string[], actor: Actor, now: Da
   return fresh.map((o) => o.key);
 }
 
-/**
- * Sets every group of an instance to one level and resets every operation to follow its group.
- * `write` acknowledges the plain writes it lets run without asking. Locked operations never auto-run.
- */
+/** Sets every group to one level and resets operations to follow; `write` acknowledges plain writes. */
 export function applyBulkLevel(
   db: Db,
   instanceId: string,
@@ -265,10 +252,7 @@ export function renameGroup(db: Db, instanceId: string, key: string, label: stri
   });
 }
 
-/**
- * Merges groups into `into` (created if new). Stored as aliases so future syncs keep the grouping.
- * The merged group takes the lowest level involved, so merging never widens access.
- */
+/** Merges groups into `into`, stored as aliases for future syncs; takes the lowest level involved. */
 export function mergeGroups(
   db: Db,
   instanceId: string,
@@ -362,11 +346,8 @@ export interface OperationPatch {
   attestationRequired?: boolean;
 }
 
-/**
- * Per-operation level and acknowledgement. Read or write comes from the plugin and isn't editable. The
- * level must be one the operation's kind allows (reads: none/read/ask; writes: none/ask/write; locked:
- * none/ask); locked operations refuse `write` with 409. Setting a write to `write` acknowledges it.
- */
+/** Per-operation level and acknowledgement. The level must fit the operation's kind; locked refuses
+ * `write` (409). Setting a write to `write` acknowledges it. */
 export function updateOperation(
   db: Db,
   instanceId: string,

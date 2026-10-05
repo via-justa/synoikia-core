@@ -45,10 +45,7 @@ export const catalog = (...operations: OperationDescriptor[]) => ({ upstreamVers
 
 const FIXTURE_PLUGINS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/plugins');
 
-/**
- * An app with the fixture plugins (echo) installed where installs go and enabled, as an admin would
- * have done. `env.DATA_DIR` is required.
- */
+/** An app with the fixture plugins installed and enabled; `env.DATA_DIR` is required. */
 export async function createTestApp(env: Record<string, string | undefined>, opts?: AppOptions) {
   cpSync(FIXTURE_PLUGINS, path.join(env.DATA_DIR!, 'plugins'), { recursive: true });
   const ctx = await createAppContext(loadConfig(env), opts);

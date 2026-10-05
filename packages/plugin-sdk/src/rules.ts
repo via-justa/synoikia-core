@@ -1,23 +1,11 @@
 import { z } from 'zod';
 import { baseKey, splitSuffix } from './catalog-helpers.js';
-import type { OperationDescriptor, ResolvedTarget } from './operations.js';
+import { SensitiveResultSchema } from './operations.js';
+import type { OperationDescriptor, ResolvedTarget, SensitiveResult } from './operations.js';
 import { isPlainObject, stringOr } from './plugin-kit.js';
 
-/**
- * `plugin.yaml`: what a plugin declares about its operations, as data instead of code (design §3.4,
- * §5.2). Discovery stays in the plugin (an introspection call, an OpenAPI spec, a service list); this
- * file decorates what it finds, by operation key:
- *
- * - `rules`: locked operations, split twins, classification overrides, match profiles, sensitive
- *   params and results, typed-confirmation literals, summary notes, descriptions and guidance;
- * - `exclude` / `include`: operations left out of the catalog entirely;
- * - `operations`: operations declared outright, for APIs with no discovery (`staticCatalog`);
- * - `plugin`: anything specific to one upstream, validated by the plugin's own schema.
- *
- * Precedence fails closed: an excluded operation is gone; `locked` (or being a split twin) always
- * means write with typed confirmation; then a rule's `classification`; then the plugin's own
- * heuristic; and an operation nothing classifies is a write.
- */
+/** `plugin.yaml` (design §3.4): rules, exclude/include, declared operations and plugin settings on top
+ * of discovery. Fails closed: excluded, locked, a rule's classification, the heuristic, else write. */
 
 const pointer = z.string().regex(/^(\/[^/]{1,128}){1,8}$/, 'a JSON pointer such as /1 or /0/password');
 const pattern = z.string().min(1).max(512);
@@ -50,13 +38,6 @@ const ConfirmSourceSchema = z.union([
 ]);
 const ConfirmSchema = z.union([ConfirmSourceSchema, z.array(ConfirmSourceSchema).min(1)]);
 export type ConfirmSource = z.infer<typeof ConfirmSourceSchema>;
-
-const SensitiveResultSchema = z.union([
-  /** The whole result is a secret (a token, a key). */
-  z.literal('whole'),
-  /** Fields named `keys` in the result (or each row of it), whatever their value; with `deep`, at any depth. */
-  z.object({ keys: z.array(z.string().min(1)).min(1), deep: z.boolean().default(false) }).strict(),
-]);
 
 export const RuleSchema = z
   .object({
@@ -197,8 +178,9 @@ export interface CompiledRules<P = Record<string, unknown>> {
   summaryNotes(key: string): string[];
   /** The typed-confirmation literal of a locked operation; undefined for others or when nothing yields one. */
   confirmLiteral(ctx: ConfirmContext): Promise<string | undefined>;
-  /** The result with declared secret parts replaced by `[REDACTED]` (a copy). */
-  maskResult(key: string, result: unknown): unknown;
+  /** Masks `value` as `key`'s `sensitiveResult` would; only for other operations' results embedded in this
+   * one's (job records), since core masks each operation's own result. */
+  maskEmbeddedResult(key: string, value: unknown): unknown;
 }
 
 export const REDACTED = '[REDACTED]';
@@ -256,11 +238,11 @@ function pickField(row: unknown, fields: string | string[]): string | undefined 
 /** A value worth masking: anything but null, undefined and the empty string. */
 const present = (v: unknown) => v !== null && v !== undefined && v !== '';
 
+/** Deeper than masking looks into: hidden rather than passed through unchecked. */
 const MAX_MASK_DEPTH = 16;
 
-function maskDeep(value: unknown, keys: ReadonlySet<string>, depth = 0): unknown {
+function maskDeep(value: unknown, keys: ReadonlySet<string>, depth: number): unknown {
   if (value === null || typeof value !== 'object') return value;
-  // Deeper than anything masking looks into: hide it rather than pass an unchecked secret through.
   if (depth > MAX_MASK_DEPTH) return REDACTED;
   if (Array.isArray(value)) return value.map((v) => maskDeep(v, keys, depth + 1));
   const out: Record<string, unknown> = {};
@@ -279,6 +261,14 @@ function maskShallow(value: unknown, keys: ReadonlySet<string>): unknown {
   return Array.isArray(value) ? value.map(mask) : mask(value);
 }
 
+/** Masks what a `sensitiveResult` declares (design §5.5), on a copy; core applies it after `invoke`. */
+export function maskSensitiveResult<T>(value: T, spec: SensitiveResult | null | undefined): T {
+  if (!spec) return value;
+  if (spec === 'whole') return (present(value) ? REDACTED : value) as T;
+  const keys = new Set(spec.keys);
+  return (spec.deep ? maskDeep(value, keys, 0) : maskShallow(value, keys)) as T;
+}
+
 interface Merged {
   locked: boolean;
   classification?: 'read' | 'write';
@@ -295,12 +285,8 @@ interface Merged {
   splits: string[];
 }
 
-/**
- * Compiles validated settings. A field set by several matching rules takes the first rule's value,
- * except `locked` and `attestation` (any rule), `sensitiveParams` and `summaryNote` (all rules).
- * `sensitiveParams`, `sensitiveResult`, `matchProfile` and `guidance` also apply to a split twin
- * through its base key; everything else matches the exact key.
- */
+/** Compiles settings: the first matching rule's value wins, except `locked`/`attestation` (any) and
+ * `sensitiveParams`/`summaryNote` (all); some fields reach split twins through their base key. */
 export function compileRules<P>(settings: PluginSettings<P>, hooks: RuleHooks = {}): CompiledRules<P> {
   const rules = settings.rules.map((rule) => ({ rule, res: listOf(rule.match).map(globRegex) }));
   const exclude = settings.exclude.map(globRegex);
@@ -431,6 +417,7 @@ export function compileRules<P>(settings: PluginSettings<P>, hooks: RuleHooks = 
       ...(m.attestation ? { attestationRequired: true } : {}),
       ...(matchProfile ? { matchProfile } : {}),
       ...(sensitiveParams.length ? { sensitiveParams } : {}),
+      ...(m.sensitiveResult ? { sensitiveResult: m.sensitiveResult } : {}),
       ...(Object.keys(mergedDocs).length ? { docs: mergedDocs } : {}),
     };
   };
@@ -455,12 +442,6 @@ export function compileRules<P>(settings: PluginSettings<P>, hooks: RuleHooks = 
       }
       return undefined;
     },
-    maskResult(key, result) {
-      const spec = merged(key).sensitiveResult;
-      if (!spec) return result;
-      if (spec === 'whole') return present(result) ? REDACTED : result;
-      const keys = new Set(spec.keys);
-      return spec.deep ? maskDeep(result, keys) : maskShallow(result, keys);
-    },
+    maskEmbeddedResult: (key, value) => maskSensitiveResult(value, merged(key).sensitiveResult),
   };
 }

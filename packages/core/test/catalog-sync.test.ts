@@ -228,6 +228,28 @@ describe('applyCatalogSync', () => {
     expect(opRow(db, 'app.image.pull').groupId).toBe(appGroup.id);
   });
 
+  it("stores each operation's declared result secrets, and updates them on later syncs", () => {
+    const { db, instanceId } = seedInstance();
+    applyCatalogSync(
+      db,
+      instanceId,
+      catalog(op('key.create', { sensitiveResult: { keys: ['key'] } }), op('token.make', { sensitiveResult: 'whole' })),
+    );
+    expect(opRow(db, 'key.create').sensitiveResult).toEqual({ keys: ['key'], deep: false });
+    expect(opRow(db, 'token.make').sensitiveResult).toBe('whole');
+
+    applyCatalogSync(db, instanceId, catalog(op('key.create'), op('token.make', { sensitiveResult: 'whole' })));
+    expect(opRow(db, 'key.create').sensitiveResult).toBeNull();
+  });
+
+  it('rejects a malformed sensitiveResult without touching the database', () => {
+    const { db, instanceId } = seedInstance();
+    expect(() =>
+      applyCatalogSync(db, instanceId, catalog(op('key.create', { sensitiveResult: { keys: [] } }))),
+    ).toThrow();
+    expect(db.select().from(operations).all()).toEqual([]);
+  });
+
   it('rejects invalid plugin output without touching the database', () => {
     const { db, instanceId } = seedInstance();
     expect(() => applyCatalogSync(db, instanceId, catalog(op('a.query'), op('a.query')))).toThrow(/Duplicate/);

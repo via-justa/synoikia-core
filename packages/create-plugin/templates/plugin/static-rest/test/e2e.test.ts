@@ -7,10 +7,7 @@ import { CREDENTIALS } from './fake-auth.js';
 import { startFake{{Pascal}}, UPSTREAM_SECRET } from './fake-upstream.js';
 import type { Fake{{Pascal}} } from './fake-upstream.js';
 
-/**
- * The real Synoikia core running this plugin's built bundle (a permission-confined child, as in
- * production) against the fake {{name}}, through core's plugin harness.
- */
+/** The real core running this plugin's built bundle against the fake {{name}}, via core's harness. */
 
 const PLUGIN_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 

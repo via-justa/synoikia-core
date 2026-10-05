@@ -28,10 +28,7 @@ function installedVersion(name: string): string | undefined {
   }
 }
 
-/**
- * The range generated packages should use for one of this tool's own dependencies: as published
- * (`pnpm pack` turns `workspace:` ranges into real ones), else from the installed version.
- */
+/** The range generated packages use for one of this tool's dependencies: as published, else installed. */
 export function dependencyRange(name: string): string {
   const own = JSON.parse(readFileSync(path.join(PACKAGE_DIR, 'package.json'), 'utf8')) as {
     name: string;

@@ -1,6 +1,6 @@
 # Writing a Synoikia plugin
 
-A plugin connects one kind of self-hosted service (the _upstream_) to Synoikia. It describes the upstream's API: which operations exist, which read and which write, which are destructive, and which fields hold secrets. **It never decides what is allowed.** Core's sandbox, permission gate, approvals, redaction and audit apply to every call. Architecture: [`design/unified-mcp-server.md`](design/unified-mcp-server.md) §3–§5.
+A plugin connects one kind of self-hosted service (the _upstream_) to Synoikia. It describes the upstream's API: which operations exist, which read and which write, which are destructive, and which fields hold secrets. **It never decides what is allowed.** Core's sandbox, permission gate, approvals, redaction and audit apply to every call. Design: [`design/`](design/README.md) §3–§5.
 
 ## Start
 
@@ -20,7 +20,7 @@ pnpm test                                       # check, build, unit and e2e tes
 | `websocket-rpc` | JSON-RPC 2.0 over WebSocket                              | `operations:` in `plugin.yaml`              |
 | `blank`         | anything else: introspection endpoints, custom protocols | your code, decorated by `plugin.yaml` rules |
 
-Auth kinds are `bearer`, `api-key` (with a header name), `basic` and `none`. The generated plugin builds and passes its tests straight away, against a fake upstream in `test/`.
+Auth kinds are `bearer`, `api-key` (with a header name), `basic` and `none`. The generated plugin builds and passes its tests straight away: unit tests for every archetype, plus end-to-end tests against a fake upstream in `test/` for all but `blank`.
 
 ## Files
 
@@ -32,7 +32,7 @@ Auth kinds are `bearer`, `api-key` (with a header name), `basic` and `none`. The
 | `src/auth.ts`   | How each request authenticates                                                                            |
 | `test/`         | A fake upstream, `checkConformance` unit tests, `checkPluginContract` e2e tests on core's harness         |
 
-`synoikia-plugin build` bundles everything, `plugin.yaml` included (validated and inlined at build time), into one self-contained `dist/index.js`. At runtime the plugin runs as a permission-confined child that can read nothing outside its package and reach only `network.hosts`.
+`synoikia-plugin build` bundles everything, `plugin.yaml` included (validated and inlined at build time), into one self-contained `dist/index.js`. At runtime the plugin runs as a permission-confined child: it can read nothing outside its package directory, and can't write files or spawn processes. **Network access is not restricted.** `network.hosts` is a declaration the admin reviews before enabling the plugin (an update that changes it arrives disabled again), not something core enforces; container egress policy is the mitigation (design §4.4, §14). List exactly the hosts the plugin connects to.
 
 ## `plugin.yaml`
 
@@ -77,7 +77,7 @@ plugin: {} # anything specific to this upstream, validated by the plugin's own s
 | `split`           | Adds a locked twin `<key>#<suffix>`; the plugin decides per call when the twin applies (`splitWhen`).                                                                              |
 | `confirm`         | Literal source(s), first that yields wins: `instance`, `targets`, `{ param: /pointer }`, `{ lookup: … }`, `{ custom: name }`. A lookup falls back to the `$param` it looked up by. |
 | `sensitiveParams` | JSON pointers core redacts from params wherever they are shown or stored (all matching rules add up).                                                                              |
-| `sensitiveResult` | Secrets in the result core can't recognize by key name: `whole`, or `{ keys, deep }`.                                                                                              |
+| `sensitiveResult` | Secrets in the result that core can't recognize by key name: `whole`, or `{ keys, deep }`. Core masks them (below). Needs `sdk` `^0.2.2` or later in the manifest.                 |
 | `matchProfile`    | The manifest match profile pre-approval rules use for this operation.                                                                                                              |
 | `summaryNote`     | Appended to the approval summary.                                                                                                                                                  |
 | `description`     | `docs.description` (`{base}` and `{key}` are replaced).                                                                                                                            |
@@ -101,7 +101,7 @@ A field set by several matching rules takes the **first** rule's value, except `
 - More than 32 `sensitiveParams` on one operation (core's limit), rather than silently redacting fewer.
 - A spec whose `$ref`s expand past a fixed budget, and YAML aliases past 100.
 
-`sensitiveResult` masks any non-empty value under a listed key (strings, numbers, objects), and anything nested deeper than it looks.
+`sensitiveResult` masks any non-empty value under a listed key (strings, numbers, objects), and anything nested deeper than it looks. Like `sensitiveParams`, it travels on the operation descriptor and **core** applies it, to the plugin's raw result right after `invoke` and before its own redaction by key name and secret value: an `invoke` returns the upstream's result as is. Core does this from plugin contract `0.2.2`, so a plugin with a `sensitiveResult` rule must declare `"sdk": "^0.2.2"` (or later) in its manifest, or an older core would drop the field; `synoikia-plugin check`, `checkConformance` and `repo pack` refuse it otherwise, and on an older core the SDK itself refuses to sync and to run any operation that declares one. The one thing core can't attribute is another operation's result handed back inside this one's (a job queue's records): mask those with `rules.maskEmbeddedResult(key, value)`, which applies `key`'s rule.
 
 ## The SDK
 
@@ -112,7 +112,7 @@ A field set by several matching rules takes the **first** rule's value, except `
 | Socket protocol                        | `PendingRequests`, `singleFlight`, `joinApiPath(…, { websocket: true })`                               |
 | OpenAPI catalog and binding            | `buildOpenApiCatalog`, `restBinding`, `fetchSpec`                                                      |
 | Declared catalog                       | `staticCatalog`, `staticHttpBinding`                                                                   |
-| Rules                                  | `parsePluginSettings`, `compileRules` (`describe`, `confirmLiteral`, `maskResult`, …)                  |
+| Rules                                  | `parsePluginSettings`, `compileRules` (`describe`, `confirmLiteral`, `maskEmbeddedResult`, …)          |
 | Errors                                 | `PluginError`, `upstreamError`, `statusKind`                                                           |
 | Tests                                  | `checkConformance`, `checkManifest`; `startFakeHttp`, `checkPluginContract` (`@synoikia/core/testing`) |
 

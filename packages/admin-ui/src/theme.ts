@@ -1,8 +1,4 @@
-/**
- * Light / dark / auto, picked on My profile. A per-browser preference: it lives in localStorage and
- * shows as `data-theme` on <html>, which styles.css reads. Auto leaves the attribute off, so the OS
- * setting decides.
- */
+/** Light / dark / auto, per browser in localStorage, shown as `data-theme` on <html>; auto follows the OS. */
 export type ThemePref = 'auto' | 'light' | 'dark';
 export const THEME_PREFS: ThemePref[] = ['auto', 'light', 'dark'];
 

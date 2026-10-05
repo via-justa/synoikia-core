@@ -4,12 +4,8 @@ import { checkManifest, isSdkCompatible, parseManifest, parsePluginSettings } fr
 import type { PluginSettings } from '@synoikia/plugin-sdk';
 import { parseYamlFile } from './files.js';
 
-/**
- * Static checks of a plugin package, the ones every plugin used to repeat in a `manifest.test.ts`:
- * the manifest is valid and compatible with this SDK, credential fields are write-only secrets in
- * `sensitiveKeys`, `plugin.yaml` is valid and names only declared match profiles, the manifest id is
- * the directory name, and `manifest.json` and `package.json` carry the same version.
- */
+/** Static checks every plugin used to repeat: manifest, SDK range, secret fields, plugin.yaml and its
+ * match profiles, id = directory, and matching versions. */
 export function checkPlugin(dir: string): string[] {
   const read = (name: string) => JSON.parse(readFileSync(path.join(dir, name), 'utf8')) as Record<string, unknown>;
   let manifest: unknown;

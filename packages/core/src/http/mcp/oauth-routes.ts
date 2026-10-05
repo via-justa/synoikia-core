@@ -13,17 +13,10 @@ import { localLoginEnabled, mustEnrollTotp } from '../admin/auth.js';
 import { clientIp, isSecure } from '../common.js';
 import { consentPage, errorPage, loginPage, totpPage } from './pages.js';
 
-/**
- * OAuth 2.1 authorization server endpoints and the MCP-port sign-in (design §6.2). The sign-in here
- * reuses portal accounts, TOTP and OIDC, but issues a separate short-lived `oauth_ui` session that
- * only works for consent and approval pages — never for the Admin API.
- */
+/** OAuth 2.1 endpoints and the MCP-port sign-in (design §6.2): portal accounts, but a separate
+ * short-lived session that works only for consent and approval pages. */
 
-/**
- * MCP-port sign-ins are kept apart by purpose (design §2.1): a session made to consent to a client
- * can't decide approvals, and one made to decide an approval can't authorize clients. Each has its
- * own cookie, scoped to the pages it serves.
- */
+/** MCP-port sign-ins are separated by purpose (design §2.1), each with its own scoped cookie. */
 export type UiPurpose = 'oauth' | 'approval';
 const UI_SESSIONS = {
   oauth: { cookie: 'syn_mcp_oauth', kind: 'oauth_ui', path: '/oauth' },
@@ -69,10 +62,7 @@ export const checkUiCsrf = (c: Context, submitted: unknown) => {
   return !!cookie && typeof submitted === 'string' && safeEqual(cookie, submitted);
 };
 
-/**
- * When each MCP-port session last proved a TOTP code (design §5.3). Approvals need one; locked
- * operations need a recent one. Kept in memory: after a restart the page simply asks again.
- */
+/** When each MCP-port session last proved TOTP (design §5.3); in memory, so a restart asks again. */
 const totpProofs = new Map<string, number>();
 
 export function recordTotpProof(ctx: AppContext, idHash: string) {

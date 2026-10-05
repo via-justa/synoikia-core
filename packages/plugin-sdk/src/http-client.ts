@@ -6,12 +6,8 @@ import { isPlainObject } from './plugin-kit.js';
 import { statusKind, upstreamError } from './upstream-errors.js';
 import { parseBaseUrl } from './url.js';
 
-/**
- * A JSON-over-HTTP client for plugin upstreams, on node:http(s) so `verifyTls: false` works for
- * self-signed certificates. Redirects are never followed (a 3xx is an error), responses are size
- * capped, and auth headers come only from the plugin, never from call params. Errors carry the
- * method and path, never headers, query values or bodies.
- */
+/** JSON-over-HTTP client for upstreams (node:http(s), so `verifyTls: false` works): no redirects, capped
+ * responses, auth only from the plugin; errors carry method and path only. */
 
 export interface HttpJsonClientOptions {
   /** The API base every path is appended to, e.g. `https://seerr.lan/api/v1`. */
@@ -28,10 +24,7 @@ export interface HttpJsonClientOptions {
   headers?: () => Record<string, string>;
   /** Runs before each request, e.g. to sign in first. Receives the call's deadline. */
   before?: (deadline: number) => Promise<void>;
-  /**
-   * Called when a request is answered 401 or 403. Return true to retry the request once (after
-   * signing in again); the first attempt never reached a handler.
-   */
+  /** On 401/403: return true to retry once after signing in again. */
   onAuthFailure?: (deadline: number) => Promise<boolean>;
 }
 
@@ -97,10 +90,7 @@ export class HttpJsonClient {
     this.basePath = path;
   }
 
-  /**
-   * One API call: the parsed body of a 2xx response, or a `PluginError` (401/403 denied, 400/422
-   * invalid params, anything else upstream error).
-   */
+  /** One API call: the parsed 2xx body, or a `PluginError` (401/403 denied, 400/422 invalid, else upstream). */
   async request(method: string, path: string, opts: HttpRequestOptions = {}): Promise<unknown> {
     const label = `${method} ${path}`;
     const deadline = opts.deadline ?? Date.now() + (opts.timeoutMs ?? this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);

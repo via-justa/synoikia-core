@@ -11,11 +11,8 @@ export const InstanceSettingsSchema = z
       .min(10_000)
       .max(24 * 60 * 60_000)
       .default(15 * 60_000),
-    /**
-     * Let MCP clients that only support form prompts approve plain writes (never locked or
-     * typed-confirmation operations). Off by default: any client on this endpoint could then approve
-     * its own writes. URL prompts (a signed-in human on the approval page) always work.
-     */
+    /** Let form-prompt-only clients approve plain writes. Off by default: any client could then approve its
+     * own writes. URL prompts always work. */
     formElicitationApprovals: z.enum(['off', 'writes']).default('off'),
     /** `execute` and `search` runs per minute, per principal (design §5.2). */
     executePerMinute: z.number().int().min(1).max(10_000).default(30),

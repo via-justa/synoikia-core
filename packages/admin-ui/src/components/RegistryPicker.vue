@@ -4,12 +4,8 @@ import { http, qs } from '../api';
 import type { RegistryEntry, TargetFieldOptions, TargetsDecl } from '../types';
 import ChipsInput from './ChipsInput.vue';
 
-/**
- * `$targets` selector (design §8.3 `registry-picker`), built from what the plugin declares: its
- * targets and the scopes rules can select them by. Where the plugin names a registry kind for them,
- * values are suggested from the instance's synced registry, so rules name real things; anything else
- * is free text.
- */
+/** `$targets` selector (design §8.3), from the plugin's targets and scopes; values are suggested
+ * from the synced registry where the plugin names a kind, else free text. */
 const props = defineProps<{ instanceId: string; targets: TargetsDecl; options?: TargetFieldOptions }>();
 const model = defineModel<{ ids: string[]; scopes: Record<string, string[]> }>({ required: true });
 

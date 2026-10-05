@@ -16,7 +16,7 @@
   <a href="#the-name">The name</a> ·
   <a href="#deployment">Deployment</a> ·
   <a href="#development">Development</a> ·
-  <a href="docs/design/unified-mcp-server.md">Design</a> ·
+  <a href="docs/design/README.md">Design</a> ·
   <a href="#contributing">Contributing</a>
 </p>
 
@@ -84,7 +84,7 @@ An operation's own level only offers what fits it: a read is None, Read or Ask (
 
 **🖥️ An admin portal on your LAN.** A separate, login-protected port with local accounts, [TOTP][totp] and [OIDC][oidc] single sign-on, for endpoints, access levels, pre-approval rules, clients, plugins and settings.
 
-**🔄 Self-maintaining catalogs.** Each instance re-syncs its operation catalog when the upstream version changes and on a daily schedule, and keeps serving the last good catalog if the upstream is briefly unreachable.
+**🔄 Self-maintaining catalogs.** Each instance re-syncs its operation catalog when the upstream version changes, before serving anything from a newly installed plugin version, and on a daily schedule, and keeps serving the last good catalog if the upstream is briefly unreachable.
 
 ## The name
 
@@ -100,9 +100,9 @@ The mark draws the same idea: four identical dwellings, joined by paths to one s
 
 ## Status
 
-The core is complete (design §13, phases 0–16): encryption, catalog sync with access levels, the permission-confined plugin host, the [`isolated-vm`][isolated-vm] sandbox, the permission gate with pre-approval rules and human approval, admin auth (local + TOTP + OIDC), MCP auth (external, bearer, OAuth 2.1), the Admin API and portal, ntfy/webhook notifications, plugin repositories with minisign signing, and maintenance jobs.
+The core is complete: encryption, catalog sync with access levels, the permission-confined plugin host, the [`isolated-vm`][isolated-vm] sandbox, the permission gate with pre-approval rules and human approval, admin auth (local + TOTP + OIDC), MCP auth (external, bearer, OAuth 2.1), the Admin API and portal, ntfy/webhook notifications, plugin repositories with minisign signing, and maintenance jobs.
 
-The TrueNAS, Seerr and Home Assistant plugins live in [synoikia-core-plugins][core-plugins] and are released there as a signed plugin repository. The full design is in [`docs/design/unified-mcp-server.md`](docs/design/unified-mcp-server.md), and the admin portal mockups it builds on are in [`docs/mockups/admin-portal`](docs/mockups/admin-portal/).
+The TrueNAS, Seerr and Home Assistant plugins live in [synoikia-core-plugins][core-plugins] and are released there as a signed plugin repository. The software design description is in [`docs/design/`](docs/design/README.md).
 
 ## Layout
 

@@ -6,10 +6,7 @@ import type { Db, DbLike } from '../db/index.js';
 import { registryEntries } from '../db/schema.js';
 import { ValidationError } from '../errors.js';
 
-/**
- * Registry mirror (design §2.4): pickable upstream objects, of kinds the plugin defines, mirrored
- * locally so pickers and `search` never pull the whole registry from the upstream.
- */
+/** Registry mirror: the plugin's pickable upstream objects, kept locally for pickers and `search`. */
 
 export function applyRegistrySync(
   db: Db,

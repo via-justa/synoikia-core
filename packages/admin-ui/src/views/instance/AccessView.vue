@@ -7,14 +7,8 @@ import { useAppStore } from '../../stores/app';
 import { LEVELS } from '../../types';
 import type { GroupSummary, Instance, Level, Operation } from '../../types';
 
-/**
- * Access page (design §5.2.1): one None | Read | Ask | Write control per group. Setting it resets every
- * operation in the group to follow it. Each operation has its own control with only the levels its
- * kind allows (reads: None | Read | Ask, writes: None | Ask | Write, locked: None | Ask); a level of
- * its own shows a ↺ that puts it back on the group's. Ask: calls wait for a human. Write: writes run
- * without asking; setting it acknowledges them, with no confirmation.
- * Locked operations never follow their group: each needs its own Ask, and can't be set to Write.
- */
+/** Access page (design §5.2.1): a level per group, and per operation a level its kind allows that
+ * overrides the group (↺ resets it). Locked operations need their own Ask and never take Write. */
 const props = defineProps<{ instance: Instance }>();
 const app = useAppStore();
 const base = computed(() => `/api/instances/${props.instance.id}`);

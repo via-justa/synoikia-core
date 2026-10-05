@@ -3,11 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { AUTH_MODE_LABELS } from '../format';
 import type { Instance } from '../types';
 
-/**
- * "Connect a client": how to point Claude Code, Claude Desktop or a Cloudflare MCP portal at this
- * endpoint, filled in with its URL and the way it signs clients in. Instructions only; nothing here
- * changes settings. Tokens are never shown: snippets carry a `<token>` placeholder.
- */
+/** How to point an MCP client at this endpoint: instructions only, tokens shown as `<token>`. */
 const props = defineProps<{
   instance: Instance;
   /** Whether MCP clients may register themselves (OAuth dynamic client registration); null if unknown. */
@@ -41,10 +37,8 @@ watch(client, (v) => {
 });
 
 const slug = computed(() => props.instance.slug);
-/**
- * Without PUBLIC_MCP_URL core only knows the path (`/<slug>`); the MCP listener is on another port than
- * this portal, so guessing from the browser's address would be wrong. Show a placeholder host instead.
- */
+/** Without PUBLIC_MCP_URL only the path is known and the MCP port differs from this portal's,
+ * so a placeholder host is shown rather than a guess. */
 const knownUrl = computed(() => {
   const u = props.instance.endpointUrl;
   return u && /^https?:\/\//.test(u) ? u : null;

@@ -7,10 +7,7 @@ import { plugins } from '../src/db/schema.js';
 import { startPluginHarness } from '../src/testing/index.js';
 import type { PluginHarness } from '../src/testing/index.js';
 
-/**
- * The plugin harness (`@synoikia/core/testing`) that plugin packages run their own
- * end-to-end tests on. Exercised here with the echo fixture, so core's suite never names a plugin.
- */
+/** The plugin harness, exercised with the echo fixture so core's suite never names a plugin. */
 
 const ECHO = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/plugins/echo');
 

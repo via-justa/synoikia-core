@@ -3,20 +3,10 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { checkPlugin } from './check.js';
 
-/**
- * Builds a signed plugin repository that Synoikia installs plugins from (design §4.2–4.3). Every
- * plugin version is a GitHub release `<id>-v<version>` holding `<id>-<version>.tgz` and its minisign
- * signature; `index.json` lists every released version and lives on the fixed `index` release. A
- * release workflow runs the steps in order, signing between `pack` and `index`:
- *
- *   pack     build and pack each plugin whose manifest version isn't in the current index yet
- *   index    merge the new versions, with their signatures, into the current index
- *   verify   install the new versions with Synoikia's own repository service, pinned to minisign.pub
- *   publish  create the version releases, then replace index.json on the `index` release
- *
- * Released versions are never rebuilt or removed: to ship a change, bump the plugin's version.
- */
+/** Builds a signed plugin repository (design §4.2–4.3): pack → (sign) → index → verify → publish, one
+ * `<id>-v<version>` release per version and `index.json` on the `index` release; versions never change. */
 
 export interface RepoOptions {
   /** The repository root (holding `plugins/` and `minisign.pub`). */
@@ -140,6 +130,9 @@ export function createRepoTool(opts: RepoOptions) {
         throw new Error(`plugins/${id}: package.json ${pkg.version} and manifest.json ${manifest.version} differ`);
       }
       if (released(index, id, manifest.version)) continue;
+      // The same checks the plugin's own tests run, so a release can't skip them.
+      const issues = checkPlugin(dir);
+      if (issues.length) throw new Error(`plugins/${id}: ${issues.join('; ')}`);
 
       buildPlugin(dir);
       const file = `${id}-${manifest.version}.tgz`;
@@ -249,9 +242,8 @@ export function createRepoTool(opts: RepoOptions) {
     };
     for (const r of releases) {
       const tarball = path.join(out, r.file);
-      // Left by a run that stopped before updating the index. Released bytes never change: continue only
-      // if the tarball there is exactly this run's (packing is deterministic), and only then refresh its
-      // signature, which the index about to be published carries.
+      // Left by an interrupted run: continue only if the tarball is byte-identical to this run's, then
+      // refresh its signature.
       if (exists(r.tag)) {
         const dir = mkdtempSync(path.join(tmpdir(), 'synoikia-release-'));
         try {

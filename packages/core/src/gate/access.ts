@@ -1,19 +1,5 @@
-/**
- * Access levels (design §5.2 step 2). A group has one of four levels; an operation follows its group
- * unless an admin gave it its own level. What a level means depends on the kind of operation:
- *
- *   group level   read operation   write operation   locked operation
- *   none          none             none              none
- *   read          read (runs)      none (hidden)     none (not enabled)
- *   ask           read (runs)      ask               none (not enabled)
- *   write         read (runs)      write             none (not enabled)
- *
- * An operation's own level is one of the levels its kind allows (`allowedLevels`): a read is None,
- * Read or Ask (Ask: every call needs approval); a write is None, Ask or Write (Write: runs without
- * asking once acknowledged); a locked operation is None or Ask and only opens with its own Ask.
- * There is no "write at level Read". A principal whose access ceiling is `read` (consent page,
- * bearer token) never reaches a write, whatever the levels say.
- */
+/** Access levels (design §5.2.1): an operation follows its group's level unless given its own, limited to
+ * what its kind allows; locked ops open only with their own Ask, and a `read` ceiling never reaches a write. */
 
 export const ACCESS_LEVELS = ['none', 'read', 'ask', 'write'] as const;
 export type AccessLevel = (typeof ACCESS_LEVELS)[number];
@@ -68,10 +54,7 @@ export function allowedLevels(op: Pick<AccessOperation, 'classification' | 'lock
   return isWriteOp(op) ? ['none', 'ask', 'write'] : ['none', 'read', 'ask'];
 }
 
-/**
- * Maps a stored level onto one the operation's kind allows, never widening: a write at Read is off,
- * a read at Write just runs, a locked op at Write still asks, and an unknown value is None.
- */
+/** Maps a stored level onto one the operation's kind allows, never widening; unknown values are None. */
 export function normalizeLevel(op: Pick<AccessOperation, 'classification' | 'locked'>, level: unknown): AccessLevel {
   if (!isAccessLevel(level)) return 'none';
   if (allowedLevels(op).includes(level)) return level;

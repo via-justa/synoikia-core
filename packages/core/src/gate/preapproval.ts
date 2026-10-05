@@ -10,11 +10,8 @@ export type PreApprovalOutcome =
   | { kind: 'rate_limited'; ruleIds: string[] }
   | { kind: 'no_match' };
 
-/**
- * Finds an enabled, unexpired rule for the operation whose match holds and which has rate budget left,
- * and records the hit, all in one transaction so concurrent calls can't overshoot a limit. Callers
- * must never pass a locked operation (design §5.2 step 6); rules on locked ops are also disabled at sync.
- */
+/** Finds a matching, unexpired rule with budget left and records the hit, in one transaction. Never
+ * called for locked operations (design §5.2). */
 export function evaluatePreApproval(
   db: Db,
   input: {
@@ -22,11 +19,7 @@ export function evaluatePreApproval(
     operationId: string;
     params: unknown;
     targets: readonly ResolvedTarget[];
-    /**
-     * The params subtrees a `$targets` condition stands for (the profile field's `covers`). A rule with
-     * a `$targets` condition already checks every resolved target, so under strict matching those
-     * subtrees count as covered. Nothing is stored on the rule.
-     */
+    /** The params subtrees a `$targets` condition covers (the profile field's `covers`), for strict matching. */
     targetCovers?: readonly string[];
   },
   now = new Date(),

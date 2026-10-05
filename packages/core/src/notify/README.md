@@ -2,4 +2,4 @@
 
 ntfy and webhook channels, event fan-out, signed single-use approval links.
 
-Design: §9. Phase 15 in §13.
+Design: [`docs/design/09-notifications.md`](../../../../docs/design/09-notifications.md) §9.

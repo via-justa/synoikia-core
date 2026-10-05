@@ -13,10 +13,7 @@ import type { PluginHandlers } from '@synoikia/plugin-sdk';
 import raw from '../plugin.yaml';
 import { authHeaders } from './auth.js';
 
-/**
- * The {{name}} plugin. The sandbox calls `{{namespace}}.call(operation, params)`. Fill in the client
- * (`connect`), the version, and `invoke`; operations and their rules live in plugin.yaml.
- */
+/** The {{name}} plugin: the sandbox calls `{{namespace}}.call(operation, params)`; rules live in plugin.yaml. */
 
 const SERVICE = '{{name}}';
 
@@ -65,7 +62,8 @@ export function create{{Pascal}}Plugin(): PluginHandlers {
         },
 
         invoke({ key }) {
-          // TODO: call the upstream with kit.client(), then return rules.maskResult(key, result).
+          // TODO: call the upstream with kit.client() and return its result. Core masks the secrets
+          // plugin.yaml's `sensitiveResult` declares for this key.
           throw new PluginError(ErrorCodes.NotImplemented, `${key} is not implemented yet`);
         },
       };

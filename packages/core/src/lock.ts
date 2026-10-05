@@ -2,11 +2,8 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import path from 'node:path';
 
-/**
- * A running server holds `DATA_DIR/server.lock` (pid and host). Offline operator commands such as
- * `rotate-master-key` refuse to run while it is held: a live server keeps the old master key in memory
- * and would write secrets under it after the rotation (design §7.1).
- */
+/** A running server holds `DATA_DIR/server.lock` (pid, host); offline commands such as
+ * `rotate-master-key` refuse while it is held. */
 
 export const LOCK_FILENAME = 'server.lock';
 
@@ -36,11 +33,7 @@ function readLock(dataDir: string): LockInfo | null {
   }
 }
 
-/**
- * The live holder of the lock, or null if it is free or stale. A lock from another host (another
- * container on the same volume) can't be checked from here, so it counts as held: only its pid on
- * this host can be proven dead.
- */
+/** The live lock holder, or null if free or stale; a lock from another host always counts as held. */
 function lockHolder(dataDir: string): LockInfo | null {
   const info = readLock(dataDir);
   if (!info || info.pid === process.pid) return null;
@@ -48,11 +41,8 @@ function lockHolder(dataDir: string): LockInfo | null {
   return alive(info.pid) ? info : null;
 }
 
-/**
- * Takes the lock for this process; throws if another live server on this host holds it. A lock left
- * by another host is taken over with a warning: a recreated container gets a new hostname, and a
- * server that refused to start there would never start again. Returns the release.
- */
+/** Takes the lock (throws if a live server on this host holds it; another host's lock is taken over
+ * with a warning, since a recreated container has a new hostname). Returns the release. */
 export function acquireServerLock(
   dataDir: string,
   warn: (message: string) => void = (m) => console.warn(`WARN ${m}`),

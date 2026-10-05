@@ -12,10 +12,7 @@ const addFormats = ((ajvFormats as unknown as { default: { default?: FormatsPlug
 const ajv = new Ajv({ allErrors: true, strict: false, useDefaults: true });
 addFormats(ajv);
 
-/**
- * Compiled validators by schema content: compiled once per plugin version, not per request (ajv keeps
- * every compiled schema, and a second compile of a schema with an `$id` throws).
- */
+/** Compiled validators cached by schema content (ajv keeps them, and recompiling an `$id` throws). */
 const compiled = new Map<string, ValidateFunction>();
 const MAX_COMPILED = 200;
 
@@ -33,11 +30,8 @@ function validatorFor(schema: Manifest['connection']['schema']): ValidateFunctio
   return validate;
 }
 
-/**
- * Connection config handling (design §7.2, §8.3). Fields marked `writeOnly` in the plugin's
- * connection schema are secrets: stored encrypted, passed to the plugin only via `init`, and never
- * returned by the API — only a `{ set, hint }` summary.
- */
+/** Connection config (design §7.2, §8.3): `writeOnly` fields are secrets, encrypted, sent only via
+ * `init` and returned by the API only as `{ set, hint }`. */
 
 export function secretFieldNames(manifest: Manifest): string[] {
   const props = (manifest.connection.schema.properties ?? {}) as Record<string, { writeOnly?: boolean }>;
@@ -72,10 +66,7 @@ export function validateConnection(
   return { config, secrets };
 }
 
-/**
- * Applies a secrets patch: a provided non-empty value replaces, `null` clears, an omitted key keeps
- * the stored value. Unknown keys are rejected so typos don't silently drop a credential.
- */
+/** Applies a secrets patch: a value replaces, `null` clears, omitted keeps; unknown keys are rejected. */
 export function mergeSecrets(
   manifest: Manifest,
   current: Record<string, string>,
@@ -120,11 +111,8 @@ function addressFieldNames(manifest: Manifest): string[] {
     .map(([k]) => k);
 }
 
-/**
- * The stored secrets a candidate connection may use (design §7.2). If the candidate changes where the
- * upstream is, stored secrets are not carried over: otherwise "Test connection" or a save with an
- * attacker's URL would send the stored API key there. The caller must enter them again.
- */
+/** The stored secrets a candidate connection may use: none if it moves the upstream, so a changed URL
+ * never receives the stored key (design §7.2). */
 export function storedSecretsFor(
   manifest: Manifest,
   current: { config: Record<string, unknown>; secrets: Record<string, string> },

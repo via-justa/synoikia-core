@@ -1,7 +1,5 @@
 # yaml-language-server: $schema=./node_modules/@synoikia/plugin-sdk/plugin-settings.schema.json
-#
-# What {{name}} tells Synoikia about its operations. With no spec to discover, every operation is
-# declared here with its own classification; rules lock and describe them on top. Core decides what is
+# {{name}}'s operations, each declared with its classification, and rules on top; core decides what is
 # allowed. Reference: docs/plugin-authoring.md.
 
 defaults:

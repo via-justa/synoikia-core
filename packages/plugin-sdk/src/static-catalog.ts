@@ -9,11 +9,7 @@ import { isPlainObject, truncate } from './plugin-kit.js';
 import type { InvokeContext } from './rpc.js';
 import type { CompiledRules, StaticOperation } from './rules.js';
 
-/**
- * A catalog declared outright in `plugin.yaml` `operations:`, for upstreams with nothing to discover
- * (a small REST API with no spec) or for commands discovery doesn't list. Every operation states its
- * own classification; rules lock and describe on top, as for discovered catalogs.
- */
+/** A catalog declared in `plugin.yaml` `operations:` for upstreams with nothing to discover. */
 
 export interface StaticCatalogOptions {
   /** `classificationReason` prefix when an operation gives no `reason`: `declared:read`. */
@@ -135,12 +131,12 @@ export function staticHttpBinding(opts: StaticHttpBindingOptions) {
       } catch (err) {
         throw new PluginError(ErrorCodes.InvalidParams, (err as Error).message);
       }
-      const result = await opts.client().request(op.http.method, path, {
+      // Declared secrets in the result (`sensitiveResult`) are masked by core, from the descriptor.
+      return opts.client().request(op.http.method, path, {
         query: p.query,
         body: p.body,
         timeoutMs: Math.max(1000, context.deadlineMs),
       });
-      return opts.rules.maskResult(key, result);
     },
   };
 }

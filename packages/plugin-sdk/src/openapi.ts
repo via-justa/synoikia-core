@@ -8,13 +8,8 @@ import { isPlainObject, truncate } from './plugin-kit.js';
 import type { InvokeContext } from './rpc.js';
 import type { CompiledRules, OperationDraft } from './rules.js';
 
-/**
- * A catalog from an OpenAPI 3 spec, and a `request({ method, path, query, body })` binding over it
- * (design §3.3–§3.4). The catalog key is the verb plus the path template (`POST /request/{id}`);
- * params are `{ path, query, body }`. Classification fails closed: GET reads, every other verb
- * writes, and a GET whose text reads like an action ("reset", "sync"…) is a write flagged for review
- * until a `plugin.yaml` rule settles it. Rules lock, split and describe operations on top.
- */
+/** A catalog and `request({ method, path, query, body })` binding from an OpenAPI 3 spec (design §3.3).
+ * Keys are verb + path template; GET reads, other verbs write, action-like GETs are writes for review. */
 
 export const HTTP_VERBS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 
@@ -25,10 +20,7 @@ export type HttpVerb = (typeof HTTP_VERBS)[number];
 export const DEFAULT_ACTION_WORDS =
   /\b(reset\w*|regenerat\w*|sync\w*|flush\w*|run|runs|cancel\w*|invok\w*|delet\w*|remov\w*|clear\w*|restart\w*|reboot\w*|shut\s?down\w*|purg\w*|refresh\w*|trigger\w*|start\w*|stop\w*|log\s?out\w*|execut\w*|appl(y|ies)|rotat\w*|revok\w*)\b/i;
 
-/**
- * Path segment words that suggest a GET changes something, matched on each literal segment's words
- * (`/cache/flush`, `/jobs/run-now`): the path is checked too, because a spec may describe nothing.
- */
+/** Path words suggesting a GET changes something (`/cache/flush`), checked since specs may say nothing. */
 export const DEFAULT_PATH_ACTION_WORDS =
   /^(reset|regenerate|sync|flush|run|cancel|invoke|delete|remove|clear|restart|reboot|shutdown|purge|refresh|scan|test|trigger|start|stop|logout|execute|apply|rotate|revoke|enable|disable|import|install|upgrade)$/i;
 
@@ -98,10 +90,7 @@ export interface RefBudget {
 }
 export const DEFAULT_REF_BUDGET = 500_000;
 
-/**
- * Resolves local `$ref`s so a descriptor's schema stands alone; cycles, deep `$ref` chains and deep
- * nesting are cut off, and the whole expansion is bounded by `budget` (throws `SpecError` past it).
- */
+/** Resolves local `$ref`s, cutting cycles and deep nesting, within `budget` (else `SpecError`). */
 export function resolveRefs(
   spec: Record<string, unknown>,
   value: unknown,
@@ -218,11 +207,8 @@ function bySpecificity(a: RestOperation, b: RestOperation): number {
   return 0;
 }
 
-/**
- * Builds the catalog. Throws `SpecError` for an invalid or implausibly small spec, or for one with two
- * templates a concrete path can't tell apart (`/user/{id}` and `/user/{userId}/`): rules match keys by
- * their text, so the upstream must not be able to route a call around a lock with a lookalike key.
- */
+/** Builds the catalog; throws `SpecError` for an invalid or tiny spec, or one with indistinguishable
+ * templates (`/user/{id}`, `/user/{userId}/`) that could route around a lock. */
 export function buildOpenApiCatalog(
   specText: string | Record<string, unknown>,
   opts: OpenApiCatalogOptions,
@@ -279,10 +265,7 @@ export function buildOpenApiCatalog(
   return { operations: operations.sort((a, b) => a.key.localeCompare(b.key)), byVerb };
 }
 
-/**
- * Matches a concrete path (`/request/5/approve`, with or without `stripPrefix`) against the catalog.
- * Returns the operation and its path parameters, or undefined. Rejects `.`, `..` and empty segments.
- */
+/** Matches a concrete path against the catalog: the operation and its path params, or undefined. */
 export function matchPath(
   catalog: OpenApiCatalog,
   method: string,
@@ -366,10 +349,7 @@ export interface RestBindingOptions {
   stripPrefix?: string;
   /** Adjusts params after matching (e.g. make an implicit default explicit). */
   adjust?(call: RestCall): RestParams;
-  /**
-   * When a call takes a split twin, by suffix. A twin declared in `plugin.yaml` without a predicate is
-   * always taken (fail closed).
-   */
+  /** When a call takes a split twin, by suffix; a twin without a predicate is always taken. */
   splitWhen?: Record<string, (call: RestCall) => boolean | Promise<boolean>>;
   /** Longest body shown in a summary. Default 400. */
   maxSummaryBody?: number;
@@ -462,20 +442,17 @@ export function restBinding(opts: RestBindingOptions): RestBinding {
       } catch (err) {
         throw new PluginError(ErrorCodes.InvalidParams, (err as Error).message);
       }
-      const result = await opts.client().request(method, path, {
+      // Declared secrets in the result (`sensitiveResult`) are masked by core, from the descriptor.
+      return opts.client().request(method, path, {
         query: p.query,
         body: p.body,
         timeoutMs: timeoutMs ?? Math.max(1000, context.deadlineMs),
       });
-      return opts.rules.maskResult(key, result);
     },
   };
 }
 
-/**
- * A `lookup` hook for `compileRules` on a REST upstream: `op` is `GET /path/{param}` and `args[0]` the
- * path parameters. Only GETs, so a confirmation lookup can never change anything.
- */
+/** A `lookup` hook for `compileRules` on REST: GETs only, so a confirmation lookup changes nothing. */
 export function restLookup(client: () => HttpJsonClient) {
   return async (op: string, args: unknown[], timeoutMs: number): Promise<unknown> => {
     const [method, template] = op.split(' ') as [string, string | undefined];
@@ -494,10 +471,7 @@ export interface FetchSpecOptions {
   timeoutMs?: number;
 }
 
-/**
- * Downloads a spec for upstreams with no introspection endpoint (from the release tag matching the
- * instance's version, then a fallback branch). Sends no credentials. Returns the text and its ref.
- */
+/** Downloads a spec by the instance's version tag, then a fallback branch; no credentials sent. */
 export async function fetchSpec(opts: FetchSpecOptions): Promise<{ text: string; ref: string }> {
   const name = `${opts.service} API spec`;
   for (const { url, ref } of opts.candidates) {

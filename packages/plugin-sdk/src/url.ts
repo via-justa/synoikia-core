@@ -1,9 +1,6 @@
 import { ErrorCodes, PluginError } from './errors.js';
 
-/**
- * Base URL handling for plugin connections. An admin enters the upstream's base URL; the plugin
- * appends its API path. Only the schemes given are accepted, and credentials in the URL are dropped.
- */
+/** Base URLs for plugin connections: only the given schemes, credentials dropped. */
 
 export interface ParsedBaseUrl {
   url: URL;
@@ -24,10 +21,7 @@ export function parseBaseUrl(baseUrl: string, schemes: readonly string[] = ['htt
   return { url, path: url.pathname.replace(/\/+$/, '') };
 }
 
-/**
- * `https://host:8123/sub/` + `/api` → `https://host:8123/sub/api`. With `websocket`, http(s) becomes
- * ws(s) (a ws/wss base URL is accepted as is). Query, fragment and credentials are dropped.
- */
+/** `https://host:8123/sub/` + `/api` → `https://host:8123/sub/api` (ws(s) with `websocket`). */
 export function joinApiPath(baseUrl: string, suffix: string, opts: { websocket?: boolean } = {}): string {
   const { url, path } = parseBaseUrl(baseUrl, opts.websocket ? ['http:', 'https:', 'ws:', 'wss:'] : undefined);
   let protocol = url.protocol;

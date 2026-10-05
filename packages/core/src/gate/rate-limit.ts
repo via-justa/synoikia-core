@@ -1,8 +1,4 @@
-/**
- * Sliding windows of hit timestamps per key, bounded in memory: keys whose window has passed are
- * dropped, and past `maxKeys` the keys with the fewest hits go first. Callers keyed by anything a client
- * chooses (usernames, IPs, principals) can't grow it without limit.
- */
+/** Sliding windows of hit timestamps per key, bounded so client-chosen keys can't grow it without limit. */
 export class HitWindows {
   private readonly map = new Map<string, { hits: number[]; windowMs: number }>();
 
@@ -37,11 +33,8 @@ export class HitWindows {
     this.map.delete(key);
   }
 
-  /**
-   * Drops keys whose window has passed, then the keys with the fewest hits (oldest first among equals),
-   * down to 90% of the cap. A flood of one-off keys therefore can't push out a key that is close to or
-   * at its limit, such as a username that is locked out.
-   */
+  /** Drops expired keys, then those with the fewest hits, to 90% of the cap, so a flood of one-off keys
+   * can't evict a key at its limit. */
   private prune() {
     const t = this.now();
     for (const [k, e] of this.map) if (e.hits.at(-1)! <= t - e.windowMs) this.map.delete(k);
@@ -53,10 +46,7 @@ export class HitWindows {
   }
 }
 
-/**
- * In-memory sliding-window limiter for per-instance execute/write caps (design §5.2). Separate from
- * pre-approval rule limits, which are persisted in `pre_approval_hits`.
- */
+/** In-memory limiter for per-instance execute/write caps (design §5.2), separate from rule limits. */
 export class SlidingWindowLimiter {
   private readonly hits: HitWindows;
 

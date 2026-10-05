@@ -1,8 +1,5 @@
-/**
- * Plain-text server log on stdout/stderr, filtered by LOG_LEVEL (design §11). One line per event:
- * `LEVEL message key=value …`. Callers never pass credentials (tokens, assertions, secrets) as fields;
- * client-supplied values (Host, User-Agent) are quoted, so they can't forge extra lines or fields.
- */
+/** Server log, filtered by LOG_LEVEL (design §11): `LEVEL message key=value …`; never credentials, and
+ * client-supplied values are quoted so they can't forge lines. */
 
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];

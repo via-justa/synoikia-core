@@ -1,7 +1,4 @@
-/**
- * The repository core ships pre-configured (design §4.1): the Synoikia plugins, signed with this key.
- * It is added once on first start; an admin who removes it keeps it removed.
- */
+/** The pre-configured, signed Synoikia plugins repository (design §4.1); added once, removal sticks. */
 export const DEFAULT_PLUGIN_REPO = {
   url: 'https://github.com/via-justa/synoikia-core-plugins/releases/download/index/index.json',
   name: 'Synoikia plugins',

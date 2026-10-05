@@ -27,10 +27,8 @@ import type { FetchBytes } from './plugins/repos.js';
 import { sandboxesRunning } from './runtime/index.js';
 import { normalizeStoredSettings } from './settings.js';
 
-/**
- * Wires every core service together once (design §2). Both listeners, the scheduler and tests use
- * the same context, so there is exactly one database handle, one approval service, one event bus.
- */
+/** Wires every core service once (design §2): one database, approval service and event bus for
+ * both listeners, the scheduler and tests. */
 
 export interface AppContext {
   config: Config;
@@ -62,10 +60,8 @@ export interface AppContext {
   onStop(fn: () => unknown): void;
   /** Aborted when shutdown begins; long-lived responses (SSE) end on it. */
   shutdownSignal: AbortSignal;
-  /**
-   * First step of shutdown, while the listeners still run: stops timers, cancels open approvals,
-   * runs the stop hooks and ends long-lived streams, so closing the listeners doesn't wait on them.
-   */
+  /** First shutdown step, while listeners still run: stop timers, cancel approvals, run stop hooks and
+   * end long-lived streams. */
   drain(): Promise<void>;
   /** Drains (if not yet), stops plugin children and closes the database. */
   stop(): Promise<void>;

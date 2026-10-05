@@ -8,10 +8,8 @@ import { NotFoundError, ValidationError } from '../errors.js';
 import { ACCESS_CEILINGS } from '../gate/access.js';
 import { randomToken, sha256 } from './tokens.js';
 
-/**
- * Static bearer tokens for MCP clients (design §6.2): `syn_…`, shown once, stored as SHA-256,
- * scoped to instance ids or `*`. A token outside its scope gets 403, not 401.
- */
+/** Static MCP bearer tokens (design §6.2): `syn_…`, shown once, stored as SHA-256, scoped to instances
+ * or `*`; outside its scope a token gets 403. */
 
 export const TOKEN_PREFIX = 'syn_';
 

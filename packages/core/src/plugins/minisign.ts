@@ -1,12 +1,8 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 
-/**
- * Minisign verification (design §4.3), using Node's built-in Ed25519. Supports both the legacy
- * `Ed` (signature over the raw file) and the default prehashed `ED` (signature over BLAKE2b-512 of
- * the file) algorithms, and always checks the global signature over the trusted comment.
- * Format: https://jedisct1.github.io/minisign/
- */
+/** Minisign verification (design §4.3) with Node's Ed25519: legacy `Ed` and prehashed `ED`, always
+ * checking the trusted comment's signature. https://jedisct1.github.io/minisign/ */
 
 export interface MinisignPublicKey {
   /** 8-byte key id as minisign prints it (`minisign -V` / the `.pub` comment): 16 upper-case hex digits. */

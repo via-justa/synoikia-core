@@ -1,9 +1,6 @@
 import { ErrorCodes, PluginError } from './errors.js';
 
-/**
- * Maps upstream failures to the error codes core understands, with one message format across
- * plugins. Messages name the operation, never its params: params can hold credentials.
- */
+/** Maps upstream failures to core's error codes; messages name the operation, never its params. */
 
 export type UpstreamErrorKind = 'denied' | 'invalid' | 'failed';
 
@@ -21,10 +18,7 @@ export function statusKind(status: number): UpstreamErrorKind {
   return 'failed';
 }
 
-/**
- * `denied` → UPSTREAM_DENIED "`<service>` denied `<label>`: insufficient permission (`<message>`)";
- * `invalid` → INVALID_PARAMS "`<label>`: `<message>`"; `failed` → UPSTREAM_ERROR "`<label>`: `<message>`".
- */
+/** `denied` → UPSTREAM_DENIED, `invalid` → INVALID_PARAMS, `failed` → UPSTREAM_ERROR. */
 export function upstreamError(
   service: string,
   kind: UpstreamErrorKind,

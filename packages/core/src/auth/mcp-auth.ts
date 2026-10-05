@@ -10,10 +10,8 @@ import type { AccessCeiling } from '../gate/access.js';
 import type { AuthMode } from '../instances/manager.js';
 import { clientIp, requestOrigin } from '../http/common.js';
 
-/**
- * Authentication for `/{slug}` (design §6.2). The mode is the instance override or the global
- * default. Every accepted request yields an identity that is recorded on each audited call.
- */
+/** Authentication for `/{slug}` (design §6.2): the instance's mode or the global default; every accepted
+ * request yields an identity recorded on each audited call. */
 
 export interface McpIdentity {
   kind: 'token' | 'oauth' | 'external';
@@ -21,10 +19,8 @@ export interface McpIdentity {
   principal: string;
   /** Human-readable, shown in audit and approvals: `token:Claude Code`, `oauth:Claude for admin`. */
   label: string;
-  /**
-   * Ceiling on what this principal can reach (design §6.3): chosen on the consent page for OAuth,
-   * set per bearer token. `external` mode trusts the fronting proxy, so it is not limited here.
-   */
+  /** Ceiling on what this principal can reach (design §6.3): from OAuth consent or the bearer token;
+   * `external` mode is not limited here. */
   access: AccessCeiling;
 }
 
@@ -40,10 +36,8 @@ export type McpAuthResult =
       detail: string;
     };
 
-/**
- * The MCP listener's public origin: PUBLIC_MCP_URL, or — only where no security decision depends on
- * it (the approval-page link sent back to the same client, sign-in redirects) — the request's origin.
- */
+/** The MCP listener's public origin: PUBLIC_MCP_URL, or the request's origin where no security decision
+ * depends on it (the approval link back to the same client, sign-in redirects). */
 export function publicMcpBase(ctx: AppContext, c: Context): string {
   return (ctx.config.PUBLIC_MCP_URL ?? requestOrigin(c, ctx.config.TRUST_PROXY)).replace(/\/+$/, '');
 }
@@ -59,10 +53,7 @@ const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 const MAX_CLAIM = 120;
 const clip = (v: string) => (v.length > MAX_CLAIM ? `${v.slice(0, MAX_CLAIM)}…` : v);
 
-/**
- * Issuer and audience a JWT claims, read without verifying it: only for explaining a rejection.
- * Unverified claims are attacker text of any type, so only strings are kept, and clipped.
- */
+/** A JWT's claimed issuer and audience, unverified, only to explain a rejection: strings only, clipped. */
 function claimedIssuer(token: string): { iss?: string; aud?: string } | null {
   let payload: Record<string, unknown>;
   try {
@@ -78,11 +69,8 @@ function claimedIssuer(token: string): { iss?: string; aud?: string } | null {
   };
 }
 
-/**
- * Checks a `Cf-Access-Jwt-Assertion` against the team's signing keys: signature, issuer (the team
- * domain), audience (the Access application's AUD tag) and expiry. Returns who it names, or why it
- * was rejected. `keys` replaces the team's published key set (tests).
- */
+/** Verifies a `Cf-Access-Jwt-Assertion` (signature, issuer, audience, expiry) and returns who it names
+ * or why it was rejected. `keys` replaces the team's key set (tests). */
 export async function checkCloudflareAccess(
   teamDomain: string,
   aud: string,

@@ -1,9 +1,6 @@
 import { EventEmitter } from 'node:events';
 
-/**
- * In-process event bus (design §9.1). Notifiers and the admin SSE stream subscribe here; producers
- * never need to know who is listening. Payloads never carry raw params or secrets.
- */
+/** In-process event bus (design §9.1) for notifiers and admin SSE; payloads never carry params or secrets. */
 export interface CoreEventMap {
   'instance.status': [{ instanceId: string; slug: string; status: string; error?: string }];
   'plugin.crashed': [{ instanceId: string; slug: string; error: string }];

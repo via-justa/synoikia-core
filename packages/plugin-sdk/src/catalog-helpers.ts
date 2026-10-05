@@ -1,7 +1,4 @@
-/**
- * Small helpers for building a catalog. An operation whose risk depends on its params gets a second
- * catalog key, its "split twin" `<key>#<suffix>` (design §3.4), which is always locked.
- */
+/** Catalog helpers. A risk-dependent operation gets an always-locked split twin `<key>#<suffix>` (§3.4). */
 
 /** A valid access group (lowercase letters, digits, `.`, `_`, `-`) from any name; `fallback` if nothing is left. */
 export function toGroup(name: string, fallback = 'misc'): string {

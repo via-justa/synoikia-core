@@ -12,4 +12,4 @@
 - [ ] `pnpm typecheck` passes
 - [ ] `pnpm test` passes
 - [ ] Tests added/updated for the change, where applicable
-- [ ] Docs updated (README, `docs/design/unified-mcp-server.md`), where applicable
+- [ ] Docs updated (README, `docs/design/`), where applicable

@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { parseManifest, SDK_VERSION } from '@synoikia/plugin-sdk';
 import type { Manifest } from '@synoikia/plugin-sdk';
 import { asc, eq } from 'drizzle-orm';
@@ -22,10 +24,8 @@ import { mergeSecrets, storedSecretsFor, summarizeSecrets, validateConnection } 
 import { cleanInstanceSettings, parseInstanceSettings, readInstanceSettings } from './settings.js';
 import type { InstanceSettings } from './settings.js';
 
-/**
- * Instance lifecycle (design §4, §10): creation and connection config (secrets encrypted), one
- * supervised plugin child per enabled instance, and catalog/registry sync scheduling.
- */
+/** Instance lifecycle (design §4, §10): connection config, one supervised plugin child per enabled
+ * instance, and sync scheduling. */
 
 export const AUTH_MODES = ['external', 'bearer', 'oauth', 'bearer+oauth'] as const;
 export type AuthMode = (typeof AUTH_MODES)[number];
@@ -49,6 +49,16 @@ interface Live {
   syncing?: Promise<SyncSummary>;
   lastVersionCheck: number;
   catalogChangedTimer?: NodeJS.Timeout;
+  /** The running child's bundle version, read from its manifest.json just before each fork; the catalog
+   * must have been synced from it (`ensureFresh`). */
+  version?: string;
+}
+
+/** The version in a plugin directory's manifest.json, as the child about to run it sees it. */
+function bundleVersion(dir: string): string {
+  const version = (JSON.parse(readFileSync(path.join(dir, 'manifest.json'), 'utf8')) as { version?: unknown }).version;
+  if (typeof version !== 'string' || !version) throw new Error('manifest.json has no version');
+  return version;
 }
 
 export interface CreateInstanceInput {
@@ -167,10 +177,7 @@ export class InstanceManager {
     return readInstanceSettings(instance.settings, `/${instance.slug} settings`);
   }
 
-  /**
-   * Scrubs an instance's secret values out of plugin/upstream error text before it is stored, audited
-   * or sent to notification channels (an init error can echo a config value or token).
-   */
+  /** Scrubs an instance's secret values out of plugin/upstream error text before it is stored or sent. */
   private scrubError(instanceId: string, message: string): string {
     try {
       const instance = this.row(instanceId);
@@ -214,6 +221,15 @@ export class InstanceManager {
         const live = this.live.get(instanceId);
         if (!live) throw new PluginUnavailableError();
         return live.supervisor.client;
+      },
+      catalogVersion: () => {
+        const version = this.live.get(instanceId)?.version;
+        const synced = this.db
+          .select({ v: pluginInstances.catalogPluginVersion })
+          .from(pluginInstances)
+          .where(eq(pluginInstances.id, instanceId))
+          .get()?.v;
+        return version && synced === version ? version : undefined;
       },
     };
   }
@@ -412,10 +428,7 @@ export class InstanceManager {
     return this.getConnection(id);
   }
 
-  /**
-   * "Test connection": runs `testConnection` in a throwaway child, so an unsaved candidate config
-   * can be tried without disturbing the running instance. Omitted secrets fall back to stored ones.
-   */
+  /** "Test connection" in a throwaway child, so a candidate config never disturbs the running instance. */
   async testConnection(
     id: string,
     candidate?: { config: Record<string, unknown>; secrets?: Record<string, string | null> },
@@ -534,6 +547,7 @@ export class InstanceManager {
       backoff: this.opts.supervisor?.backoff,
       // Re-read on every (re)start so connection changes and key rotation are picked up.
       loadInit: () => {
+        live.version = bundleVersion(plugin.path);
         const current = this.row(instanceId);
         return { config: current.config as Record<string, unknown>, secrets: this.readSecrets(current) };
       },
@@ -587,7 +601,14 @@ export class InstanceManager {
       try {
         const client = live.supervisor.client;
         const manifest = this.plugin(row.pluginId).parsed;
+        // The child that answers is the one whose version counts, not the plugin row's.
+        const version = live.version;
         const summary = applyCatalogSync(this.db, instanceId, await client.call('syncCatalog'), this.now(), manifest);
+        this.db
+          .update(pluginInstances)
+          .set({ catalogPluginVersion: live.version === version ? (version ?? null) : null })
+          .where(eq(pluginInstances.id, instanceId))
+          .run();
         if (manifest.capabilities.registry) {
           applyRegistrySync(this.db, instanceId, await client.call('syncRegistry'), this.now());
         }
@@ -630,17 +651,13 @@ export class InstanceManager {
     return run;
   }
 
-  /**
-   * Called before serving MCP traffic (session start, and cheaply on each tool call):
-   * - never synced → sync now; failure means the endpoint can't serve (per instance);
-   * - stale beyond `syncMaxAgeMs` → sync, but keep serving the last catalog if it fails;
-   * - otherwise compare the upstream version (throttled) and sync on a mismatch.
-   */
+  /** Before serving MCP traffic: sync now if never synced or synced from other code (failure refuses
+   * service), sync if stale (serving the last catalog on failure), else sync on an upstream version change. */
   async ensureFresh(instanceId: string, opts: { forceVersionCheck?: boolean } = {}): Promise<void> {
     const row = this.row(instanceId);
     const live = this.live.get(instanceId);
     if (!live || live.supervisor.status !== 'ready') throw new PluginUnavailableError('The endpoint is not ready');
-    if (!row.lastSyncedAt) {
+    if (!row.lastSyncedAt || !live.version || row.catalogPluginVersion !== live.version) {
       await this.syncNow(instanceId);
       return;
     }

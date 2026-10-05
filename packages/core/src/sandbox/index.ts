@@ -1,11 +1,7 @@
 import ivm from 'isolated-vm';
 
-/**
- * Runs model-authored code in a fresh V8 isolate (design §5.4). The isolate has no Node APIs at all:
- * the only way out is the host functions passed in `bindings`. Values cross the boundary as JSON.
- *
- * `code` is the body of an async function: it may `await` bindings and should `return` its result.
- */
+/** Runs model code in a fresh V8 isolate with no Node APIs (design §5.4); only `bindings` reach out, and
+ * values cross as JSON. `code` is an async function body. */
 
 export interface SandboxLimits {
   /** Wall-clock budget for sandbox activity. Time a binding spends paused (human approval) is excluded. */
@@ -49,10 +45,7 @@ export interface SandboxRun {
   /** `{ acme: { call: fn } }` becomes `acme.call(...)` inside the sandbox. */
   bindings: Record<string, Record<string, Binding>>;
   limits?: Partial<SandboxLimits>;
-  /**
-   * Applied to everything that leaves the sandbox — the result (before it is size-capped), every
-   * `console.log` argument and error messages — so nothing the code derives or prints escapes redaction.
-   */
+  /** Applied to everything leaving the sandbox (result, `console.log` arguments, errors). */
   redact?: (value: unknown) => unknown;
 }
 
@@ -106,9 +99,8 @@ class Budget implements BudgetControl {
   }
 }
 
-// Runs inside the isolate, as its own script before the user's. Everything it holds on to — the host
-// references, the wrapper — lives in the closure, so user code (a separate script) can never name it.
-// It installs `console` and one frozen object per binding namespace, and removes `__syn` from the global.
+// Prelude script run before the user's: it keeps host references in its closure, installs `console`
+// and frozen binding namespaces, and deletes `__syn` from the global.
 const prelude = (spec: Record<string, string[]>) => `(() => {
   const call = globalThis.__syn.call;
   const log = globalThis.__syn.log;
