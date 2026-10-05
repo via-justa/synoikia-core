@@ -29,7 +29,7 @@ pnpm check                                 # manifests, plugin.yaml and versions
 ## Rules that break releases or installs
 
 - **Self-contained bundle.** The plugin reads nothing outside its own package directory at runtime; `synoikia-plugin build` bundles every dependency and data file.
-- **Network hosts.** The plugin reaches only the hosts in `manifest.json` `network.hosts`.
+- **Network hosts.** `manifest.json` `network.hosts` lists exactly the hosts the plugin connects to. Admins review it before enabling the plugin, and an update that changes it installs disabled. Core doesn't enforce it (the plugin process can reach any host), so it must be accurate.
 - **Secrets.** Every credential field is `writeOnly: true`, uses the `secret` widget and is in `sensitiveKeys`, along with every secret field the upstream returns. `synoikia-plugin check` enforces the first part; an e2e `secrets` contract check covers the second.
 - **Versions.** `version` in `manifest.json` and `package.json` must match, and a released version never changes. Bump only when asked; the `release-plugin` skill covers it.
 

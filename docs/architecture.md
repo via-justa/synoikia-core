@@ -1129,6 +1129,7 @@ flowchart LR
   eng --> o6["admin portal + approval page"]
   eng --> o7["notification bodies"]
   invoke["plugin invoke()"] -. "receives the real values" .-> real[("unredacted params<br/>held in memory only")]
+  sr["plugin sensitiveResult<br/>(masked inside the plugin by<br/>rules.maskResult, before core)"] --> o1
 ```
 
 ---

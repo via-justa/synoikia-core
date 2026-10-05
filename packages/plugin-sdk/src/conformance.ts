@@ -63,7 +63,10 @@ export function checkManifest(input: unknown, settings?: PluginSettings<unknown>
     if ((secret || prop?.writeOnly === true) && !manifest.sensitiveKeys.includes(name))
       issues.push(`connection.${name}: a secret field must be listed in sensitiveKeys`);
   }
-  if (manifest.network.hosts.length === 0) issues.push('network.hosts: names no host, so the plugin can reach nothing');
+  if (manifest.network.hosts.length === 0)
+    issues.push(
+      'network.hosts: names no host; list the hosts the plugin connects to, which admins review before enabling it',
+    );
   for (const [i, rule] of (settings?.rules ?? []).entries()) {
     if (rule.matchProfile && !manifest.matchProfiles[rule.matchProfile])
       issues.push(`plugin.yaml rules[${i}]: matchProfile "${rule.matchProfile}" is not in the manifest`);
