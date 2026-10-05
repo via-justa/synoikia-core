@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { parseManifest, SDK_VERSION } from '@synoikia/plugin-sdk';
 import type { Manifest } from '@synoikia/plugin-sdk';
 import { asc, eq } from 'drizzle-orm';
@@ -49,6 +51,19 @@ interface Live {
   syncing?: Promise<SyncSummary>;
   lastVersionCheck: number;
   catalogChangedTimer?: NodeJS.Timeout;
+  /**
+   * The version of the bundle the running child was spawned from, read from its own manifest.json on
+   * every (re)spawn: files copied in by hand, or a crash restart after them, run code the plugin row
+   * doesn't describe yet. The catalog must have been synced from this version (`ensureFresh`).
+   */
+  version?: string;
+}
+
+/** The version in a plugin directory's manifest.json, as the child about to run it sees it. */
+function bundleVersion(dir: string): string {
+  const version = (JSON.parse(readFileSync(path.join(dir, 'manifest.json'), 'utf8')) as { version?: unknown }).version;
+  if (typeof version !== 'string' || !version) throw new Error('manifest.json has no version');
+  return version;
 }
 
 export interface CreateInstanceInput {
@@ -534,6 +549,7 @@ export class InstanceManager {
       backoff: this.opts.supervisor?.backoff,
       // Re-read on every (re)start so connection changes and key rotation are picked up.
       loadInit: () => {
+        live.version = bundleVersion(plugin.path);
         const current = this.row(instanceId);
         return { config: current.config as Record<string, unknown>, secrets: this.readSecrets(current) };
       },
@@ -587,7 +603,14 @@ export class InstanceManager {
       try {
         const client = live.supervisor.client;
         const manifest = this.plugin(row.pluginId).parsed;
+        // The child that answers is the one whose version counts, not the plugin row's.
+        const version = live.version;
         const summary = applyCatalogSync(this.db, instanceId, await client.call('syncCatalog'), this.now(), manifest);
+        this.db
+          .update(pluginInstances)
+          .set({ catalogPluginVersion: live.version === version ? (version ?? null) : null })
+          .where(eq(pluginInstances.id, instanceId))
+          .run();
         if (manifest.capabilities.registry) {
           applyRegistrySync(this.db, instanceId, await client.call('syncRegistry'), this.now());
         }
@@ -632,7 +655,9 @@ export class InstanceManager {
 
   /**
    * Called before serving MCP traffic (session start, and cheaply on each tool call):
-   * - never synced → sync now; failure means the endpoint can't serve (per instance);
+   * - never synced, or synced from another version than the running child's bundle → sync now; failure
+   *   means the endpoint can't serve (per instance): the catalog describes different code (what it
+   *   masks, what it locks);
    * - stale beyond `syncMaxAgeMs` → sync, but keep serving the last catalog if it fails;
    * - otherwise compare the upstream version (throttled) and sync on a mismatch.
    */
@@ -640,7 +665,7 @@ export class InstanceManager {
     const row = this.row(instanceId);
     const live = this.live.get(instanceId);
     if (!live || live.supervisor.status !== 'ready') throw new PluginUnavailableError('The endpoint is not ready');
-    if (!row.lastSyncedAt) {
+    if (!row.lastSyncedAt || !live.version || row.catalogPluginVersion !== live.version) {
       await this.syncNow(instanceId);
       return;
     }

@@ -23,6 +23,19 @@ afterEach(() => {
   for (const d of tmp.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
+/** The smallest manifest `synoikia-plugin check` accepts, for packing tests. */
+const packManifest = (id: string, version: string) => ({
+  id,
+  name: id,
+  version,
+  sdk: '^0.2.2',
+  entry: 'dist/index.js',
+  binding: { namespace: id, functions: ['call'] },
+  connection: { schema: { type: 'object', properties: {} }, ui: {} },
+  sensitiveKeys: [],
+  network: { hosts: ['example.com'] },
+});
+
 describe('templates', () => {
   it('fills only known placeholders', () => {
     expect(fill('{{name}} at {{connection.baseUrl}} {{other}}', { name: 'Acme' })).toBe(
@@ -239,8 +252,8 @@ describe('repo', () => {
     ]) {
       const dir = path.join(root, 'plugins', id!);
       mkdirSync(path.join(dir, 'dist'), { recursive: true });
-      writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ id, version, name: id, sdk: '^0.2.0' }));
-      writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version }));
+      writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(packManifest(id!, version!)));
+      writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: `@acme/plugin-${id}`, version }));
       writeFileSync(path.join(dir, 'dist/index.js'), `// ${id}\n`);
     }
     const built: string[] = [];
@@ -271,6 +284,25 @@ describe('repo', () => {
     writeFileSync(path.join(root, 'plugins/one/package.json'), JSON.stringify({ version: '9.9.9' }));
     rmSync(path.join(root, '.repo-current'), { recursive: true });
     expect(() => tool.pack()).toThrow(/differ/);
+  });
+
+  it('refuses to pack a plugin that fails its checks', () => {
+    const root = work();
+    writeFileSync(
+      path.join(root, 'package.json'),
+      JSON.stringify({ synoikia: { repository: 'acme/plugins', name: 'Acme' } }),
+    );
+    writeFileSync(path.join(root, 'minisign.pub'), 'untrusted comment: minisign public key\nRWTESTKEY\n');
+    const dir = path.join(root, 'plugins', 'one');
+    mkdirSync(path.join(dir, 'dist'), { recursive: true });
+    // Result secrets core masks only from contract 0.2.2, under a range older cores accept.
+    writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ ...packManifest('one', '1.0.0'), sdk: '^0.2.1' }));
+    writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: '@acme/plugin-one', version: '1.0.0' }));
+    writeFileSync(path.join(dir, 'plugin.yaml'), 'rules:\n  - match: token.make\n    sensitiveResult: whole\n');
+    const built: string[] = [];
+    const tool = createRepoTool({ root, buildPlugin: (d) => built.push(d), log: () => undefined });
+    expect(() => tool.pack()).toThrow(/plugins\/one: .*sensitiveResult/);
+    expect(built).toEqual([]);
   });
 
   it('refuses an invalid repository name', () => {

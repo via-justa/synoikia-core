@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { baseKey, splitSuffix } from './catalog-helpers.js';
-import type { OperationDescriptor, ResolvedTarget } from './operations.js';
+import { SensitiveResultSchema } from './operations.js';
+import type { OperationDescriptor, ResolvedTarget, SensitiveResult } from './operations.js';
 import { isPlainObject, stringOr } from './plugin-kit.js';
 
 /**
@@ -50,13 +51,6 @@ const ConfirmSourceSchema = z.union([
 ]);
 const ConfirmSchema = z.union([ConfirmSourceSchema, z.array(ConfirmSourceSchema).min(1)]);
 export type ConfirmSource = z.infer<typeof ConfirmSourceSchema>;
-
-const SensitiveResultSchema = z.union([
-  /** The whole result is a secret (a token, a key). */
-  z.literal('whole'),
-  /** Fields named `keys` in the result (or each row of it), whatever their value; with `deep`, at any depth. */
-  z.object({ keys: z.array(z.string().min(1)).min(1), deep: z.boolean().default(false) }).strict(),
-]);
 
 export const RuleSchema = z
   .object({
@@ -197,8 +191,12 @@ export interface CompiledRules<P = Record<string, unknown>> {
   summaryNotes(key: string): string[];
   /** The typed-confirmation literal of a locked operation; undefined for others or when nothing yields one. */
   confirmLiteral(ctx: ConfirmContext): Promise<string | undefined>;
-  /** The result with declared secret parts replaced by `[REDACTED]` (a copy). */
-  maskResult(key: string, result: unknown): unknown;
+  /**
+   * `value` masked as operation `key`'s `sensitiveResult` would mask it, as a copy. Core already masks
+   * every operation's own result; this is only for results of other operations a plugin hands back
+   * inside its own (a job queue's records), which core can't attribute to them.
+   */
+  maskEmbeddedResult(key: string, value: unknown): unknown;
 }
 
 export const REDACTED = '[REDACTED]';
@@ -256,11 +254,11 @@ function pickField(row: unknown, fields: string | string[]): string | undefined 
 /** A value worth masking: anything but null, undefined and the empty string. */
 const present = (v: unknown) => v !== null && v !== undefined && v !== '';
 
+/** Deeper than masking looks into: hidden rather than passed through unchecked. */
 const MAX_MASK_DEPTH = 16;
 
-function maskDeep(value: unknown, keys: ReadonlySet<string>, depth = 0): unknown {
+function maskDeep(value: unknown, keys: ReadonlySet<string>, depth: number): unknown {
   if (value === null || typeof value !== 'object') return value;
-  // Deeper than anything masking looks into: hide it rather than pass an unchecked secret through.
   if (depth > MAX_MASK_DEPTH) return REDACTED;
   if (Array.isArray(value)) return value.map((v) => maskDeep(v, keys, depth + 1));
   const out: Record<string, unknown> = {};
@@ -277,6 +275,19 @@ function maskShallow(value: unknown, keys: ReadonlySet<string>): unknown {
     return out;
   };
   return Array.isArray(value) ? value.map(mask) : mask(value);
+}
+
+/**
+ * Masks what a `sensitiveResult` declares (design §5.5): the whole value, or every non-empty value
+ * under one of `keys` (exact names) in the value or each row of it, at any depth with `deep`, whatever
+ * its type; anything nested deeper than 16 levels is hidden too. Returns a copy. Core applies it to
+ * every operation's result after `invoke`; plugins don't call it on their own results.
+ */
+export function maskSensitiveResult<T>(value: T, spec: SensitiveResult | null | undefined): T {
+  if (!spec) return value;
+  if (spec === 'whole') return (present(value) ? REDACTED : value) as T;
+  const keys = new Set(spec.keys);
+  return (spec.deep ? maskDeep(value, keys, 0) : maskShallow(value, keys)) as T;
 }
 
 interface Merged {
@@ -431,6 +442,7 @@ export function compileRules<P>(settings: PluginSettings<P>, hooks: RuleHooks = 
       ...(m.attestation ? { attestationRequired: true } : {}),
       ...(matchProfile ? { matchProfile } : {}),
       ...(sensitiveParams.length ? { sensitiveParams } : {}),
+      ...(m.sensitiveResult ? { sensitiveResult: m.sensitiveResult } : {}),
       ...(Object.keys(mergedDocs).length ? { docs: mergedDocs } : {}),
     };
   };
@@ -455,12 +467,6 @@ export function compileRules<P>(settings: PluginSettings<P>, hooks: RuleHooks = 
       }
       return undefined;
     },
-    maskResult(key, result) {
-      const spec = merged(key).sensitiveResult;
-      if (!spec) return result;
-      if (spec === 'whole') return present(result) ? REDACTED : result;
-      const keys = new Set(spec.keys);
-      return spec.deep ? maskDeep(result, keys) : maskShallow(result, keys);
-    },
+    maskEmbeddedResult: (key, value) => maskSensitiveResult(value, merged(key).sensitiveResult),
   };
 }

@@ -118,6 +118,28 @@ describe('execute → gate → plugin', () => {
     ]);
   });
 
+  it("masks the operation's declared result secrets in core, before the instance redactor", async () => {
+    const t = await setup();
+    // `key` is no sensitive key name; only the operation's declaration hides it.
+    t.db
+      .update(operations)
+      .set({ sensitiveResult: { keys: ['key'] } })
+      .where(eq(operations.id, t.opId('echo.query')))
+      .run();
+    const r = await t.exec(`return await echo.call('echo.query', { q: 1 });`);
+    expect(r).toMatchObject({ ok: true, value: { key: '[REDACTED]', params: { q: 1 }, password: '[REDACTED]' } });
+
+    t.db
+      .update(operations)
+      .set({ sensitiveResult: 'whole' })
+      .where(eq(operations.id, t.opId('echo.query')))
+      .run();
+    await expect(t.exec(`return await echo.call('echo.query', { q: 1 });`)).resolves.toMatchObject({
+      ok: true,
+      value: '[REDACTED]',
+    });
+  });
+
   it('treats a write in a group at Read as off, with a catchable reason', async () => {
     const t = await setup();
     t.setLevel('read');

@@ -1,3 +1,4 @@
+import semver from 'semver';
 import { ZodError } from 'zod';
 import { parseManifest } from './manifest.js';
 import type { Manifest } from './manifest.js';
@@ -12,7 +13,7 @@ import {
 } from './operations.js';
 import type { PluginSettings } from './rules.js';
 import type { InitParams, PluginHandlers } from './rpc.js';
-import { SDK_VERSION } from './version.js';
+import { SDK_VERSION, SENSITIVE_RESULT_SINCE } from './version.js';
 
 /**
  * Framework-agnostic conformance checks for a plugin (design §13). Runs the handlers in-process —
@@ -40,11 +41,21 @@ export interface ConformanceOptions {
   settings?: PluginSettings<unknown>;
 }
 
+/** Whether every core the manifest's `sdk` range accepts masks `sensitiveResult` itself. */
+export function sdkMasksResults(manifest: Pick<Manifest, 'sdk'>): boolean {
+  const min = semver.minVersion(manifest.sdk);
+  return min !== null && semver.gte(min, SENSITIVE_RESULT_SINCE);
+}
+
+const sensitiveResultNeedsSdk = (where: string, sdk: string) =>
+  `${where}: sensitiveResult is masked by core from contract ${SENSITIVE_RESULT_SINCE}, but manifest sdk ${sdk} accepts older cores that would drop it; require ^${SENSITIVE_RESULT_SINCE}`;
+
 /**
  * Static checks of a manifest beyond its schema, the rules every plugin repository used to test by
  * hand: each `secret` field is `writeOnly` and listed in `sensitiveKeys`, each `writeOnly` field uses
  * the `secret` widget, and the plugin names the hosts it may reach. With `settings`, every
- * `matchProfile` a rule names exists in the manifest. Returns the problems found.
+ * `matchProfile` a rule names exists in the manifest, and a plugin with `sensitiveResult` rules requires a
+ * contract that has core mask them. Returns the problems found.
  */
 export function checkManifest(input: unknown, settings?: PluginSettings<unknown>): string[] {
   let manifest: Manifest;
@@ -70,6 +81,8 @@ export function checkManifest(input: unknown, settings?: PluginSettings<unknown>
   for (const [i, rule] of (settings?.rules ?? []).entries()) {
     if (rule.matchProfile && !manifest.matchProfiles[rule.matchProfile])
       issues.push(`plugin.yaml rules[${i}]: matchProfile "${rule.matchProfile}" is not in the manifest`);
+    if (rule.sensitiveResult && !sdkMasksResults(manifest))
+      issues.push(sensitiveResultNeedsSdk(`plugin.yaml rules[${i}]`, manifest.sdk));
   }
   return issues;
 }
@@ -148,6 +161,8 @@ export async function checkConformance(opts: ConformanceOptions): Promise<string
     if (op.matchProfile && !manifest.matchProfiles[op.matchProfile]) {
       issues.push(`syncCatalog: ${op.key} references unknown matchProfile "${op.matchProfile}"`);
     }
+    if (op.sensitiveResult && !sdkMasksResults(manifest))
+      issues.push(sensitiveResultNeedsSdk(`syncCatalog: ${op.key}`, manifest.sdk));
     if (op.attestationRequired && !manifest.capabilities.attestation) {
       issues.push(`syncCatalog: ${op.key} requires attestation but capabilities.attestation is not declared`);
     }

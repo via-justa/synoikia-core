@@ -4,8 +4,9 @@ import {
   compileRules,
   parsePluginSettings,
   pluginSettingsJsonSchema,
+  maskSensitiveResult,
+  OperationDescriptorSchema,
   readPointer,
-  REDACTED,
 } from '../src/index.js';
 import type { OperationDraft } from '../src/index.js';
 
@@ -215,26 +216,33 @@ describe('compiled rules', () => {
     });
   });
 
-  it('masks results', () => {
-    expect(rules.maskResult('token.make', 'abc')).toBe(REDACTED);
-    expect(rules.maskResult('token.make', '')).toBe('');
-    expect(rules.maskResult('key.create', [{ id: 1, key: 'k' }, { id: 2 }])).toEqual([
-      { id: 1, key: REDACTED },
+  it('declares sensitiveResult on descriptors for core to mask', () => {
+    expect(rules.decorate(draft('token.make')).sensitiveResult).toBe('whole');
+    expect(rules.decorate(draft('key.create')).sensitiveResult).toEqual({ keys: ['key'], deep: false });
+    expect(rules.decorate(draft('cloud.query')).sensitiveResult).toEqual({ keys: ['key', 'secret'], deep: true });
+    expect(rules.decorate(draft('other'))).not.toHaveProperty('sensitiveResult');
+    // A split twin returns what its base returns, so it carries the base's rule.
+    const twins = compileRules(
+      parsePluginSettings({ rules: [{ match: 'token.make', split: 'admin', sensitiveResult: 'whole' }] }),
+    );
+    expect(twins.describe(draft('token.make')).map((d) => [d.key, d.sensitiveResult])).toEqual([
+      ['token.make', 'whole'],
+      ['token.make#admin', 'whole'],
+    ]);
+    expect(() => OperationDescriptorSchema.parse(rules.decorate(draft('cloud.query')))).not.toThrow();
+  });
+
+  it('masks results embedded in another operation the way their own operation declares', () => {
+    expect(rules.maskEmbeddedResult('token.make', 'abc')).toBe('[REDACTED]');
+    expect(rules.maskEmbeddedResult('key.create', [{ id: 1, key: 'k' }, { id: 2 }])).toEqual([
+      { id: 1, key: '[REDACTED]' },
       { id: 2 },
     ]);
-    // Whatever the value under a secret key: a number, an object.
-    expect(rules.maskResult('key.create', { key: { nested: 'x' } })).toEqual({ key: REDACTED });
-    expect(rules.maskResult('key.create', { key: 1234 })).toEqual({ key: REDACTED });
-    expect(rules.maskResult('token.make', 123456)).toBe(REDACTED);
-    expect(rules.maskResult('token.make', { token: 'x' })).toBe(REDACTED);
-    expect(rules.maskResult('token.make', null)).toBeNull();
-    // Deeper than masking looks is hidden, not passed through.
-    let nested: unknown = { key: 's' };
-    for (let i = 0; i < 20; i++) nested = { a: nested };
-    expect(JSON.stringify(rules.maskResult('cloud.query', nested))).not.toContain('"s"');
-    const deep = rules.maskResult('cloud.query', { a: [{ provider: { key: 'k', secret: 's', type: 'B2' } }] });
-    expect(deep).toEqual({ a: [{ provider: { key: REDACTED, secret: REDACTED, type: 'B2' } }] });
-    expect(rules.maskResult('other', { key: 'k' })).toEqual({ key: 'k' });
+    expect(rules.maskEmbeddedResult('cloud.query', { a: { b: { secret: 's' } } })).toEqual({
+      a: { b: { secret: '[REDACTED]' } },
+    });
+    expect(rules.maskEmbeddedResult('other', { key: 'k' })).toEqual({ key: 'k' });
+    expect(maskSensitiveResult({ key: 1234 }, { keys: ['key'] })).toEqual({ key: '[REDACTED]' });
   });
 
   it('refuses more sensitiveParams than core takes', () => {
@@ -278,14 +286,6 @@ describe('compiled rules', () => {
     expect(await r.confirmLiteral({ key: 'b', params: { id: 'undefined' }, targets: [] })).toBe('undefined');
     expect(await r.confirmLiteral({ key: 'b', params: { id: 2 }, targets: [] })).toBe('Two');
   });
-
-  it('never pollutes prototypes when masking', () => {
-    const input = JSON.parse('{"__proto__": {"polluted": true}, "key": "k"}') as unknown;
-    const out = rules.maskResult('cloud.query', input) as Record<string, unknown>;
-    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
-    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
-    expect(Object.hasOwn(out, '__proto__')).toBe(true);
-  });
 });
 
 describe('readPointer', () => {
@@ -318,6 +318,17 @@ describe('checkManifest', () => {
         manifest({ token: { type: 'string', writeOnly: true } }, { token: { widget: 'secret' } }, ['token']),
       ),
     ).toEqual([]);
+  });
+
+  it('requires a contract where core masks sensitiveResult', () => {
+    const yaml = parsePluginSettings({ rules: [{ match: 'token.make', sensitiveResult: 'whole' }] });
+    const old = checkManifest(manifest({}, {}), yaml);
+    expect(old).toHaveLength(1);
+    expect(old[0]).toMatch(/rules\[0\]: sensitiveResult .* require \^0\.2\.2/);
+    expect(checkManifest({ ...manifest({}, {}), sdk: '^0.2.2' }, yaml)).toEqual([]);
+    expect(checkManifest({ ...manifest({}, {}), sdk: '>=0.2.0' }, yaml)).toHaveLength(1);
+    // Without the rule, the older range is fine.
+    expect(checkManifest(manifest({}, {}), parsePluginSettings({}))).toEqual([]);
   });
 
   it('finds secret-field mistakes', () => {

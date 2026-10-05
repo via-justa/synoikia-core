@@ -90,7 +90,8 @@ export function create{{Pascal}}Plugin(): PluginHandlers {
         async invoke({ key, params, context }) {
           const method = baseKey(key);
           if (!known.has(method)) throw new PluginError(ErrorCodes.UnknownOperation, `${method} is not a ${SERVICE} method`);
-          return rules.maskResult(key, await kit.client().call(method, params, kit.timeout(context)));
+          // Core masks the result's declared secrets (plugin.yaml `sensitiveResult`).
+          return kit.client().call(method, params, kit.timeout(context));
         },
       };
     },

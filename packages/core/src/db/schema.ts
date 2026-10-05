@@ -1,3 +1,4 @@
+import type { SensitiveResult } from '@synoikia/plugin-sdk';
 import { sql } from 'drizzle-orm';
 import { blob, index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
@@ -119,6 +120,11 @@ export const pluginInstances = sqliteTable('plugin_instances', {
   sourceRef: text('source_ref'),
   lastSyncedAt: ts('last_synced_at'),
   lastSyncStatus: text('last_sync_status'),
+  /**
+   * The plugin version the catalog was last synced from. A different installed version is synced
+   * before its endpoint serves another call: descriptors (and `sensitiveResult`) belong to one bundle.
+   */
+  catalogPluginVersion: text('catalog_plugin_version'),
   createdAt: createdAt(),
 });
 
@@ -196,6 +202,8 @@ export const operations = sqliteTable(
     paramsSchema: json('params_schema'),
     /** JSON-pointer paths into params that hold a secret without a key name (a positional password). */
     sensitiveParams: json('sensitive_params').$type<string[]>(),
+    /** Secrets in the result that no key name gives away; core masks them after `invoke` (design §5.5). */
+    sensitiveResult: json('sensitive_result').$type<SensitiveResult>(),
     docs: json('docs'),
     firstSeenAt: ts('first_seen_at').notNull(),
     lastSeenAt: ts('last_seen_at').notNull(),

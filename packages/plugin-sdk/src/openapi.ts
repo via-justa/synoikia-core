@@ -462,12 +462,12 @@ export function restBinding(opts: RestBindingOptions): RestBinding {
       } catch (err) {
         throw new PluginError(ErrorCodes.InvalidParams, (err as Error).message);
       }
-      const result = await opts.client().request(method, path, {
+      // Declared secrets in the result (`sensitiveResult`) are masked by core, from the descriptor.
+      return opts.client().request(method, path, {
         query: p.query,
         body: p.body,
         timeoutMs: timeoutMs ?? Math.max(1000, context.deadlineMs),
       });
-      return opts.rules.maskResult(key, result);
     },
   };
 }

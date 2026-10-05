@@ -77,7 +77,7 @@ plugin: {} # anything specific to this upstream, validated by the plugin's own s
 | `split`           | Adds a locked twin `<key>#<suffix>`; the plugin decides per call when the twin applies (`splitWhen`).                                                                              |
 | `confirm`         | Literal source(s), first that yields wins: `instance`, `targets`, `{ param: /pointer }`, `{ lookup: … }`, `{ custom: name }`. A lookup falls back to the `$param` it looked up by. |
 | `sensitiveParams` | JSON pointers core redacts from params wherever they are shown or stored (all matching rules add up).                                                                              |
-| `sensitiveResult` | Secrets in the result that core can't recognize by key name: `whole`, or `{ keys, deep }`. Masked in the plugin by `rules.maskResult` (below), before core sees the result.        |
+| `sensitiveResult` | Secrets in the result that core can't recognize by key name: `whole`, or `{ keys, deep }`. Core masks them (below). Needs `sdk` `^0.2.2` or later in the manifest.                 |
 | `matchProfile`    | The manifest match profile pre-approval rules use for this operation.                                                                                                              |
 | `summaryNote`     | Appended to the approval summary.                                                                                                                                                  |
 | `description`     | `docs.description` (`{base}` and `{key}` are replaced).                                                                                                                            |
@@ -101,7 +101,7 @@ A field set by several matching rules takes the **first** rule's value, except `
 - More than 32 `sensitiveParams` on one operation (core's limit), rather than silently redacting fewer.
 - A spec whose `$ref`s expand past a fixed budget, and YAML aliases past 100.
 
-`sensitiveResult` masks any non-empty value under a listed key (strings, numbers, objects), and anything nested deeper than it looks. Unlike `sensitiveParams`, which core applies, it runs inside the plugin: `restBinding`, `staticHttpBinding` and the `websocket-rpc` template call `rules.maskResult(key, result)` for you, and a hand-written `invoke` must call it before returning. Core's own redaction (sensitive key names and the instance's secret values) still applies on top.
+`sensitiveResult` masks any non-empty value under a listed key (strings, numbers, objects), and anything nested deeper than it looks. Like `sensitiveParams`, it travels on the operation descriptor and **core** applies it, to the plugin's raw result right after `invoke` and before its own redaction by key name and secret value: an `invoke` returns the upstream's result as is. Core does this from plugin contract `0.2.2`, so a plugin with a `sensitiveResult` rule must declare `"sdk": "^0.2.2"` (or later) in its manifest, or an older core would drop the field; `synoikia-plugin check`, `checkConformance` and `repo pack` refuse it otherwise, and on an older core the SDK itself refuses to sync and to run any operation that declares one. The one thing core can't attribute is another operation's result handed back inside this one's (a job queue's records): mask those with `rules.maskEmbeddedResult(key, value)`, which applies `key`'s rule.
 
 ## The SDK
 
@@ -112,7 +112,7 @@ A field set by several matching rules takes the **first** rule's value, except `
 | Socket protocol                        | `PendingRequests`, `singleFlight`, `joinApiPath(…, { websocket: true })`                               |
 | OpenAPI catalog and binding            | `buildOpenApiCatalog`, `restBinding`, `fetchSpec`                                                      |
 | Declared catalog                       | `staticCatalog`, `staticHttpBinding`                                                                   |
-| Rules                                  | `parsePluginSettings`, `compileRules` (`describe`, `confirmLiteral`, `maskResult`, …)                  |
+| Rules                                  | `parsePluginSettings`, `compileRules` (`describe`, `confirmLiteral`, `maskEmbeddedResult`, …)          |
 | Errors                                 | `PluginError`, `upstreamError`, `statusKind`                                                           |
 | Tests                                  | `checkConformance`, `checkManifest`; `startFakeHttp`, `checkPluginContract` (`@synoikia/core/testing`) |
 

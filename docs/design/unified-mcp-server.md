@@ -279,6 +279,7 @@ The child can also send **notifications**: `log`, and `catalogChanged` (for exam
   matchProfile?: string;                // key into manifest.matchProfiles
   paramsSchema?: JSONSchema;            // for search() results and portal display
   sensitiveParams?: string[];           // JSON pointers core redacts (§5.5); at most 32
+  sensitiveResult?: 'whole' | { keys: string[]; deep?: boolean }; // result secrets core masks (§5.5)
   docs?: { summary?: string; description?: string; guidance?: string };
 }
 ```
@@ -547,7 +548,7 @@ A config diff (`prepareWrite`) names each changed field in a path (`/smtp/passwo
 
 Keys compare case-insensitively, ignoring `_` and `-`. A key matches a rule exactly or by containing it (`db_password`, `X-Api-Key`, `ssh_private_key`); rules under five characters (`pass`, `pwd`) only match as the key's last word (`smtp_pass`), so `bypass` stays visible. Under a contained match, booleans and numbers stay visible (`password_set: true`, `max_tokens: 4096`).
 
-A result can also carry a secret under a key name nothing above matches (a generated token returned as `value`). The plugin declares those with a `sensitiveResult` rule in `plugin.yaml`, and the SDK masks them **inside the plugin** before the result is returned to core; this is the one redaction core does not apply itself.
+A result can also carry a secret under a key name nothing above matches (a generated token returned as `value`, a keytab under `file`). An operation descriptor declares those as `sensitiveResult`: `'whole'` (the result is the secret) or `{ keys, deep? }` (any non-empty value under one of those exact key names, in the result or each row of it, or at any depth with `deep`; anything nested deeper than 16 levels is hidden too). Core stores it with the operation and applies it to the plugin's raw result right after `invoke`, before the instance redactor; nothing else ever sees the unmasked result. Core does this from plugin contract `0.2.2`; a plugin that declares `sensitiveResult` requires `sdk` `^0.2.2`, so an older core, which would drop the field, refuses to load it, and the SDK fails closed on its own when `init` reports an older contract (it refuses the sync and every call to an operation that declares one). One case stays in the plugin: a result that embeds other operations' results (a job queue's records) can't be attributed by core, so the plugin masks each embedded result with that operation's rule (`maskEmbeddedResult`, the same SDK function core uses). Because descriptors belong to one plugin bundle, an instance whose catalog was synced from a different plugin version than the one installed is synced again before it serves another call (§10).
 
 Text has no keys to go by, so each instance's redactor also **scrubs the instance's actual secret values** (and their URL/JSON-escaped forms, if at least 6 characters long) out of every string. Inside the sandbox, redaction applies to everything that leaves it: the result (before an oversized result is cut into its preview), every `console.log` argument (before it is turned into text), and error messages; `registry.find` redacts mirrored attributes at the source, and plugin/upstream error messages are scrubbed before they reach the model.
 
@@ -626,7 +627,9 @@ plugin_instances(id, plugin_id FK, slug UNIQUE, display_name, enabled, config TE
                  auth_mode NULL,                                -- NULL = inherit global default
                  settings TEXT,                                 -- approval timeout, rate limits, sandbox limits…
                  status 'stopped'|'starting'|'ready'|'error', status_error,
-                 upstream_version, source_ref, last_synced_at, last_sync_status, created_at)
+                 upstream_version, source_ref, last_synced_at, last_sync_status,
+                 catalog_plugin_version,                       -- plugin version the catalog came from (§10)
+                 created_at)
 
 -- catalog (instance-scoped; replaces the per-server methods/operations tables)
 operation_groups(id, instance_id FK, key, label, level 'none'|'read'|'ask'|'write' DEFAULT 'read',
@@ -640,7 +643,7 @@ operations(id, instance_id FK, key, display_name, kind, tag,
            locked, level_override 'none'|'read'|'ask'|'write' NULL,   -- NULL follows the group (§5.2.1)
            write_acknowledged, acknowledged_at, acknowledged_by,
            typed_confirmation, attestation_required, needs_review,
-           match_profile, params_schema TEXT, sensitive_params TEXT, docs TEXT,
+           match_profile, params_schema TEXT, sensitive_params TEXT, sensitive_result TEXT, docs TEXT,
            first_seen_at, last_seen_at, stale,
            UNIQUE(instance_id, key))
 registry_entries(id, instance_id FK, kind, ext_id, name, parent_ext_id, scopes TEXT, attrs TEXT, stale, last_synced_at,
@@ -839,6 +842,7 @@ Notifications are informational. They never carry approve/deny links: approvals 
 The maintenance cadence of the source designs applies unchanged, each run **per instance** by the core scheduler:
 
 - **Session-start sync, debounced.** On a new MCP session to `/{slug}`: if `last_synced_at` is older than `syncMaxAge` (default 1 h), or if `getUpstreamVersion()` ≠ `upstream_version`, run `syncCatalog` (+ `syncRegistry`) **before** serving the session's first `search`/`execute`. An in-process per-instance mutex means concurrent session starts share one sync.
+- **Plugin version change.** Before every `search`/`execute`, if the installed plugin's version differs from the one the catalog was synced from (`catalog_plugin_version`: after an install, update or manual file swap), the sync runs first and must succeed; until it does, the endpoint answers `PLUGIN_UNAVAILABLE` instead of serving a catalog that describes another bundle (its locks, its `sensitiveResult`).
 - **Group mapping on sync.** Each operation's `plugin_group` is mapped through `operation_group_aliases`. Missing groups are created at `read`. Groups with no remaining operations are marked `stale` (their level is kept in case they return). New writes arrive unacknowledged: at level Write they ask until acknowledged (§5.2.1).
 - **Cron backstop.** Daily, per instance (staggered). Also available as the "Sync now" button / `POST /api/instances/:id/sync`.
 - **Mid-session recheck.** Every 30 min for sessions still open, a cheap version comparison. On mismatch, a sync runs before the next call.

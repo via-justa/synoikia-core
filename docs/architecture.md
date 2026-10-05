@@ -327,7 +327,7 @@ flowchart LR
     b2["group, inferred classification, locked seeds"]
     b3["matchable fields (matchProfiles)"]
     b4["summary text, confirm literal"]
-    b5["sensitiveKeys, sensitiveParams"]
+    b5["sensitiveKeys, sensitiveParams,<br/>sensitiveResult"]
     b6["catalog discovery, registry mirror"]
     b7["target resolution, prepareWrite diff"]
     b8["upstream connection + invoke"]
@@ -420,6 +420,7 @@ classDiagram
     matchProfile
     paramsSchema
     sensitiveParams
+    sensitiveResult
     docs
   }
   PluginHost --> PluginChild : JSON-RPC request
@@ -501,7 +502,7 @@ flowchart TD
   rechk -- same --> inv
 
   inv["8 · invoke (plugin)<br/>ctx.callId, ctx.targets"] -- error --> eUp["UPSTREAM_DENIED / ERROR / TIMEOUT<br/>PLUGIN_UNAVAILABLE"]
-  inv --> s9["9 · redact result (§5.5)"]
+  inv --> s9["9 · redact result (§5.5)<br/>sensitiveResult, then keys + secret values"]
   s9 --> ok(["value returned into sandbox"])
 
   eEnded & eUnk & eAtt & eDis & eTgt & eRL & eCfg & eDen & eChg & eUp --> thrown(["catchable Error with .code<br/>thrown into the sandbox"])
@@ -829,6 +830,8 @@ The scheduler keeps each instance's catalog current; a per-instance mutex shares
 
 ```mermaid
 flowchart TD
+  t0(["every search / execute"]) --> pv{"installed plugin version ≠<br/>catalog_plugin_version?"}
+  pv -- "yes: sync must succeed,<br/>else PLUGIN_UNAVAILABLE" --> sync
   t1(["new MCP session"]) --> stale{"last_synced_at > syncMaxAge (1 h)<br/>or upstream version changed?"}
   stale -- yes --> sync
   stale -- no --> serve(["serve session"])
@@ -942,6 +945,7 @@ erDiagram
     text status "stopped | starting | ready | error"
     text upstream_version
     datetime last_synced_at
+    text catalog_plugin_version
   }
   operation_groups {
     int id PK
@@ -968,6 +972,7 @@ erDiagram
     text match_profile
     text params_schema
     text sensitive_params
+    text sensitive_result "whole or keys"
     bool stale
   }
   registry_entries {
@@ -1116,10 +1121,12 @@ flowchart LR
     ik["instance extra keys"]
     sp["operation sensitiveParams<br/>(JSON pointers)"]
     sv["instance's actual secret values<br/>(+ URL/JSON-escaped forms)"]
+    sr["operation sensitiveResult<br/>(whole, or exact keys)"]
   end
 
   eng(["core redaction engine<br/>case/_/- insensitive<br/>short rules match last word only"])
   g & pk & ik & sp & sv --> eng
+  sr -- "first, on the raw invoke result" --> eng
 
   eng --> o1["sandbox output: result, console.log,<br/>error messages"]
   eng --> o2["registry.find attrs at source"]
@@ -1129,7 +1136,6 @@ flowchart LR
   eng --> o6["admin portal + approval page"]
   eng --> o7["notification bodies"]
   invoke["plugin invoke()"] -. "receives the real values" .-> real[("unredacted params<br/>held in memory only")]
-  sr["plugin sensitiveResult<br/>(masked inside the plugin by<br/>rules.maskResult, before core)"] --> o1
 ```
 
 ---

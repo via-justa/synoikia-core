@@ -138,6 +138,7 @@ export function applyCatalogSync(
         matchProfile: d.matchProfile ?? null,
         paramsSchema: d.paramsSchema ?? null,
         sensitiveParams: d.sensitiveParams ?? null,
+        sensitiveResult: d.sensitiveResult ?? null,
         docs: d.docs ?? null,
         lastSeenAt: now,
         stale: false,

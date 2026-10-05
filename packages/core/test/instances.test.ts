@@ -1,4 +1,6 @@
 import { randomBytes } from 'node:crypto';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
@@ -31,9 +33,9 @@ const waitFor = async (pred: () => boolean, ms = 3000) => {
   }
 };
 
-function setup(opts: { versionCheckIntervalMs?: number } = {}) {
+function setup(opts: { versionCheckIntervalMs?: number; pluginsDir?: string } = {}) {
   const db = openDatabase(':memory:');
-  syncPluginRegistry(db, discoverPlugins(PLUGINS));
+  syncPluginRegistry(db, discoverPlugins(opts.pluginsDir ?? PLUGINS));
   db.update(plugins).set({ enabled: true }).run();
   const events = new CoreEvents();
   const seen: { name: string; payload: unknown }[] = [];
@@ -160,6 +162,59 @@ describe('InstanceManager', () => {
     await expect(t.manager.syncNow(inst.id)).rejects.toThrow(/Invalid syncCatalog result/);
     expect(t.manager.get(inst.id).lastSyncStatus).toMatch(/^error:/);
     expect(t.seen.map((e) => e.name)).toContain('sync.failed');
+  });
+
+  it("resyncs before serving when the running child's bundle differs from the catalog's, and refuses if that fails", async () => {
+    // A copy of the fixture plugins, so the bundle can be replaced on disk the way a hand copy would.
+    const dir = mkdtempSync(path.join(tmpdir(), 'syn-bundle-'));
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    cpSync(PLUGINS, dir, { recursive: true });
+    // A long interval: no upstream version check gets in the way.
+    const t = setup({ versionCheckIntervalMs: 60 * 60_000, pluginsDir: dir });
+    const inst = await create(t.manager, { version: '1.0' });
+    await t.manager.ensureFresh(inst.id);
+    const manifestFile = path.join(dir, 'echo', 'manifest.json');
+    const installed = (JSON.parse(readFileSync(manifestFile, 'utf8')) as { version: string }).version;
+    const synced = () =>
+      t.db.select().from(pluginInstances).where(eq(pluginInstances.id, inst.id)).get()!.catalogPluginVersion;
+    expect(synced()).toBe(installed);
+    const syncs = () => t.seen.filter((e) => e.name === 'sync.completed').length;
+    const before = syncs();
+
+    // A rescan that updates the plugin row alone changes nothing: the running child is the same code.
+    t.db.update(plugins).set({ version: '9.0.0' }).where(eq(plugins.pluginId, 'echo')).run();
+    await t.manager.ensureFresh(inst.id);
+    expect(syncs()).toBe(before);
+
+    // New code on disk, picked up by a crash restart: its catalog (what it locks, what core masks in
+    // its results) may differ, so it is synced before the next call is served.
+    const swap = (version: string) =>
+      writeFileSync(manifestFile, JSON.stringify({ ...JSON.parse(readFileSync(manifestFile, 'utf8')), version }));
+    const crash = async () => {
+      await t.manager
+        .runtime(inst.id)
+        .plugin()
+        .call('invoke', { key: 'k', params: { action: 'crash' }, context: { callId: 'c', deadlineMs: 1000 } })
+        .catch(() => undefined);
+      await waitFor(() => t.seen.some((e) => e.name === 'plugin.crashed'));
+      t.seen.length = 0;
+      await waitFor(() => t.manager.status(inst.id) === 'ready');
+    };
+    swap('9.9.9');
+    await crash();
+    await t.manager.ensureFresh(inst.id);
+    expect(syncs()).toBe(1);
+    expect(synced()).toBe('9.9.9');
+    await t.manager.ensureFresh(inst.id);
+    expect(syncs()).toBe(1);
+
+    // A failed resync doesn't serve the other code's catalog.
+    await t.manager.updateConnection(inst.id, { config: { mode: 'bad-output' } });
+    swap('9.9.10');
+    await crash().catch(() => undefined);
+    await waitFor(() => t.manager.status(inst.id) === 'ready');
+    await expect(t.manager.ensureFresh(inst.id)).rejects.toThrow(/Invalid syncCatalog result/);
+    expect(synced()).toBe('9.9.9');
   });
 
   it('shows error when the first catalog sync fails, and ready once one succeeds (review L10)', async () => {

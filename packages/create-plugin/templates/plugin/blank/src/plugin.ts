@@ -65,7 +65,8 @@ export function create{{Pascal}}Plugin(): PluginHandlers {
         },
 
         invoke({ key }) {
-          // TODO: call the upstream with kit.client(), then return rules.maskResult(key, result).
+          // TODO: call the upstream with kit.client() and return its result. Core masks the secrets
+          // plugin.yaml's `sensitiveResult` declares for this key.
           throw new PluginError(ErrorCodes.NotImplemented, `${key} is not implemented yet`);
         },
       };

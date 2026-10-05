@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { checkPlugin } from './check.js';
 
 /**
  * Builds a signed plugin repository that Synoikia installs plugins from (design §4.2–4.3). Every
@@ -140,6 +141,9 @@ export function createRepoTool(opts: RepoOptions) {
         throw new Error(`plugins/${id}: package.json ${pkg.version} and manifest.json ${manifest.version} differ`);
       }
       if (released(index, id, manifest.version)) continue;
+      // The same checks the plugin's own tests run, so a release can't skip them.
+      const issues = checkPlugin(dir);
+      if (issues.length) throw new Error(`plugins/${id}: ${issues.join('; ')}`);
 
       buildPlugin(dir);
       const file = `${id}-${manifest.version}.tgz`;

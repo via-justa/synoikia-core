@@ -1,3 +1,6 @@
+import { maskSensitiveResult } from '@synoikia/plugin-sdk';
+import type { SensitiveResult } from '@synoikia/plugin-sdk';
+
 /**
  * Redaction (design §5.5): replaces values under sensitive keys before anything reaches the model,
  * the audit log, pending approvals or the portal. Keys match case-insensitively, ignoring `_`/`-`,
@@ -132,6 +135,17 @@ export function redactPaths<T>(value: T, paths: readonly string[] | null | undef
     }
   }
   return out as T;
+}
+
+/**
+ * Masks the secrets an operation declared in its result (`sensitiveResult`, design §5.5): the whole
+ * result, or every non-empty value under one of `keys` in the result or each row of it (at any depth
+ * with `deep`), whatever its type. Exact key names, unlike the instance redactor's fuzzy matching:
+ * these are names like `key` or `file` that would hide far too much as a global rule. Runs on the
+ * plugin's raw result, before the instance redactor and before anything else sees it. Returns a copy.
+ */
+export function redactResult<T>(value: T, spec: SensitiveResult | null | undefined): T {
+  return maskSensitiveResult(value, spec);
 }
 
 export interface DiffEntry {

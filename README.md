@@ -84,7 +84,7 @@ An operation's own level only offers what fits it: a read is None, Read or Ask (
 
 **🖥️ An admin portal on your LAN.** A separate, login-protected port with local accounts, [TOTP][totp] and [OIDC][oidc] single sign-on, for endpoints, access levels, pre-approval rules, clients, plugins and settings.
 
-**🔄 Self-maintaining catalogs.** Each instance re-syncs its operation catalog when the upstream version changes and on a daily schedule, and keeps serving the last good catalog if the upstream is briefly unreachable.
+**🔄 Self-maintaining catalogs.** Each instance re-syncs its operation catalog when the upstream version changes, before serving anything from a newly installed plugin version, and on a daily schedule, and keeps serving the last good catalog if the upstream is briefly unreachable.
 
 ## The name
 

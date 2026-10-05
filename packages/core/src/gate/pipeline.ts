@@ -17,7 +17,7 @@ import { verifyAttestationKey } from './attestation.js';
 import { canonicalJson, sha256Hex } from './canonical.js';
 import { evaluatePreApproval } from './preapproval.js';
 import type { SlidingWindowLimiter } from './rate-limit.js';
-import { redactDiff, redactPaths } from './redact.js';
+import { redactDiff, redactPaths, redactResult } from './redact.js';
 import type { Redactor } from './redact.js';
 
 /**
@@ -403,9 +403,10 @@ export function createGateBindings(
         remaining,
       );
 
-      // 10–11. Redact, audit, hand back.
+      // 10–11. Redact (the operation's declared result secrets first, then by key name and secret
+      // value), audit, hand back. Nothing past this point sees the plugin's raw result.
       finish(decision, { resultStatus: 'ok' });
-      return rt.redact(result);
+      return rt.redact(redactResult(result, operation.sensitiveResult));
     } catch (err) {
       const raw = toBindingError(err);
       // Plugin and upstream messages are free text: scrub the instance's secret values out of them.

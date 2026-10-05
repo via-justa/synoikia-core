@@ -5,6 +5,22 @@ import { z } from 'zod';
  * result against these schemas before using it (design §3.3).
  */
 
+/**
+ * Secrets in an operation's result that no key name gives away: the whole result (a generated token),
+ * or the fields named `keys` in the result or each row of it, at any depth with `deep`. Core masks
+ * them before anything else sees the result (design §5.5).
+ */
+export const SensitiveResultSchema = z.union([
+  z.literal('whole'),
+  z
+    .object({
+      keys: z.array(z.string().min(1).max(128)).min(1).max(32),
+      deep: z.boolean().default(false),
+    })
+    .strict(),
+]);
+export type SensitiveResult = z.input<typeof SensitiveResultSchema>;
+
 export const OperationDescriptorSchema = z.object({
   /** Stable catalog key, unique per instance: `widget.list`, `POST /orders`, `widget.set`. */
   key: z.string().min(1).max(512),
@@ -47,6 +63,8 @@ export const OperationDescriptorSchema = z.object({
     .array(z.string().regex(/^(\/[^/]{1,128}){1,8}$/, 'a JSON pointer such as /1 or /0/password'))
     .max(32)
     .optional(),
+  /** Secrets in the result core masks before the result goes anywhere (needs contract 0.2.2). */
+  sensitiveResult: SensitiveResultSchema.optional(),
   docs: z
     .object({
       summary: z.string().optional(),
