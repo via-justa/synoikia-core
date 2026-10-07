@@ -65,6 +65,8 @@ export interface CallerContext {
   prompts?: ClientPrompts;
   /** Without a usable prompt, the execution may park and hand out the approval link (design §5.6). */
   parkable?: boolean;
+  /** False once the caller's credential was revoked; a parked run outlives the request that authenticated it. */
+  stillAuthorized?: () => boolean;
 }
 
 type OperationRow = typeof operations.$inferSelect;
@@ -115,6 +117,8 @@ const DENIAL_MESSAGES: Record<string, string> = {
   prompt_failed: 'needs approval, but the client could not show the approval prompt',
   confirmation_mismatch: 'was denied (confirmation mismatch)',
   endpoint_stopped: 'was cancelled: the endpoint was stopped or reconfigured while it waited for approval',
+  park_refused:
+    'needs approval, and an earlier approval of this execution was not given or it reached its approval limit; call execute again',
   too_many_parked:
     'needs approval, and too many earlier calls of this client still wait for one; resume or finish those first',
 };
@@ -181,8 +185,20 @@ export function createGateBindings(
         );
     };
 
+    const ensureAuthorized = () => {
+      if (caller.stillAuthorized && !caller.stillAuthorized())
+        reject(
+          'rejected:credential_revoked',
+          new BindingError(
+            'OPERATION_DISABLED',
+            'The credential of this call was revoked or no longer covers this endpoint',
+          ),
+        );
+    };
+
     try {
       ensureRunning();
+      ensureAuthorized();
 
       // 0. Map the raw binding call onto a catalog key (path templates, split keys…).
       const resolved = await rt.plugin().call('resolveOperation', { fn, args });
@@ -390,6 +406,7 @@ export function createGateBindings(
               ),
             );
           }
+          ensureAuthorized();
           // The admin may have lowered the level while the approval was open: the call must still be allowed.
           const after = resolveAccess(deps.db, rt.instanceId, operation.key, caller.principal);
           if (!after.reachable || after.mode === 'run') {

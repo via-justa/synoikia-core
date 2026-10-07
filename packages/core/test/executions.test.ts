@@ -8,7 +8,7 @@ import type { ParkedApproval } from '../src/approvals/service.js';
 import { eq } from 'drizzle-orm';
 import { setGroupLevel, updateOperation } from '../src/catalog/groups.js';
 import { openDatabase } from '../src/db/index.js';
-import { auditLog, operations } from '../src/db/schema.js';
+import { auditLog, operations, pluginInstances } from '../src/db/schema.js';
 import type { CallerContext } from '../src/gate/pipeline.js';
 import { ExecutionRegistry, PARKED_LIMIT, RESULT_TTL_MS } from '../src/runtime/executions.js';
 import type { PendingResult } from '../src/runtime/executions.js';
@@ -62,7 +62,7 @@ describe('ExecutionRegistry', () => {
     const first = reg.wait('x', 'alice', 'i1', 5_000);
     expect(await reg.wait('x', 'alice', 'i1', 10)).toBe('busy');
     reg.settled('x', 'p1', { outcome: 'approved', decidedBy: 'admin' });
-    expect(reg.status('x', 'alice', 'i1')).toMatchObject({ state: 'approved', decidedBy: 'admin' });
+    expect(reg.status('x', 'alice', 'i1')).toEqual({ state: 'approved' }); // no approver name to the client
     reg.awaiting('x', approval('p2'));
     expect(await first).toMatchObject({ status: 'awaiting_approval', approval: { approvalId: 'p2' } });
 
@@ -213,6 +213,65 @@ describe('parked executions', () => {
       error: { code: 'EXECUTION_NOT_FOUND' },
     });
     t.ctx.approvals.decide(pendingId(t.ctx, parked), { approve: false, decidedBy: 'admin' });
+  });
+
+  it('stops asking after an approval is not given, so a retry loop cannot hold a parked slot', async () => {
+    const t = await setup();
+    const parked = (await t.exec(`const codes = [];
+      for (let i = 0; i < 3; i++) {
+        try { await echo.call('echo.set', { name: 'x' + i }); codes.push('ok'); } catch (e) { codes.push(e.code); }
+      }
+      return codes;`)) as PendingResult;
+    t.ctx.approvals.decide(pendingId(t.ctx, parked), { approve: false, decidedBy: 'admin' });
+    expect(await t.resume(parked.executionId)).toMatchObject({
+      ok: true,
+      value: ['PERMISSION_DENIED', 'PERMISSION_DENIED', 'PERMISSION_DENIED'],
+    });
+    const refused = t.ctx.db
+      .select()
+      .from(auditLog)
+      .all()
+      .filter((a) => a.decision === 'denied');
+    expect(refused.length).toBe(3);
+    expect(t.ctx.executions.hasRoom('chat', t.instanceId)).toBe(true);
+  });
+
+  it('refuses the approved call when the credential was revoked while it waited', async () => {
+    const t = await setup();
+    let live = true;
+    const c = t.caller('chat', { stillAuthorized: () => live });
+    const parked = (await t.exec(SET, c)) as PendingResult;
+    live = false;
+    t.ctx.approvals.decide(pendingId(t.ctx, parked), { approve: true, decidedBy: 'admin' });
+    expect(await t.resume(parked.executionId, c)).toMatchObject({
+      ok: false,
+      error: { code: 'OPERATION_DISABLED', message: expect.stringContaining('revoked') },
+    });
+  });
+
+  it('a grant still respects the write rate limit and never covers typed-confirmation operations', async () => {
+    const t = await setup();
+    t.ctx.grants.create({
+      instanceId: t.instanceId,
+      principal: 'chat',
+      createdBy: 'admin',
+      approvalId: 'x',
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    t.ctx.db
+      .update(pluginInstances)
+      .set({ settings: { writesPerMinute: 1 } })
+      .run();
+    expect(await t.exec(SET)).toMatchObject({ ok: true });
+    expect(await t.exec(SET)).toMatchObject({ ok: false, error: { code: 'RATE_LIMITED' } });
+
+    // A typed confirmation (here without a literal from the plugin) goes to a human, not the grant.
+    t.ctx.db.update(pluginInstances).set({ settings: {} }).run();
+    t.ctx.db.update(operations).set({ typedConfirmation: true }).where(eq(operations.key, 'echo.set')).run();
+    expect(await t.exec(SET, t.caller('chat'))).toMatchObject({
+      ok: false,
+      error: { code: 'PLUGIN_ERROR', message: expect.stringContaining('confirmation value') },
+    });
   });
 
   it('a grant never covers typed-confirmation or locked operations, nor a read-only credential', async () => {

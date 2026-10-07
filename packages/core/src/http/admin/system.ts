@@ -217,6 +217,8 @@ export function registerSystemRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
   });
   app.post('/api/users/:id/reset-totp', (c) => {
     ctx.users.resetTotp(c.req.param('id'), actor(c));
+    // An approval browser's TOTP proof must not outlive the authenticator it was made with.
+    ctx.sessions.revokeKind(c.req.param('id'), 'approval_ui');
     return c.json(toPublicUser(ctx.users.get(c.req.param('id'))));
   });
 

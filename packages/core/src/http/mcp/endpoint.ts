@@ -8,7 +8,7 @@ import { z } from 'zod';
 import type { AppContext } from '../../app.js';
 import type { Config } from '../../config/env.js';
 import type { ClientPrompts } from '../../approvals/service.js';
-import { authenticateMcp, effectiveAuthMode, publicMcpBase } from '../../auth/mcp-auth.js';
+import { authenticateMcp, effectiveAuthMode, principalLive, publicMcpBase } from '../../auth/mcp-auth.js';
 import { TOKEN_PREFIX } from '../../auth/mcp-tokens.js';
 import { ACCESS_PREFIX } from '../../auth/oauth.js';
 import type { McpIdentity } from '../../auth/mcp-auth.js';
@@ -289,6 +289,7 @@ export class McpEndpoints {
       principal: { ceiling: identity.access },
       prompts: prompts(),
       parkable: true,
+      stillAuthorized: () => principalLive(this.ctx, identity.principal, instanceId),
     });
     const extras = (): ToolExtras => ({
       publicBase,

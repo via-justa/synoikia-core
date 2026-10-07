@@ -242,7 +242,9 @@ describe('approval page', () => {
     expect(html).toContain('Approve once');
     expect(html).toContain('Approve for this session');
     expect(html).toMatch(/<option value="1"/);
-    expect(html).toMatch(/<option value="4" selected/);
+    expect(html).toMatch(/<option value="4"/);
+    // Approving once stays the main action; a session grant is the deliberate one.
+    expect(html).toMatch(/class="primary" type="submit" name="decision" value="approve"/);
     expect(html).toContain('<strong>claude</strong>');
 
     // A length the page did not offer is refused.

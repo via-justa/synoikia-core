@@ -72,7 +72,9 @@ export class SessionService {
     if (!row) return null;
     const now = this.now().getTime();
     const idleExpired = now - row.session.lastSeenAt.getTime() > limits.idleMs;
-    if (row.user.disabled || idleExpired || row.session.expiresAt.getTime() <= now) {
+    // The current limit applies too, so lowering it shortens sessions that already exist.
+    const tooOld = now - row.session.createdAt.getTime() > limits.absoluteMs;
+    if (row.user.disabled || idleExpired || tooOld || row.session.expiresAt.getTime() <= now) {
       this.db.delete(sessions).where(eq(sessions.idHash, idHash)).run();
       return null;
     }

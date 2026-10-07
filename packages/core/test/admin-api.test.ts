@@ -181,6 +181,10 @@ describe('approval browsers and session grants', () => {
     expect(await (await b.get('/api/profile/approval-sessions')).json()).toEqual([]);
     // The admin session itself stays.
     expect((await b.get('/api/profile')).status).toBe(200);
+    // A TOTP reset signs approval browsers out: their proof was made with the old authenticator.
+    t.ctx.sessions.create(admin.id, 'approval_ui', { idleMs: 60_000, absoluteMs: 60_000 });
+    expect((await b.post(`/api/users/${admin.id}/reset-totp`, {})).status).toBe(200);
+    expect(t.ctx.sessions.listKind(admin.id, 'approval_ui')).toEqual([]);
 
     const instance = await t.ctx.instances.create({ pluginId: 'echo', slug: 'echo', connection: {} });
     const grant = t.ctx.grants.create({

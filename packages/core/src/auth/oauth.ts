@@ -451,6 +451,19 @@ export class OAuthService {
     };
   }
 
+  /** The grant, its client and user are still live and the grant covers the instance (design §5.6). */
+  grantLiveFor(grantId: string, instanceId: string): boolean {
+    const found = this.db
+      .select({ grant: oauthGrants, client: oauthClients, user: users })
+      .from(oauthGrants)
+      .innerJoin(oauthClients, eq(oauthGrants.clientId, oauthClients.id))
+      .innerJoin(users, eq(oauthGrants.userId, users.id))
+      .where(eq(oauthGrants.id, grantId))
+      .get();
+    if (!found || found.grant.revokedAt || found.client.revokedAt || found.user.disabled) return false;
+    return (found.grant.instanceIds ?? []).includes(instanceId);
+  }
+
   /** An instance was deleted: grants left with no other instance are revoked with their tokens. */
   forgetInstance(instanceId: string) {
     const now = this.now();

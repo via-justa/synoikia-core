@@ -212,6 +212,9 @@ describe('MCP endpoint with bearer tokens', () => {
     expect(parse(await stranger.callTool({ name: 'resume', arguments: { executionId } }))).toMatchObject({
       error: 'EXECUTION_NOT_FOUND',
     });
+    expect(
+      (await stranger.callTool({ name: 'approval_status', arguments: { executionId } })).structuredContent,
+    ).toEqual({ state: 'not_found' });
     await stranger.close();
 
     const firstId = approvalIdOf(first);
@@ -266,6 +269,13 @@ describe('MCP endpoint with bearer tokens', () => {
     const locked = await exec(`return (await echo.call('echo.delete', { name: 'vol/x' })).key;`);
     expect(locked).toMatchObject({ status: 'awaiting_approval' });
     ctx.approvals.decide(approvalIdOf(locked), { approve: false, decidedBy: 'admin' });
+
+    // Another credential can't end it.
+    const { token: other } = ctx.tokens.create({ name: 'other2', scope: [instanceId], access: 'write' });
+    const stranger = await connect('echo', other);
+    const tried = await stranger.callTool({ name: 'session_grant_revoke', arguments: { grantId: grant.id } });
+    expect(parse(tried)).toEqual({ revoked: false });
+    await stranger.close();
 
     await client.callTool({ name: 'session_grant_revoke', arguments: { grantId: grant.id } });
     const again = await exec(`return (await echo.call('echo.set', { name: 'vol/i' })).key;`);

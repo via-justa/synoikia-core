@@ -78,7 +78,7 @@ button.quiet { background: transparent; color: var(--no); border-color: var(--li
       const pill = st === 'pending'
         ? '<span class="pill pending" id="left">● ' + esc(timeLeft(a.expiresAt)) + '</span>'
         : st === 'approved' || (st === 'done' && state.decision === 'approved')
-          ? '<span class="pill ok">✓ Approved' + (state.decidedBy ? ' by ' + esc(state.decidedBy) : '') + '</span>'
+          ? '<span class="pill ok">✓ Approved</span>'
           : st === 'running' ? '<span class="pill ok">Running</span>'
           : '<span class="pill no">✕ ' + esc(st === 'done' ? (state.decision || 'finished').replace('_', ' ') : st.replace('_', ' ')) + '</span>';
       html += '<div class="card"><div class="hd">Synoikia · approval needed</div><div class="bd">' +
@@ -119,7 +119,7 @@ button.quiet { background: transparent; color: var(--no); border-color: var(--li
     catch { return; }
     if (!s || !s.state) return;
     if (s.state === 'pending') { const left = document.getElementById('left'); if (left) left.textContent = '● ' + timeLeft(state.approval.expiresAt); return; }
-    state.status = s.state; state.decision = s.decision || s.state; state.decidedBy = s.decidedBy;
+    state.status = s.state; state.decision = s.decision || s.state;
     clearInterval(poll); poll = null;
     render();
     const approved = s.state === 'approved' || s.state === 'running' || (s.state === 'done' && s.decision === 'approved');

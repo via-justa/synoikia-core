@@ -5,6 +5,8 @@ import type { SandboxResult } from '../sandbox/index.js';
  * Only its owner (credential and endpoint) can follow it with `resume`; it keeps running at the decision. */
 
 export const PARKED_LIMIT = { perPrincipalInstance: 2, perInstance: 8, total: 32 };
+/** Approvals one parked execution can ask for; it also stops asking after one is not given. */
+export const MAX_PARKED_APPROVALS = 10;
 /** How long `resume` waits for a change before it answers "still waiting". */
 export const RESUME_WAIT_MS = 45_000;
 /** How long a finished result waits for `resume` to collect it. */
@@ -25,9 +27,8 @@ export type ExecuteResult = SandboxResult | PendingResult;
 export interface ExecutionStatus {
   state: 'pending' | 'approved' | 'denied' | 'timed_out' | 'cancelled' | 'running' | 'done';
   expiresAt?: string;
-  /** The last human decision on this run's approvals. */
+  /** The last decision on this run's approvals. */
   decision?: string;
-  decidedBy?: string;
 }
 
 interface Entry {
@@ -37,6 +38,7 @@ interface Entry {
   /** The approval the run waits on now, if any. */
   approval?: ParkedApproval;
   lastDecision?: { outcome: string; decidedBy?: string };
+  approvals: number;
   result?: SandboxResult;
   finishedAt?: number;
   attached: boolean;
@@ -66,7 +68,13 @@ export class ExecutionRegistry {
   }
 
   adopt(input: { id: string; owner: string; instanceId: string; approval: ParkedApproval; abort: () => void }) {
-    this.entries.set(input.id, { ...input, attached: false, waiters: new Set() });
+    this.entries.set(input.id, { ...input, approvals: 1, attached: false, waiters: new Set() });
+  }
+
+  /** Whether an adopted run may park again: a loop of denied or timed-out approvals ends here. */
+  mayParkAgain(id: string): boolean {
+    const e = this.entries.get(id);
+    return !!e && e.approvals < MAX_PARKED_APPROVALS && (!e.lastDecision || e.lastDecision.outcome === 'approved');
   }
 
   /** The parked run reached another approval. */
@@ -74,6 +82,7 @@ export class ExecutionRegistry {
     const e = this.entries.get(id);
     if (!e) return;
     e.approval = approval;
+    e.approvals++;
     this.changed(e);
   }
 
@@ -104,11 +113,12 @@ export class ExecutionRegistry {
   status(id: string, owner: string, instanceId: string): ExecutionStatus | undefined {
     const e = this.find(id, owner, instanceId);
     if (!e) return undefined;
-    if (e.result) return { state: 'done', decision: e.lastDecision?.outcome, decidedBy: e.lastDecision?.decidedBy };
+    // No approver name: it is a sign-in name on the internet-facing MCP port.
+    if (e.result) return { state: 'done', decision: e.lastDecision?.outcome };
     if (e.approval) return { state: 'pending', expiresAt: e.approval.expiresAt.toISOString() };
     if (e.lastDecision && e.lastDecision.outcome !== 'approved')
-      return { state: e.lastDecision.outcome as ExecutionStatus['state'], decidedBy: e.lastDecision.decidedBy };
-    return { state: e.lastDecision ? 'approved' : 'running', decidedBy: e.lastDecision?.decidedBy };
+      return { state: e.lastDecision.outcome as ExecutionStatus['state'] };
+    return { state: e.lastDecision ? 'approved' : 'running' };
   }
 
   /** Waits for the result or a new approval, up to `waitMs`. A collected result removes the entry. */

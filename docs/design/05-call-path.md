@@ -172,7 +172,7 @@ A human must make an approval, not the client that made the call. The answer to 
    - **No channel.** A caller that cannot park, for example a script through the test harness, has no channel. Core denies the call at once: `client_cannot_approve` for a client with forms only, `no_approval_path` for a client without prompts. Over the parked limits, core denies with `too_many_parked`.
 3. **Approval page** (`/a/:token` on the MCP listener). The page needs:
    - a signed-in portal user with TOTP;
-   - a TOTP proof in this browser session, given once (a password and TOTP sign-in counts; after an OIDC sign-in, the first approval asks for a code). The session lasts `approvalSessionIdleHours` without use (12 h by default) and at most `approvalSessionAbsoluteDays` (7 days by default). A restart of core clears the proofs, so the next approval asks for a code again;
+   - a TOTP proof in this browser session, given once (a password and TOTP sign-in counts; after an OIDC sign-in, the first approval asks for a code). The session lasts `approvalSessionIdleHours` without use (12 h by default) and at most `approvalSessionAbsoluteDays` (7 days by default). A restart of core clears the proofs, so the next approval asks for a code again. A TOTP reset, a new enrollment or turning TOTP off signs out all approval sessions of the user. A lower setting also shortens the sessions that exist;
    - for a locked operation, a TOTP code from the last 5 minutes;
    - a POST with a CSRF token. A GET or a prefetch decides nothing.
      `decided_by` is the user name. `decided_via` is `url`. The page has three choices: **Deny**, **Approve once** and **Approve for this session** (§5.8).
@@ -287,6 +287,10 @@ A client without a usable prompt, for example a chat client without elicitation,
 
 Each write of a parked script runs once. The agent must not run the code again.
 
+**Park again.** A parked script can park again for its next approval only if each approval before it was given. It can park at most 10 times. Otherwise core denies the call at once (`park_refused`). A loop that catches denials and asks again then ends with the sandbox time limit.
+
+**Credential.** A parked execution outlives the request that authenticated it. So the gate checks the credential before each call and again after the approval. A revoked token, a revoked OAuth grant or client, a disabled user, or a token no longer scoped to the endpoint stops the call with `OPERATION_DISABLED`.
+
 **Owner.** A parked execution belongs to the principal and the endpoint that started it. The MCP session is not part of the owner, because a chat client can open a new session. A request of another owner gets `EXECUTION_NOT_FOUND`, the same as an unknown id.
 
 **Limits.**
@@ -311,7 +315,7 @@ The approval card is an MCP Apps view (extension `io.modelcontextprotocol/ui`). 
 
 - **Resource.** `ui://synoikia/approval`, MIME type `text/html;profile=mcp-app`. Core serves static HTML and script. It loads nothing from other origins and declares no CSP domains.
 - **Tools.** `execute` and `resume` set `_meta.ui.resourceUri` to the card. Two tools have `_meta.ui.visibility: ["app"]`, so the model does not see them:
-  - `approval_status(executionId)` returns the state of a parked execution: `pending`, `approved`, `denied`, `timed_out`, `cancelled`, `running` or `done`, with `decidedBy` and `expiresAt`. It never returns parameters or results. It has the owner check of `resume`.
+  - `approval_status(executionId)` returns the state of a parked execution: `pending`, `approved`, `denied`, `timed_out`, `cancelled`, `running` or `done`, with `expiresAt` and the last decision. It never returns parameters, results or the name of the approver. It has the owner check of `resume`.
   - `session_grant_revoke(grantId)` ends a session grant of the same principal and endpoint.
 - **The card never decides.** It has no approve control and takes no TOTP code. It shows the state and opens the approval page through `ui/open-link`. The host renders the card from the tool result, so the agent cannot change the link.
 - **Continue.** When the state is final, the card sends one `ui/message` to the chat ("Approved, continue."). The agent then calls `resume`. If the host refuses the message, the card asks the user to say "continue".
@@ -324,7 +328,7 @@ At session start, core logs the elicitation mode of the client (`none`, `form` o
 
 A session grant lets one principal run the operations at `ask` on one endpoint without a question, for a time.
 
-- **Who gives it.** Only a human on the approval page, with **Approve for this session**, when the human approves a call. A client, the card and form elicitation cannot give one.
+- **Who gives it.** Only a human on the approval page, with **Approve for this session**, when the human approves a call. A client, the card and form elicitation cannot give one. **Approve once** is the main button, and the shortest length is the default.
 - **Scope.** The principal (the credential) and the endpoint of the approved call. A new grant for the same principal and endpoint replaces the old one.
 - **Length.** 1 h, 4 h or until midnight (server time). The endpoint setting `sessionGrantMaxHours` (8 by default) is the maximum. `0` removes the choice from the page. Core applies the maximum again when it makes the grant.
 - **Effect.** At step 6 of the gate, an operation at `ask` runs with `auto-approved:grant:<id>`. The `catalog` entries show `approval: auto`. These do not change:

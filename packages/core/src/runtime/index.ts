@@ -74,7 +74,14 @@ export async function executeCode(
   let firstPark!: (a: ParkedApproval) => void;
   const parkedFirst = new Promise<ParkedApproval>((resolve) => (firstPark = resolve));
   const park: GatePark | undefined = registry && {
-    reserve: () => adopted || registry.hasRoom(owner, rt.instanceId),
+    reserve: () =>
+      adopted
+        ? registry.mayParkAgain(executionId)
+          ? null
+          : 'park_refused'
+        : registry.hasRoom(owner, rt.instanceId)
+          ? null
+          : 'too_many_parked',
     offer: (a) => (adopted ? registry.awaiting(executionId, a) : firstPark(a)),
     settled: (approvalId, decision) => registry.settled(executionId, approvalId, decision),
   };
@@ -86,12 +93,19 @@ export async function executeCode(
     // Each gated call's result was already redacted; this covers anything the script derived or logged.
     redact: rt.redact,
   });
-  const first = await Promise.race([
-    sandbox.then((result) => ({ result })),
-    parkedFirst.then((approval) => ({ approval })),
-  ]);
-  signal?.removeEventListener('abort', stop);
-  release();
+  let first: { result: SandboxResult } | { approval: ParkedApproval };
+  try {
+    first = await Promise.race([
+      sandbox.then((result) => ({ result })),
+      parkedFirst.then((approval) => ({ approval })),
+    ]);
+  } catch (err) {
+    stop();
+    throw err;
+  } finally {
+    signal?.removeEventListener('abort', stop);
+    release();
+  }
   if ('result' in first) {
     stop();
     return first.result;
@@ -101,11 +115,18 @@ export async function executeCode(
   registry!.adopt({ id: executionId, owner, instanceId: rt.instanceId, approval: first.approval, abort: stop });
   adopted = true;
   parkedRunning++;
-  void sandbox.then((result) => {
-    parkedRunning--;
-    stop();
-    registry!.finish(executionId, result);
-  });
+  void sandbox.then(
+    (result) => {
+      parkedRunning--;
+      stop();
+      registry!.finish(executionId, result);
+    },
+    () => {
+      parkedRunning--;
+      stop();
+      registry!.finish(executionId, { ok: false, error: { code: 'INTERNAL', message: 'Internal error' }, logs: [] });
+    },
+  );
   return pendingResult(executionId, first.approval);
 }
 

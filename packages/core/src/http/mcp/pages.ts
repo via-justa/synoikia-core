@@ -300,23 +300,18 @@ export function approvalPage(c: Context, v: ApprovalView, status: 200 | 400 = 20
                 ${v.error ? html`<p class="error" role="alert">${v.error}</p>` : ''}
                 <div class="row">
                   <button class="danger" type="submit" name="decision" value="deny">Deny</button>
-                  <button
-                    class="${v.grantOptions.length ? '' : 'primary'}"
-                    type="submit"
-                    name="decision"
-                    value="approve"
-                  >
+                  <button class="primary" type="submit" name="decision" value="approve">
                     ${v.grantOptions.length ? 'Approve once' : 'Approve'}
                   </button>
                 </div>
                 ${
                   v.grantOptions.length
                     ? html`<div class="row">
-                          <button class="primary" type="submit" name="decision" value="approve_session">
+                          <button type="submit" name="decision" value="approve_session">
                             Approve for this session
                           </button>
                           <select id="grant" name="grant" aria-label="Session length" style="flex:0 0 auto">
-                            ${v.grantOptions.map((o, i) => html`<option value="${o.value}" ${i === 1 ? 'selected' : ''}>${o.label}</option>`)}
+                            ${v.grantOptions.map((o) => html`<option value="${o.value}">${o.label}</option>`)}
                           </select>
                         </div>
                         <p class="muted">

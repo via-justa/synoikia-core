@@ -351,7 +351,10 @@ export function registerProfileRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
 
   app.post('/api/profile/totp/confirm', async (c) => {
     const { code } = await readJson(c, z.object({ code: z.string() }));
-    return c.json({ recoveryCodes: ctx.users.confirmTotp(c.get('user').id, code) });
+    const recoveryCodes = ctx.users.confirmTotp(c.get('user').id, code);
+    // A new authenticator: approval browsers proved the old one (or none) and must sign in again.
+    ctx.sessions.revokeKind(c.get('user').id, 'approval_ui');
+    return c.json({ recoveryCodes });
   });
 
   // Turning TOTP off needs a current code, so a hijacked session alone can't remove the second factor.
@@ -364,6 +367,7 @@ export function registerProfileRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     if (!ctx.users.verifySecondFactor(user.id, code))
       return c.json({ error: 'invalid_code', message: 'Invalid code' }, 401);
     ctx.users.resetTotp(user.id);
+    ctx.sessions.revokeKind(user.id, 'approval_ui');
     return c.json({ status: 'ok' });
   });
 

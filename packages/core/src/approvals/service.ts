@@ -68,8 +68,8 @@ export interface ParkedApproval {
 
 /** Lets an execution park (design §5.6) when the client has no usable prompt. */
 export interface ParkHook {
-  /** False when the caller is over its cap of parked executions. */
-  reserve(): boolean;
+  /** Null when the execution may park; otherwise the denial reason. */
+  reserve(): string | null;
   offer(approval: ParkedApproval): void;
 }
 
@@ -165,14 +165,14 @@ export class ApprovalService {
       : prompts.form && input.formApprovals
         ? 'form'
         : null;
-    let overParkCap = false;
+    let parkRefused: string | null = null;
     if (!channel && input.park) {
-      if (input.park.reserve()) channel = 'link';
-      else overParkCap = true;
+      parkRefused = input.park.reserve();
+      if (!parkRefused) channel = 'link';
     }
     if (!channel) {
       // A form-only client can't carry a human's approval for this call; no prompts at all is worse.
-      const reason = overParkCap ? 'too_many_parked' : prompts.form ? 'client_cannot_approve' : 'no_approval_path';
+      const reason = parkRefused ?? (prompts.form ? 'client_cannot_approve' : 'no_approval_path');
       this.db
         .insert(pendingApprovals)
         .values({ ...row, status: 'denied', decidedAt: now })
