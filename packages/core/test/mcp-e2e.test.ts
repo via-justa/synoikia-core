@@ -96,15 +96,39 @@ async function connect(
   return client;
 }
 
+/** The approval behind a parked result's page link. */
+const approvalIdOf = (res: Record<string, unknown>) => {
+  const url = (res.approval as { url: string }).url;
+  return ctx.links.resolve(new URL(url).pathname.slice('/a/'.length))!.approvalId;
+};
+
 const parse = (res: unknown) =>
   JSON.parse((res as { content: { text: string }[] }).content[0]!.text) as Record<string, unknown>;
 
 describe('MCP endpoint with bearer tokens', () => {
-  it('exposes exactly search and execute, with plugin-specific descriptions', async () => {
+  it('exposes search, execute and resume (plus the card’s app-only tools), with plugin-specific descriptions', async () => {
     const { token } = ctx.tokens.create({ name: 'e2e', scope: [instanceId] });
     const client = await connect('echo', token);
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(['execute', 'search']);
+    expect(tools.map((t) => t.name).sort()).toEqual([
+      'approval_status',
+      'execute',
+      'resume',
+      'search',
+      'session_grant_revoke',
+    ]);
+    const meta = (name: string) => tools.find((t) => t.name === name)?._meta as { ui?: Record<string, unknown> };
+    expect(meta('execute').ui).toEqual({ resourceUri: 'ui://synoikia/approval' });
+    expect(meta('approval_status').ui?.visibility).toEqual(['app']);
+    expect(meta('session_grant_revoke').ui?.visibility).toEqual(['app']);
+    const card = await client.readResource({ uri: 'ui://synoikia/approval' });
+    const html = (card.contents[0] as { text: string; mimeType: string }).text;
+    expect(card.contents[0]!.mimeType).toBe('text/html;profile=mcp-app');
+    // No external origins, and the card has no way to approve.
+    expect(html).not.toMatch(/https?:\/\//);
+    expect(html).not.toMatch(/totp|approve_session/i);
+    const called = [...html.matchAll(/name: '(\w+)'/g)].map((m) => m[1]);
+    expect(new Set(called)).toEqual(new Set(['approval_status', 'session_grant_revoke']));
     expect(tools.find((t) => t.name === 'execute')?.description).toContain('echo.call(…)');
     expect(tools.find((t) => t.name === 'search')?.description).toContain('guides.get(key)');
     expect(tools.find((t) => t.name === 'search')?.annotations).toMatchObject({ readOnlyHint: true });
@@ -149,13 +173,114 @@ describe('MCP endpoint with bearer tokens', () => {
       `await echo.call('echo.set', { name: 'vol/a' });`,
       `await echo.call('echo.delete', { name: 'vol/x' });`,
     ]) {
-      const res = await client.callTool({ name: 'execute', arguments: { code } });
-      expect(parse(res)).toMatchObject({
-        error: 'PERMISSION_DENIED',
-        message: expect.stringContaining('form prompts'),
-      });
+      // The call parks with a link to the approval page instead of asking the client.
+      const res = parse(await client.callTool({ name: 'execute', arguments: { code } }));
+      expect(res).toMatchObject({ status: 'awaiting_approval', approval: { url: expect.stringMatching(/\/a\//) } });
+      ctx.approvals.decide(approvalIdOf(res), { approve: false, decidedBy: 'admin' });
+      const after = parse(await client.callTool({ name: 'resume', arguments: { executionId: res.executionId } }));
+      expect(after).toMatchObject({ error: 'PERMISSION_DENIED' });
     }
     expect(shown).toEqual([]);
+    await client.close();
+  });
+
+  it('parks a call for a client without prompts; each write runs once and resume returns the result', async () => {
+    const { token } = ctx.tokens.create({ name: 'parker', scope: [instanceId], access: 'write' });
+    const client = await connect('echo', token);
+    const first = parse(
+      await client.callTool({
+        name: 'execute',
+        arguments: {
+          code: `const a = await echo.call('echo.set', { name: 'vol/p' });
+                 const b = await echo.call('echo.set', { name: 'vol/q' });
+                 return [a.params.name, b.params.name];`,
+        },
+      }),
+    );
+    expect(first).toMatchObject({
+      status: 'awaiting_approval',
+      approval: { operationKey: 'echo.set', url: expect.stringContaining(`${base}/a/`) },
+    });
+    const executionId = first.executionId as string;
+    const status = async () =>
+      (await client.callTool({ name: 'approval_status', arguments: { executionId } })).structuredContent;
+    expect(await status()).toMatchObject({ state: 'pending' });
+
+    // Another credential can neither follow nor see it.
+    const { token: other } = ctx.tokens.create({ name: 'other', scope: [instanceId], access: 'write' });
+    const stranger = await connect('echo', other);
+    expect(parse(await stranger.callTool({ name: 'resume', arguments: { executionId } }))).toMatchObject({
+      error: 'EXECUTION_NOT_FOUND',
+    });
+    expect(
+      (await stranger.callTool({ name: 'approval_status', arguments: { executionId } })).structuredContent,
+    ).toEqual({ state: 'not_found' });
+    await stranger.close();
+
+    const firstId = approvalIdOf(first);
+    ctx.approvals.decide(firstId, { approve: true, decidedBy: 'admin' });
+    const second = parse(await client.callTool({ name: 'resume', arguments: { executionId } }));
+    expect(second).toMatchObject({ status: 'awaiting_approval', executionId });
+    const secondId = approvalIdOf(second);
+    expect(secondId).not.toBe(firstId);
+    ctx.approvals.decide(secondId, { approve: true, decidedBy: 'admin' });
+    const done = parse(await client.callTool({ name: 'resume', arguments: { executionId } }));
+    expect(done).toEqual({ result: ['vol/p', 'vol/q'] });
+
+    const trail = ctx.db
+      .select()
+      .from(auditLog)
+      .all()
+      .filter((a) => (a.detail as { executionId?: string } | null)?.executionId === executionId)
+      .map((a) => `${a.decision}:${a.actorId}`);
+    expect(trail.filter((d) => d.startsWith('awaiting_approval'))).toHaveLength(2);
+    expect(trail.filter((d) => d.startsWith('human-approved'))).toHaveLength(2);
+    // The stranger's attempt is audited too.
+    expect(trail.filter((d) => d.startsWith('resumed')).sort()).toEqual([
+      'resumed:token:other',
+      'resumed:token:parker',
+      'resumed:token:parker',
+    ]);
+    // Collected: the id is gone.
+    expect(parse(await client.callTool({ name: 'resume', arguments: { executionId } }))).toMatchObject({
+      error: 'EXECUTION_NOT_FOUND',
+    });
+    await client.close();
+  });
+
+  it('a session grant runs later Ask writes of that client without asking, never locked ones, until revoked', async () => {
+    const { token } = ctx.tokens.create({ name: 'granted', scope: [instanceId], access: 'write' });
+    const client = await connect('echo', token);
+    const exec = async (code: string) => parse(await client.callTool({ name: 'execute', arguments: { code } }));
+    const first = await exec(`return (await echo.call('echo.set', { name: 'vol/g' })).key;`);
+    ctx.approvals.decide(approvalIdOf(first), {
+      approve: true,
+      decidedBy: 'admin',
+      sessionGrantUntil: new Date(Date.now() + 3_600_000),
+    });
+    const done = await client.callTool({ name: 'resume', arguments: { executionId: first.executionId as string } });
+    expect(parse(done)).toEqual({ result: 'echo.set' });
+    const grant = (done.structuredContent as { sessionGrant: { id: string } }).sessionGrant;
+    expect(grant.id).toBeTruthy();
+
+    expect(await exec(`return (await echo.call('echo.set', { name: 'vol/h' })).key;`)).toEqual({ result: 'echo.set' });
+    const covered = ctx.db.select().from(auditLog).all().at(-1)!;
+    expect(covered.decision).toBe(`auto-approved:grant:${grant.id}`);
+    const locked = await exec(`return (await echo.call('echo.delete', { name: 'vol/x' })).key;`);
+    expect(locked).toMatchObject({ status: 'awaiting_approval' });
+    ctx.approvals.decide(approvalIdOf(locked), { approve: false, decidedBy: 'admin' });
+
+    // Another credential can't end it.
+    const { token: other } = ctx.tokens.create({ name: 'other2', scope: [instanceId], access: 'write' });
+    const stranger = await connect('echo', other);
+    const tried = await stranger.callTool({ name: 'session_grant_revoke', arguments: { grantId: grant.id } });
+    expect(parse(tried)).toEqual({ revoked: false });
+    await stranger.close();
+
+    await client.callTool({ name: 'session_grant_revoke', arguments: { grantId: grant.id } });
+    const again = await exec(`return (await echo.call('echo.set', { name: 'vol/i' })).key;`);
+    expect(again).toMatchObject({ status: 'awaiting_approval' });
+    ctx.approvals.decide(approvalIdOf(again), { approve: false, decidedBy: 'admin' });
     await client.close();
   });
 
@@ -205,7 +330,12 @@ describe('MCP endpoint with bearer tokens', () => {
     expect(JSON.stringify(shown)).not.toContain('to confirm');
     for (let i = 0; i < 50 && completed.length < 2; i++) await new Promise((r) => setTimeout(r, 10));
     expect(completed).toEqual(shown.map((p) => p.elicitationId));
-    const audit = ctx.db.select().from(auditLog).where(eq(auditLog.decidedVia, 'url')).all();
+    const audit = ctx.db
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.decidedVia, 'url'))
+      .all()
+      .filter((a) => a.decision === 'human-approved' && a.actorId === 'token:e2e');
     expect(audit.map((a) => [a.actorId, a.decidedBy])).toEqual([
       ['token:e2e', 'admin'],
       ['token:e2e', 'admin'],

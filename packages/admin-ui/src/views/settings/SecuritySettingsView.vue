@@ -100,7 +100,19 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
           <label for="s-abs">Session maximum (hours)</label>
           <input id="s-abs" v-model.number="security.sessionAbsoluteHours" type="number" min="1" />
         </div>
+        <div class="field">
+          <label for="s-aidle">Approval page sign-in idle timeout (hours)</label>
+          <input id="s-aidle" v-model.number="security.approvalSessionIdleHours" type="number" min="1" max="168" />
+        </div>
+        <div class="field">
+          <label for="s-aabs">Approval page sign-in maximum (days)</label>
+          <input id="s-aabs" v-model.number="security.approvalSessionAbsoluteDays" type="number" min="1" max="30" />
+        </div>
       </div>
+      <p class="help">
+        The approval page asks for an authenticator code once per browser sign-in. Locked operations always ask for a
+        fresh one.
+      </p>
       <p v-if="messages.security" class="alert" :class="messages.security.kind">{{ messages.security.text }}</p>
       <button class="btn btn-primary" type="submit">Save</button>
     </form>

@@ -8,19 +8,20 @@ import { z } from 'zod';
 import type { AppContext } from '../../app.js';
 import type { Config } from '../../config/env.js';
 import type { ClientPrompts } from '../../approvals/service.js';
-import { authenticateMcp, effectiveAuthMode, publicMcpBase } from '../../auth/mcp-auth.js';
+import { authenticateMcp, effectiveAuthMode, principalLive, publicMcpBase } from '../../auth/mcp-auth.js';
 import { TOKEN_PREFIX } from '../../auth/mcp-tokens.js';
 import { ACCESS_PREFIX } from '../../auth/oauth.js';
 import type { McpIdentity } from '../../auth/mcp-auth.js';
 import type { OAuthService } from '../../auth/oauth.js';
 import type { CallerContext } from '../../gate/pipeline.js';
-import { executeCode, searchCode } from '../../runtime/index.js';
-import type { SandboxResult } from '../../sandbox/index.js';
+import { executeCode, resumeExecution, searchCode } from '../../runtime/index.js';
+import type { ExecuteResult } from '../../runtime/executions.js';
 import type { LogFields } from '../../log.js';
 import { clientIp } from '../common.js';
+import { APPROVAL_CARD_HTML, APPROVAL_CARD_URI, MCP_APP_MIME, MCP_APPS_EXTENSION } from './approval-card.js';
 
 /** `/{slug}` Streamable HTTP endpoints (design §2.2): one McpServer per session, bound to its instance
- * and principal, exposing `search` and `execute`. */
+ * and principal, exposing `search`, `execute` and `resume`, plus the approval card's app-only tools. */
 
 const SESSION_IDLE_MS = 30 * 60_000;
 /** Open MCP sessions per authenticated principal; a new one past the cap closes that principal's oldest. */
@@ -43,7 +44,38 @@ const jsonRpcError = (code: number, message: string) => ({
   error: { code, message },
 });
 
-function toolText(result: SandboxResult) {
+interface ToolExtras {
+  /** Makes a parked approval's page path absolute. */
+  publicBase: string;
+  /** The caller's live session grant, shown on the approval card. */
+  grant?: { id: string; expiresAt: Date };
+}
+
+function toolText(result: ExecuteResult, extras?: ToolExtras) {
+  const sessionGrant = extras?.grant && { id: extras.grant.id, expiresAt: extras.grant.expiresAt.toISOString() };
+  if (!result.ok && 'status' in result) {
+    // Parked (design §5.6): not an error; the agent shows the link and calls resume.
+    const body = {
+      status: result.status,
+      executionId: result.executionId,
+      ...(result.approval
+        ? {
+            approval: {
+              url: `${extras?.publicBase ?? ''}${result.approval.path}`,
+              operationKey: result.approval.operationKey,
+              summary: result.approval.summary,
+              expiresAt: result.approval.expiresAt.toISOString(),
+            },
+          }
+        : {}),
+      next:
+        result.status === 'awaiting_approval'
+          ? 'Show approval.url to the user. After they approve or deny it, call resume with this executionId.'
+          : 'Call resume with this executionId.',
+      ...(sessionGrant ? { sessionGrant } : {}),
+    };
+    return { structuredContent: body, content: [{ type: 'text' as const, text: JSON.stringify(body, null, 2) }] };
+  }
   if (!result.ok) {
     return {
       isError: true,
@@ -68,7 +100,17 @@ function toolText(result: SandboxResult) {
     ...(result.truncated ? { truncated: true } : {}),
     ...(result.logs.length ? { logs: result.logs } : {}),
   };
-  return { content: [{ type: 'text' as const, text: JSON.stringify(body, null, 2) }] };
+  return {
+    ...(sessionGrant ? { structuredContent: { sessionGrant } } : {}),
+    content: [{ type: 'text' as const, text: JSON.stringify(body, null, 2) }],
+  };
+}
+
+function describeResume(manifest: Manifest): string {
+  return [
+    `Continue an execute call on ${manifest.name} that is waiting for approval, and get its result.`,
+    'Pass the `executionId` from the `awaiting_approval` result. It waits up to 45 seconds; if the human has not decided yet, it returns `awaiting_approval` again with the same link. If the script reaches another approval, it returns the new link.',
+  ].join('\n');
 }
 
 function describeSearch(manifest: Manifest): string {
@@ -100,7 +142,8 @@ function describeExecute(manifest: Manifest): string {
   const fns = manifest.binding.functions.map((f) => `${ns}.${f}(…)`).join(', ');
   return [
     `Run code against ${manifest.name}. \`code\` is the body of an async JavaScript function; \`await\` ${fns} and return a JSON-serializable result.`,
-    'Reads run immediately. Writes either run straight away or pause until a human approves them on an approval page the client is asked to open (see `approval` in catalog entries); denials and other refusals throw an Error with `err.code` (e.g. OPERATION_DISABLED, PERMISSION_DENIED, UPSTREAM_ERROR) that your code can catch.',
+    'Reads run immediately. Writes either run straight away or wait until a human approves them on an approval page (see `approval` in catalog entries); denials and other refusals throw an Error with `err.code` (e.g. OPERATION_DISABLED, PERMISSION_DENIED, UPSTREAM_ERROR) that your code can catch.',
+    'If the result has `status: "awaiting_approval"`, the run is paused on the server: show `approval.url` to the user, and after they decide, call `resume` with its `executionId` (do not run the code again). Each write runs once.',
     'Calls run one at a time. There is no network, filesystem or timer access. Secrets in results are redacted.',
   ].join('\n');
 }
@@ -202,7 +245,8 @@ export class McpEndpoints {
     const server = new McpServer(
       { name: `synoikia/${rt().slug}`, version: SERVER_VERSION },
       {
-        instructions: `${manifest.name} via Synoikia. Use search to discover operations, then execute to call them.`,
+        instructions: `${manifest.name} via Synoikia. Use search to discover operations, then execute to call them. When execute returns awaiting_approval, show the link and call resume after the user decides.`,
+        capabilities: { extensions: { [MCP_APPS_EXTENSION]: {} } },
       },
     );
 
@@ -244,9 +288,15 @@ export class McpEndpoints {
       mcpSessionId: sessionId,
       principal: { ceiling: identity.access },
       prompts: prompts(),
+      parkable: true,
+      stillAuthorized: () => principalLive(this.ctx, identity.principal, instanceId),
+    });
+    const extras = (): ToolExtras => ({
+      publicBase,
+      grant: this.ctx.grants.active(instanceId, identity.principal),
     });
 
-    const run = async (fn: typeof searchCode, code: string, sessionId: string | undefined, request: AbortSignal) => {
+    const run = async (fn: typeof executeCode, code: string, sessionId: string | undefined, request: AbortSignal) => {
       try {
         await this.ctx.instances.ensureFresh(instanceId);
       } catch (err) {
@@ -258,8 +308,12 @@ export class McpEndpoints {
       }
       // A cancelled request or a closed session ends the run: nothing it queued may run afterwards.
       const signal = AbortSignal.any([request, closed]);
-      return toolText(await fn(this.ctx.gateDeps(), rt(), caller(sessionId), code, signal));
+      const result = await fn(this.ctx.gateDeps(), rt(), caller(sessionId), code, signal);
+      return toolText(result, extras());
     };
+    const ui = { ui: { resourceUri: APPROVAL_CARD_URI } };
+    const appOnly = { ui: { resourceUri: APPROVAL_CARD_URI, visibility: ['app'] } };
+    const executionId = z.string().uuid().describe('The executionId from an awaiting_approval result.');
 
     const input = {
       code: z
@@ -286,8 +340,73 @@ export class McpEndpoints {
         inputSchema: input,
         // Hints for clients that confirm tool calls themselves; the gate never relies on them.
         annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+        _meta: ui,
       },
       ({ code }, extra) => run(executeCode, code, extra.sessionId, extra.signal),
+    );
+    server.registerTool(
+      'resume',
+      {
+        title: `Resume on ${manifest.name}`,
+        description: describeResume(manifest),
+        inputSchema: { executionId },
+        annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+        _meta: ui,
+      },
+      async ({ executionId: id }, extra) => {
+        const signal = AbortSignal.any([extra.signal, closed]);
+        return toolText(
+          await resumeExecution(this.ctx.gateDeps(), rt(), caller(extra.sessionId), id, signal),
+          extras(),
+        );
+      },
+    );
+    // App-only (design §5.7): the approval card polls state and can end a grant; neither can approve.
+    server.registerTool(
+      'approval_status',
+      {
+        title: 'Approval status',
+        description: 'State of a parked execution, for the approval card.',
+        inputSchema: { executionId },
+        annotations: { readOnlyHint: true, openWorldHint: false },
+        _meta: appOnly,
+      },
+      ({ executionId: id }) => {
+        const status = this.ctx.executions.status(id, identity.principal, instanceId);
+        const body = status ?? { state: 'not_found' };
+        return { structuredContent: { ...body }, content: [{ type: 'text', text: JSON.stringify(body) }] };
+      },
+    );
+    server.registerTool(
+      'session_grant_revoke',
+      {
+        title: 'Revoke session approval',
+        description: 'Ends the session approval of this client on this endpoint, for the approval card.',
+        inputSchema: { grantId: z.string().uuid() },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+        _meta: appOnly,
+      },
+      ({ grantId }) => {
+        const grant = this.ctx.grants.get(grantId);
+        const mine = grant && grant.instanceId === instanceId && grant.principal === identity.principal;
+        const revoked = !!mine && this.ctx.grants.revoke(grantId, { actorKind: 'mcp_client', actorId: identity.label });
+        return { content: [{ type: 'text', text: JSON.stringify({ revoked }) }] };
+      },
+    );
+    server.registerResource(
+      'approval-card',
+      APPROVAL_CARD_URI,
+      { title: 'Synoikia approval card', mimeType: MCP_APP_MIME },
+      () => ({
+        contents: [
+          {
+            uri: APPROVAL_CARD_URI,
+            mimeType: MCP_APP_MIME,
+            text: APPROVAL_CARD_HTML,
+            _meta: { ui: { csp: { connectDomains: [], resourceDomains: [] }, prefersBorder: false } },
+          },
+        ],
+      }),
     );
     return server;
   }
@@ -437,7 +556,11 @@ export class McpEndpoints {
       await transport.close().catch(() => undefined);
       await server.close().catch(() => undefined);
     } else {
-      this.ctx.log.info('MCP session opened', { slug, client, ua: c.req.header('user-agent') });
+      // Which approval path this client gets (design §5.3): elicitation modes and the MCP Apps card.
+      const caps = server.server.getClientCapabilities();
+      const elicitation = caps?.elicitation ? (caps.elicitation.url ? 'url' : 'form') : 'none';
+      const apps = !!(caps?.extensions as Record<string, unknown> | undefined)?.[MCP_APPS_EXTENSION];
+      this.ctx.log.info('MCP session opened', { slug, client, ua: c.req.header('user-agent'), elicitation, apps });
     }
     return response;
   }

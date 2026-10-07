@@ -39,9 +39,9 @@ Synoikia grew out of running several MCP servers next to each other ([TrueNAS][t
 
 A typical MCP server exposes one [tool][mcp-tools] per operation, and every tool's name, description and schema is loaded into the model's context at the start of every session, whether it is used or not. The more of the API a server covers, the more it costs, so servers end up hand-curating a small subset and still paying tens of thousands of tokens for it.
 
-Synoikia uses the [**Code Mode**][code-mode] pattern instead: each endpoint exposes exactly two tools. The model calls `search(code)` to find only the operations and schemas it needs for the task, then `execute(code)` to call them. The full catalog never enters the context, so the cost stays flat however large the upstream API is:
+Synoikia uses the [**Code Mode**][code-mode] pattern instead: each endpoint exposes three small tools. The model calls `search(code)` to find only the operations and schemas it needs for the task, then `execute(code)` to call them, and `resume` to pick up a call that waited for your approval. The full catalog never enters the context, so the cost stays flat however large the upstream API is:
 
-| Integration    | Classic MCP server                         | Context cost    | With Synoikia (2 tools)     |
+| Integration    | Classic MCP server                         | Context cost    | With Synoikia (3 tools)     |
 | -------------- | ------------------------------------------ | --------------- | --------------------------- |
 | TrueNAS        | 52 hand-picked tools                       | ~15–20K tokens  | ~1–3K, all ~650–700 methods |
 | Home Assistant | 65 curated tools, growing with each domain | ~45–60K+ tokens | ~1–3K, every service        |
@@ -59,7 +59,7 @@ Synoikia implements the security-critical parts **once, in core**, and applies t
 
 **🔌 One server, many plugins.** Plugins are installed from plugin repositories, verified with [minisign][minisign] signatures. The [Synoikia plugins repository][core-plugins] ([TrueNAS][truenas], [Seerr][seerr], [Home Assistant][ha]) comes pre-configured, and you can add your own. Run several instances of the same plugin, each on its own endpoint.
 
-**🧰 Two tools per endpoint.** Every endpoint exposes just `search(code)` and `execute(code)`. The model discovers operations and calls them with code that runs inside an [`isolated-vm`][isolated-vm] sandbox with no Node APIs, network or timers.
+**🧰 Three tools per endpoint.** Every endpoint exposes just `search(code)`, `execute(code)` and `resume`. The model discovers operations and calls them with code that runs inside an [`isolated-vm`][isolated-vm] sandbox with no Node APIs, network or timers.
 
 **🛂 A permission gate on every call.** Each operation has an access level, set per group with per-operation exceptions. New groups start at Ask. Whether an operation reads or writes comes from the upstream API (the HTTP method, or the roles a TrueNAS method requires), not from a guess:
 
@@ -72,7 +72,7 @@ Synoikia implements the security-critical parts **once, in core**, and applies t
 
 An operation's own level only offers what fits it: a read is None, Read or Ask (every call asks), a write None, Ask or Write.
 
-**✋ Human approvals the model can't fake.** The MCP client asks you to open an approval page ([URL-mode elicitation][elicitation]), where you sign in and decide with your authenticator app. The client that made the call can't approve it. Destructive operations are `locked`: off until you set them to Ask, and then they always need a human, a typed confirmation and a fresh authenticator code, and can never be pre-approved or set to Write.
+**✋ Human approvals the model can't fake.** You approve on Synoikia's own approval page, where you sign in once per browser with your authenticator app. Clients that support [URL-mode elicitation][elicitation] open it for you; in chat clients such as Claude, an approval card appears in the conversation and the chat continues by itself after you decide. The client that made the call can't approve it. "Approve for this session" lets one client run its Ask operations on one endpoint without asking, for a few hours. Destructive operations are `locked`: off until you set them to Ask, and then they always need a human, a typed confirmation and a fresh authenticator code, and can never be pre-approved or set to Write.
 
 **🔐 Per-client ceilings.** Each connected client gets an access ceiling when you connect it (OAuth consent) or create its token: read only by default. MCP clients authenticate with [OAuth 2.1][oauth], bearer tokens or your existing reverse-proxy auth (such as [Cloudflare Access][cf-access] or [Authelia][authelia]).
 

@@ -27,8 +27,20 @@ const OIDC_RESULT: Record<string, { kind: 'ok' | 'error'; text: string }> = {
   oidc_taken: { kind: 'error', text: 'That single sign-on account is already linked to another user.' },
 };
 
+const approvalBrowsers = ref<{ createdAt: string; lastSeenAt: string; userAgent: string | null }[]>([]);
+
 async function load() {
   me.value = await http.get<PublicUser>('/api/profile');
+  approvalBrowsers.value = await http.get('/api/profile/approval-sessions');
+}
+async function signOutApprovalBrowsers() {
+  try {
+    await http.post('/api/profile/approval-sessions/revoke');
+    setMsg('approval', 'ok', 'Approval browsers signed out. The next approval asks you to sign in again.');
+    await load();
+  } catch (err) {
+    setMsg('approval', 'error', errorText(err));
+  }
 }
 onMounted(async () => {
   await load().catch((err) => (messages.value = { load: { kind: 'error', text: errorText(err) } }));
@@ -135,6 +147,29 @@ async function enrolled() {
       </template>
       <TotpEnrollment v-else @enrolled="enrolled" />
       <p v-if="messages.totp" class="alert" :class="messages.totp.kind">{{ messages.totp.text }}</p>
+    </section>
+
+    <section class="card">
+      <h2>Approval browsers</h2>
+      <p class="small muted">
+        Browsers where you signed in to the approval page. They approve calls without a new authenticator code, except
+        for locked operations.
+      </p>
+      <p v-if="!approvalBrowsers.length" class="small muted">None.</p>
+      <ul v-else class="small">
+        <li v-for="(b, i) in approvalBrowsers" :key="i">
+          {{ b.userAgent ?? 'Unknown browser' }} · last used {{ new Date(b.lastSeenAt).toLocaleString() }}
+        </li>
+      </ul>
+      <button
+        class="btn btn-danger"
+        type="button"
+        :disabled="!approvalBrowsers.length"
+        @click="signOutApprovalBrowsers"
+      >
+        Sign out all approval browsers
+      </button>
+      <p v-if="messages.approval" class="alert" :class="messages.approval.kind">{{ messages.approval.text }}</p>
     </section>
 
     <section v-if="session.oidcEnabled || me.oidcLinked" class="card">

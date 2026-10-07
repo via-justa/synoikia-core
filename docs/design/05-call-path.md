@@ -34,6 +34,7 @@ binding(args)
   ├─ 5. mode run (read) → invoke
   │     writes: write rate limit checked                            | RATE_LIMITED
   ├─ 6. mode auto → invoke (auto-approved:level)
+  │     mode approve: session grant (§5.8) → invoke (auto-approved:grant:<id>)
   │     mode approve: pre-approval rule (never locked) → invoke (auto-approved:rule:<id>)
   ├─ 7. human approval (§5.3), then access checked again            | PERMISSION_DENIED / OPERATION_DISABLED
   ├─ 8. targets resolved again                                      | TARGETS_CHANGED
@@ -53,26 +54,26 @@ binding(args)
 | `TARGET_RESOLUTION_FAILED` | The plugin cannot resolve a target.                                                                                                                                                             |
 | `TARGETS_CHANGED`          | The targets are not the targets that the approver saw. The call must be made again.                                                                                                             |
 | `CONFIG_CONFLICT`          | The object changed after it was read (`prepareWrite`).                                                                                                                                          |
-| `PERMISSION_DENIED`        | A human denied the call, the client declined, the approval timed out, or the client cannot show an approval.                                                                                    |
+| `PERMISSION_DENIED`        | A human denied the call, the client declined, the approval timed out, the client cannot show an approval and cannot park, or the client has too many parked executions.                         |
 | `RATE_LIMITED`             | The principal used its write or run budget.                                                                                                                                                     |
 | `UPSTREAM_DENIED`          | The upstream refused the call for lack of permission.                                                                                                                                           |
 | `UPSTREAM_ERROR`           | The upstream call failed.                                                                                                                                                                       |
 | `UPSTREAM_TIMEOUT`         | `invoke` did not answer in time. The result is unknown (see below).                                                                                                                             |
 | `PLUGIN_UNAVAILABLE`       | The plugin child is down, or the bundle changed while the call waited.                                                                                                                          |
 | `PLUGIN_ERROR`             | The plugin answer is not valid.                                                                                                                                                                 |
-| `EXECUTION_ENDED`          | The `execute` run ended before the call.                                                                                                                                                        |
+| `EXECUTION_ENDED`          | The `execute` run ended before the call, or core stopped its parked execution.                                                                                                                  |
 
 **Rules of the pipeline:**
 
 - **One call at a time.** The calls of one `execute` run in sequence. While a call waits for approval, the full `execute` waits.
-- **An `execute` ends with its sandbox.** The run ends when the script returns, throws or times out. It also ends when the MCP request is cancelled or the session closes. Then core refuses the calls that remain (`EXECUTION_ENDED`) and cancels an open approval. Nothing reaches the upstream after the tool call answered.
+- **An `execute` ends with its sandbox.** The run ends when the script returns, throws or times out. It also ends when the MCP request is cancelled or the session closes. Then core refuses the calls that remain (`EXECUTION_ENDED`) and cancels an open approval. A parked execution (§5.6) is the one exception: it continues after the tool call answered, until its script ends or core stops it. It reaches the upstream only after a human decision.
 - **Catalog version.** Core reads the catalog version (§10) when it gates a call. It reads it again just before `invoke`. If it is not set or it changed, core refuses the call with `PLUGIN_UNAVAILABLE`. A plugin update or a restart onto other code during the approval then cannot run the call under the rules of another bundle.
 - **Timeouts.** Core cannot cancel an `invoke` that timed out. The upstream can still complete the write. Core audits the call as `error:UPSTREAM_TIMEOUT`, which means "result unknown". Each `invoke` has a unique `context.callId`. A plugin can send it to an upstream that supports idempotency keys.
 - **`prepareWrite`** runs for write operations of kind `config` on plugins with `configTransform`.
 - **Rate limits.** These limits apply for each principal and instance. They are separate from pre-approval rule limits.
   - `execute` and `search` runs: 30 each minute by default. Core refuses a run with `RATE_LIMITED` before it creates an isolate.
   - Upstream writes: 10 each minute by default. Core checks the limit before it asks for an approval. It counts a write only when the write runs, so a denied call costs nothing.
-  - Sandboxes: at most 4 at the same time for each instance and 16 in total. Over this limit, core refuses the run with `BUSY`.
+  - Sandboxes: at most 4 at the same time for each instance and 16 in total. Over this limit, core refuses the run with `BUSY`. A parked execution gives back its place and counts against the parked limits (§5.6).
 
 **Pre-approval rules.** A rule approves matching calls without a human. Its `match` is a list of conditions. All conditions must be true.
 
@@ -164,16 +165,17 @@ A human must make an approval, not the client that made the call. The answer to 
    - the client identity and the MCP session;
    - `expires_at`: 15 minutes by default, set for each instance.
      Core keeps the parameters that are not redacted in memory only.
-2. **Channel.** Core uses one channel, from the capabilities that the client advertised:
+2. **Channel.** Core uses the first channel that applies, in this order:
    - **URL-mode elicitation.** This is the approval path. Core makes a single-use page token (`approval_links`, stored as a hash, valid until the approval expires). It calls `elicitInput({ mode: 'url', url: PUBLIC_MCP_URL/a/<token>, elicitationId, message })`. The human opens the page, signs in, and decides there. The client never sees the decision form or the literal. The answer of the client only tells if the page opened (`accept`). `decline` and `cancel` deny. After the decision, core sends `notifications/elicitation/complete` and makes the token invalid.
    - **Form elicitation.** The endpoint must allow it with `formElicitationApprovals: 'writes'`. The default is `off`, and the portal shows a warning. The operation must be a plain write: not locked and without typed confirmation. The form has one `approve` value. The audit records `decided_via: elicitation` and the client as `decided_by`.
-   - **No channel.** Core denies the call at once: `client_cannot_approve` for a client with forms only, `no_approval_path` for a client without prompts.
+   - **Link.** The client has no channel above. The execution parks (§5.6). Core makes the same single-use page token and returns the page link in the tool result. The approval card (§5.7) shows it, or the agent shows it as text. The human decides on the page.
+   - **No channel.** A caller that cannot park, for example a script through the test harness, has no channel. Core denies the call at once: `client_cannot_approve` for a client with forms only, `no_approval_path` for a client without prompts. Over the parked limits, core denies with `too_many_parked`.
 3. **Approval page** (`/a/:token` on the MCP listener). The page needs:
    - a signed-in portal user with TOTP;
-   - a TOTP proof in this session (a password and TOTP sign-in counts; after an OIDC sign-in, the page asks for a code);
+   - a TOTP proof in this browser session, given once (a password and TOTP sign-in counts; after an OIDC sign-in, the first approval asks for a code). The session lasts `approvalSessionIdleHours` without use (12 h by default) and at most `approvalSessionAbsoluteDays` (7 days by default). A restart of core clears the proofs, so the next approval asks for a code again. A TOTP reset, a new enrollment or turning TOTP off signs out all approval sessions of the user. A lower setting also shortens the sessions that exist;
    - for a locked operation, a TOTP code from the last 5 minutes;
    - a POST with a CSRF token. A GET or a prefetch decides nothing.
-     `decided_by` is the user name. `decided_via` is `url`.
+     `decided_by` is the user name. `decided_via` is `url`. The page has three choices: **Deny**, **Approve once** and **Approve for this session** (§5.8).
 4. **Typed confirmation.** For an operation with typed confirmation, the approver must type `confirm_literal` exactly. Otherwise core returns 400 and the approver can try again. `summarize` gets redacted parameters, so the summary and the literal cannot hold a secret. If such an operation has no literal, core refuses the call.
 5. **Targets checked again.** For plugins with `targets`, core resolves the targets again after the approval. If they are not the targets that the approver saw, core refuses the call (`TARGETS_CHANGED`). The plugin gets the approved targets in `InvokeContext.targets`.
 6. **Access checked again.** If the admin lowered the level while the approval was open, core refuses the call (`access_changed`).
@@ -185,12 +187,12 @@ A human must make an approval, not the client that made the call. The answer to 
 
 **Approval states.**
 
-| From      | To          | When                                                                            |
-| --------- | ----------- | ------------------------------------------------------------------------------- |
-| `pending` | `approved`  | A human approves on the page, or the client approves an allowed form.           |
-| `pending` | `denied`    | A human denies, the client declines, there is no channel, or core restarts.     |
-| `pending` | `timed_out` | `expires_at` passes.                                                            |
-| `pending` | `cancelled` | The `execute` ends, the session closes, the endpoint stops, or core shuts down. |
+| From      | To          | When                                                                                                         |
+| --------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
+| `pending` | `approved`  | A human approves on the page, or the client approves an allowed form.                                        |
+| `pending` | `denied`    | A human denies, the client declines, there is no channel, or core restarts.                                  |
+| `pending` | `timed_out` | `expires_at` passes.                                                                                         |
+| `pending` | `cancelled` | The `execute` ends, the session closes (not for a parked execution), the endpoint stops, or core shuts down. |
 
 ## 5.4 Sandbox
 
@@ -264,3 +266,74 @@ Core stores the declaration with the operation. It applies it to the raw `invoke
 - **Crash.** After a crash, core denies the pending rows at the next start (`denied: server_restart`).
 
 An approval must never apply to parameters that the approver did not see.
+
+## 5.6 Parked executions and `resume`
+
+A client without a usable prompt, for example a chat client without elicitation, still gets each approval. The execution parks: it waits on the server, and the tool call answers at once.
+
+**Flow.**
+
+1. A binding needs a human decision, and no client prompt applies (§5.3). The caller can park.
+2. Core makes the pending approval and the page token. It writes the audit event `awaiting_approval` with the `executionId`, the `approvalId` and `channel: link`.
+3. The `execute` call returns `status: awaiting_approval`, the `executionId` and `approval` (`url`, `operationKey`, `summary`, `expiresAt`). This is not an error result.
+4. The human decides on the approval page.
+5. The script continues at the decision. It does not wait for `resume`. The sandbox time limit starts again.
+6. The agent calls `resume(executionId)`. `resume` waits up to 45 s for a change. It returns one of these:
+   - the result of the script, after which core forgets the execution;
+   - `awaiting_approval` with the same link, if the human did not decide yet;
+   - `awaiting_approval` with a new link, if the script reached another approval;
+   - `running` with `STILL_RUNNING`, if the script still runs after the decision;
+   - `EXECUTION_NOT_FOUND`, for an unknown or collected id, an id of another principal or endpoint, or an id from before a restart.
+
+Each write of a parked script runs once. The agent must not run the code again.
+
+**Park again.** A parked script can park again for its next approval only if each approval before it was given. It can park at most 10 times. Otherwise core denies the call at once (`park_refused`). A loop that catches denials and asks again then ends with the sandbox time limit.
+
+**Credential.** A parked execution outlives the request that authenticated it. So the gate checks the credential before each call and again after the approval. A revoked token, a revoked OAuth grant or client, a disabled user, or a token no longer scoped to the endpoint stops the call with `OPERATION_DISABLED`.
+
+**Owner.** A parked execution belongs to the principal and the endpoint that started it. The MCP session is not part of the owner, because a chat client can open a new session. A request of another owner gets `EXECUTION_NOT_FOUND`, the same as an unknown id.
+
+**Limits.**
+
+| Limit                                             | Value  |
+| ------------------------------------------------- | ------ |
+| Parked executions for each principal and endpoint | 2      |
+| Parked executions for each endpoint               | 8      |
+| Parked executions in total                        | 32     |
+| Wait of one `resume`                              | 45 s   |
+| Time a finished result waits for `resume`         | 10 min |
+
+One `resume` at a time can wait on an execution. A second one gets `BUSY`.
+
+**End.** A parked execution ends when its script ends. Its approval times out as in §5.3. When the endpoint stops, core cancels the approval, stops the execution and refuses its remaining calls. At shutdown, core cancels all approvals. A restart loses all parked executions, and core denies their pending rows (§5.5).
+
+**Audit.** Each `resume` writes a `call` event with `decision: resumed` and the `executionId`. With `awaiting_approval` and the decision, it gives one trace for each execution.
+
+## 5.7 Approval card
+
+The approval card is an MCP Apps view (extension `io.modelcontextprotocol/ui`). Hosts that support MCP Apps show it in the chat for each `execute` and `resume` result.
+
+- **Resource.** `ui://synoikia/approval`, MIME type `text/html;profile=mcp-app`. Core serves static HTML and script. It loads nothing from other origins and declares no CSP domains.
+- **Tools.** `execute` and `resume` set `_meta.ui.resourceUri` to the card. Two tools have `_meta.ui.visibility: ["app"]`, so the model does not see them:
+  - `approval_status(executionId)` returns the state of a parked execution: `pending`, `approved`, `denied`, `timed_out`, `cancelled`, `running` or `done`, with `expiresAt` and the last decision. It never returns parameters, results or the name of the approver. It has the owner check of `resume`.
+  - `session_grant_revoke(grantId)` ends a session grant of the same principal and endpoint.
+- **The card never decides.** It has no approve control and takes no TOTP code. It shows the state and opens the approval page through `ui/open-link`. The host renders the card from the tool result, so the agent cannot change the link.
+- **Continue.** When the state is final, the card sends one `ui/message` to the chat ("Approved, continue."). The agent then calls `resume`. If the host refuses the message, the card asks the user to say "continue".
+- **Session grant.** When a session grant is active, the result has `sessionGrant` (`id`, `expiresAt`). The card shows it with a **Revoke** control.
+- A host without MCP Apps ignores the card. The agent shows the link from the text result.
+
+At session start, core logs the elicitation mode of the client (`none`, `form` or `url`) and if it supports MCP Apps.
+
+## 5.8 Session grants
+
+A session grant lets one principal run the operations at `ask` on one endpoint without a question, for a time.
+
+- **Who gives it.** Only a human on the approval page, with **Approve for this session**, when the human approves a call. A client, the card and form elicitation cannot give one. **Approve once** is the main button, and the shortest length is the default.
+- **Scope.** The principal (the credential) and the endpoint of the approved call. A new grant for the same principal and endpoint replaces the old one.
+- **Length.** 1 h, 4 h or until midnight (server time). The endpoint setting `sessionGrantMaxHours` (8 by default) is the maximum. `0` removes the choice from the page. Core applies the maximum again when it makes the grant.
+- **Effect.** At step 6 of the gate, an operation at `ask` runs with `auto-approved:grant:<id>`. The `catalog` entries show `approval: auto`. These do not change:
+  - Locked operations and operations with typed confirmation always need a human. The page does not offer a grant for them.
+  - Level `none`, a group at `read` and the access ceiling still refuse.
+  - The write rate limit, attestation, target resolution, redaction and the audit still apply.
+- **End.** At its expiry, with **Revoke** on the card or in the portal (endpoint settings, "Active session approvals"), when the endpoint stops, or at a restart. Core keeps grants in memory only.
+- **Audit.** `config` events `session_grant.created` (approver, client, approval, expiry) and `session_grant.ended` (reason: `expired`, `revoked`, `replaced`, `endpoint_stopped`).

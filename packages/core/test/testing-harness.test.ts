@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { plugins } from '../src/db/schema.js';
 import { startPluginHarness } from '../src/testing/index.js';
-import type { PluginHarness } from '../src/testing/index.js';
+import type { PendingResult, PluginHarness } from '../src/testing/index.js';
 
 /** The plugin harness, exercised with the echo fixture so core's suite never names a plugin. */
 
@@ -73,6 +73,18 @@ describe('startPluginHarness', () => {
       ok: false,
       error: { code: 'PERMISSION_DENIED' },
     });
+  });
+
+  it('parks a call like a client without prompts, and resumes it after the approval', async () => {
+    h.setGroupLevel('echo', 'ask');
+    const parked = await h.execute(`return (await echo.call('echo.set', { name: 'p' })).params;`, { park: true });
+    expect(parked).toMatchObject({ ok: false, status: 'awaiting_approval' });
+    const approval = h.parkedApproval(parked);
+    expect(approval.operationKey).toBe('echo.set');
+    approval.approve();
+    const done = await h.resume((parked as PendingResult).executionId);
+    expect(done).toMatchObject({ ok: true, value: { name: 'p' } });
+    expect(() => h.parkedApproval(done)).toThrow(/not waiting/);
   });
 
   it('enforces typed confirmations and records a handler that fails', async () => {

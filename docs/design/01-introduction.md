@@ -2,7 +2,7 @@
 
 ## 1.1 Purpose
 
-Synoikia is one MCP server for many self-hosted services. An AI client connects to an endpoint and gets two tools: `search(code)` and `execute(code)`. The model writes code that core runs in a sandbox. The code calls the upstream through a binding. Each call goes through the gate before it can reach the upstream.
+Synoikia is one MCP server for many self-hosted services. An AI client connects to an endpoint and gets three tools: `search(code)`, `execute(code)` and `resume(executionId)`, which continues an `execute` that waited for an approval. The model writes code that core runs in a sandbox. The code calls the upstream through a binding. Each call goes through the gate before it can reach the upstream.
 
 ## 1.2 Scope
 

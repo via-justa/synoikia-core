@@ -14,7 +14,7 @@ import {
 import { findRegistryEntries, scopesFromQuery } from '../../catalog/registry.js';
 import { createRule, deleteRule, listRules, updateRule } from '../../catalog/rules.js';
 import { operationGroups, operations } from '../../db/schema.js';
-import { ValidationError } from '../../errors.js';
+import { NotFoundError, ValidationError } from '../../errors.js';
 import { ACCESS_LEVELS, allowedLevels, effectiveAccess, levelInForce } from '../../gate/access.js';
 import { AUTH_MODES } from '../../instances/manager.js';
 import { clientIp, readJson, readOptionalJson } from '../common.js';
@@ -254,6 +254,29 @@ export function registerInstanceRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
 
   app.delete('/api/instances/:id/rules/:ruleId', (c) => {
     deleteRule(ctx.db, c.req.param('id'), c.req.param('ruleId'), actor(c));
+    return c.body(null, 204);
+  });
+
+  // ── session grants (design §5.8) ──
+
+  app.get('/api/instances/:id/session-grants', (c) => {
+    exists(c.req.param('id'));
+    return c.json(
+      ctx.grants.list(c.req.param('id')).map((g) => ({
+        id: g.id,
+        client: g.client ?? null,
+        createdBy: g.createdBy,
+        createdAt: g.createdAt.toISOString(),
+        expiresAt: g.expiresAt.toISOString(),
+      })),
+    );
+  });
+
+  app.delete('/api/instances/:id/session-grants/:grantId', (c) => {
+    const grant = ctx.grants.get(c.req.param('grantId'));
+    if (!grant || grant.instanceId !== c.req.param('id'))
+      throw new NotFoundError('grant_not_found', 'No such session grant');
+    ctx.grants.revoke(grant.id, { actorKind: 'user', actorId: c.get('user').id });
     return c.body(null, 204);
   });
 }

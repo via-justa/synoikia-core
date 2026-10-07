@@ -13,7 +13,8 @@ import { secretFieldNames } from '../instances/connection.js';
 import { auditLog, operations, pendingApprovals, plugins, registryEntries } from '../db/schema.js';
 import type { AccessLevel } from '../gate/access.js';
 import type { CallerContext } from '../gate/pipeline.js';
-import { executeCode, searchCode } from '../runtime/index.js';
+import { executeCode, resumeExecution, searchCode } from '../runtime/index.js';
+import type { ExecuteResult, PendingResult } from '../runtime/executions.js';
 import type { SandboxResult } from '../sandbox/index.js';
 
 /** Harness for plugin packages (`@synoikia/core/testing`): boots the real core on a built bundle, run
@@ -47,6 +48,9 @@ export interface HarnessApproval {
 export interface ExecuteOptions {
   /** Decides each approval; without it, or if it throws or leaves one open, the approval is denied. */
   onApproval?: (approval: HarnessApproval) => void | Promise<void>;
+  /** Without `onApproval`, act as a client with no prompts: the call parks (design §5.6). Decide it with
+   * `parkedApproval(result)`, then collect it with `resume`. */
+  park?: boolean;
 }
 
 export interface PluginHarness {
@@ -55,7 +59,12 @@ export interface PluginHarness {
   manifest: Manifest;
   /** Errors thrown by `onApproval` handlers, oldest first. */
   approvalErrors: unknown[];
-  execute(code: string, opts?: ExecuteOptions): Promise<SandboxResult>;
+  /** A parked call (`opts.park`) answers with a `PendingResult`; it is also an `ok: false` SandboxResult. */
+  execute(code: string, opts?: ExecuteOptions): Promise<ExecuteResult>;
+  /** Follows a parked execution, as the `resume` tool does. */
+  resume(executionId: string): Promise<ExecuteResult>;
+  /** The approval a parked result waits on, to decide it as the approval page would. */
+  parkedApproval(result: ExecuteResult): HarnessApproval;
   search(code: string): Promise<SandboxResult>;
   setGroupLevel(group: string, level: AccessLevel): void;
   /** The operation's own level; `null` makes it follow its group again. */
@@ -135,6 +144,7 @@ function harness(ctx: AppContext, manifest: Manifest, instanceId: string, work: 
       client: { kind: 'mcp_client', id: 'harness' },
       principal: { ceiling: 'write' },
       mcpSessionId: 'harness-session',
+      parkable: !onApproval && !!opts.park,
       prompts: onApproval
         ? {
             url: async (req) => {
@@ -147,24 +157,29 @@ function harness(ctx: AppContext, manifest: Manifest, instanceId: string, work: 
     };
   };
 
-  const decide = async (id: string, message: string, onApproval: NonNullable<ExecuteOptions['onApproval']>) => {
+  const approvalOf = (id: string, message: string, onDecided: () => void = () => {}): HarnessApproval => {
     const pending = ctx.db.select().from(pendingApprovals).where(eq(pendingApprovals.id, id)).get()!;
     const operationKey = ctx.db.select().from(operations).where(eq(operations.id, pending.operationId)).get()!.key;
-    let decided = false;
-    const approval: HarnessApproval = {
+    return {
       id,
       operationKey,
       message,
       pending,
       approve(confirm) {
         ctx.approvals.decide(id, { approve: true, confirm, decidedBy: 'harness' });
-        decided = true;
+        onDecided();
       },
       deny() {
         ctx.approvals.decide(id, { approve: false, decidedBy: 'harness' });
-        decided = true;
+        onDecided();
       },
     };
+  };
+
+  const decide = async (id: string, message: string, onApproval: NonNullable<ExecuteOptions['onApproval']>) => {
+    let decided = false;
+    const approval = approvalOf(id, message, () => (decided = true));
+    const operationKey = approval.operationKey;
     try {
       await onApproval(approval);
       if (!decided) throw new Error(`onApproval left approval ${id} (${operationKey}) open`);
@@ -180,6 +195,15 @@ function harness(ctx: AppContext, manifest: Manifest, instanceId: string, work: 
     manifest,
     approvalErrors,
     execute: (code, opts) => executeCode(ctx.gateDeps(), ctx.instances.runtime(instanceId), caller(opts), code),
+    resume: (executionId) =>
+      resumeExecution(ctx.gateDeps(), ctx.instances.runtime(instanceId), caller({ park: true }), executionId),
+    parkedApproval(result) {
+      const parked = (result as Partial<PendingResult>).approval;
+      if (!parked) throw new Error('This result is not waiting for an approval');
+      const link = ctx.links.resolve(parked.path.slice('/a/'.length));
+      if (!link) throw new Error('The approval is no longer open');
+      return approvalOf(link.approvalId, parked.summary);
+    },
     search: (code) => searchCode(ctx.gateDeps(), ctx.instances.runtime(instanceId), caller(), code),
     setGroupLevel(group, level) {
       setGroupLevel(ctx.db, instanceId, group, level);
@@ -223,6 +247,7 @@ function splitConnection(manifest: Manifest, connection: Record<string, unknown>
   return { config, secrets };
 }
 
+export type { ExecuteResult, PendingResult } from '../runtime/executions.js';
 export { verifyPluginRepository } from './repository.js';
 export type { VerifiedPlugin, VerifyRepositoryOptions } from './repository.js';
 export { startFakeHttp } from './fake-http.js';

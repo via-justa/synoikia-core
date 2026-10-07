@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { and, eq, lt, ne } from 'drizzle-orm';
+import { and, eq, gt, lt, ne } from 'drizzle-orm';
 import type { Db } from '../db/index.js';
 import { sessions, users } from '../db/schema.js';
 import { randomToken } from './tokens.js';
@@ -72,7 +72,9 @@ export class SessionService {
     if (!row) return null;
     const now = this.now().getTime();
     const idleExpired = now - row.session.lastSeenAt.getTime() > limits.idleMs;
-    if (row.user.disabled || idleExpired || row.session.expiresAt.getTime() <= now) {
+    // The current limit applies too, so lowering it shortens sessions that already exist.
+    const tooOld = now - row.session.createdAt.getTime() > limits.absoluteMs;
+    if (row.user.disabled || idleExpired || tooOld || row.session.expiresAt.getTime() <= now) {
       this.db.delete(sessions).where(eq(sessions.idHash, idHash)).run();
       return null;
     }
@@ -101,6 +103,22 @@ export class SessionService {
       .delete(sessions)
       .where(and(eq(sessions.userId, userId), ne(sessions.idHash, keep)))
       .run();
+  }
+
+  /** A user's unexpired sessions of one kind (the Profile page lists approval browsers, design §5.3). */
+  listKind(userId: string, kind: SessionKind) {
+    return this.db
+      .select({ createdAt: sessions.createdAt, lastSeenAt: sessions.lastSeenAt, userAgent: sessions.userAgent })
+      .from(sessions)
+      .where(and(eq(sessions.userId, userId), eq(sessions.kind, kind), gt(sessions.expiresAt, this.now())))
+      .all();
+  }
+
+  revokeKind(userId: string, kind: SessionKind): number {
+    return this.db
+      .delete(sessions)
+      .where(and(eq(sessions.userId, userId), eq(sessions.kind, kind)))
+      .run().changes;
   }
 
   purgeExpired(): number {

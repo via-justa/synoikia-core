@@ -8,7 +8,7 @@ import type { UrlPromptRequest } from '../src/approvals/service.js';
 import { currentStep, totpAt } from '../src/auth/totp.js';
 import { setGroupLevel, updateOperation } from '../src/catalog/groups.js';
 import { updateSettings } from '../src/settings.js';
-import { auditLog, operations } from '../src/db/schema.js';
+import { auditLog, operations, pluginInstances } from '../src/db/schema.js';
 import { createMcpApp } from '../src/http/mcp-app.js';
 import { executeCode } from '../src/runtime/index.js';
 import { createTestApp } from './helpers.js';
@@ -233,6 +233,130 @@ describe('approval page', () => {
     // The same session can't stand in for a consent sign-in.
     expect(t.ctx.sessions.validate(raw, 'oauth_ui', limits)).toBeNull();
     expect(signedIn.headers.getSetCookie().some((c) => c.startsWith('syn_mcp_oauth='))).toBe(false);
+  });
+
+  it('offers "Approve for this session"; the grant then covers that client’s later Ask calls', async () => {
+    const t = await withPendingCall(`return (await echo.call('echo.set', { name: 'vol/a' })).key;`);
+    await t.signIn(t.page);
+    const html = await (await t.browse(t.page)).text();
+    expect(html).toContain('Approve once');
+    expect(html).toContain('Approve for this session');
+    expect(html).toMatch(/<option value="1"/);
+    expect(html).toMatch(/<option value="4"/);
+    // Approving once stays the main action; a session grant is the deliberate one.
+    expect(html).toMatch(/class="primary" type="submit" name="decision" value="approve"/);
+    expect(html).toContain('<strong>claude</strong>');
+
+    // A length the page did not offer is refused.
+    const bad = await t.browse(t.page, { csrf: hidden(html, 'csrf'), decision: 'approve_session', grant: '99' });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toContain('Choose a session length');
+
+    const res = await t.browse(t.page, { csrf: hidden(html, 'csrf'), decision: 'approve_session', grant: '1' });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('run without asking until');
+    expect(await t.run).toMatchObject({ ok: true, value: 'echo.set' });
+    const [grant] = t.ctx.grants.list();
+    expect(grant).toMatchObject({ principal: 'claude', createdBy: 'admin' });
+    expect(grant!.expiresAt.getTime() - Date.now()).toBeLessThanOrEqual(3_600_000 + 5_000);
+
+    const instanceId = grant!.instanceId;
+    const caller = { client: { kind: 'mcp_client' as const, id: 'claude' }, principal: { ceiling: 'write' as const } };
+    const again = await executeCode(
+      t.ctx.gateDeps(),
+      t.ctx.instances.runtime(instanceId),
+      caller,
+      `return (await echo.call('echo.set', { name: 'vol/b' })).key;`,
+    );
+    expect(again).toMatchObject({ ok: true, value: 'echo.set' });
+    const last = t.ctx.db.select().from(auditLog).all().at(-1)!;
+    expect(last.decision).toBe(`auto-approved:grant:${grant!.id}`);
+
+    // Another client is not covered.
+    const stranger = await executeCode(
+      t.ctx.gateDeps(),
+      t.ctx.instances.runtime(instanceId),
+      { ...caller, client: { kind: 'mcp_client', id: 'other' } },
+      `return (await echo.call('echo.set', { name: 'vol/c' })).key;`,
+    );
+    expect(stranger).toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+    expect(
+      t.ctx.db
+        .select()
+        .from(auditLog)
+        .all()
+        .some((a) => a.decision === 'session_grant.created'),
+    ).toBe(true);
+  });
+
+  it('never offers a session grant for locked operations, or when the endpoint turns it off', async () => {
+    const locked = await withPendingCall(`await echo.call('echo.delete', { name: 'vol/x' });`, { lockedAsk: true });
+    await locked.signIn(locked.page);
+    expect(await (await locked.browse(locked.page)).text()).not.toContain('Approve for this session');
+    locked.ctx.approvals.cancelAll();
+    await locked.run;
+
+    const off = await withPendingCall(`await echo.call('echo.set', { name: 'x' });`);
+    // Straight to the row: an update through the manager restarts the endpoint and cancels the approval.
+    off.ctx.db
+      .update(pluginInstances)
+      .set({ settings: { sessionGrantMaxHours: 0 } })
+      .run();
+    await off.signIn(off.page);
+    const html = await (await off.browse(off.page)).text();
+    expect(html).not.toContain('Approve for this session');
+    // Even a forged POST gets no grant.
+    const res = await off.browse(off.page, { csrf: hidden(html, 'csrf'), decision: 'approve_session', grant: '1' });
+    expect(res.status).toBe(400);
+    expect(off.ctx.grants.list()).toEqual([]);
+    off.ctx.approvals.cancelAll();
+    await off.run;
+  });
+
+  it('keeps the approval browser signed in for hours and asks for TOTP only once', async () => {
+    const t = await withPendingCall(`return (await echo.call('echo.set', { name: 'vol/a' })).key;`);
+    await t.signIn(t.page);
+    const html = await (await t.browse(t.page)).text();
+    await t.browse(t.page, { csrf: hidden(html, 'csrf'), decision: 'approve' });
+    await t.run;
+
+    t.advance(3 * 60 * 60_000); // past the old 60-minute limit, within 12 h idle
+    const opened: UrlPromptRequest[] = [];
+    const instanceId = t.ctx.instances.list()[0]!.id;
+    const run = executeCode(
+      t.ctx.gateDeps(),
+      t.ctx.instances.runtime(instanceId),
+      {
+        client: { kind: 'mcp_client', id: 'claude' },
+        principal: { ceiling: 'write' },
+        prompts: { url: async (req) => (opened.push(req), { action: 'accept' }) },
+      },
+      `return (await echo.call('echo.set', { name: 'vol/b' })).key;`,
+    );
+    for (let i = 0; i < 200 && opened.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    const second = await (await t.browse(opened[0]!.path)).text();
+    expect(second).toContain('Signed in as <strong>admin</strong>');
+    expect(second).not.toContain('Authenticator code');
+    await t.browse(opened[0]!.path, { csrf: hidden(second, 'csrf'), decision: 'approve' });
+    expect(await run).toMatchObject({ ok: true });
+
+    // The approval session follows the admin's settings.
+    updateSettings(t.ctx.db, 'security', { approvalSessionIdleHours: 1 });
+    t.advance(2 * 60 * 60_000);
+    const cancelled = executeCode(
+      t.ctx.gateDeps(),
+      t.ctx.instances.runtime(instanceId),
+      {
+        client: { kind: 'mcp_client', id: 'claude' },
+        principal: { ceiling: 'write' },
+        prompts: { url: async (req) => (opened.push(req), { action: 'accept' }) },
+      },
+      `await echo.call('echo.set', { name: 'vol/c' });`,
+    );
+    for (let i = 0; i < 200 && opened.length === 1; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(await (await t.browse(opened[1]!.path)).text()).toContain('Sign in to review this approval request');
+    t.ctx.approvals.cancelAll();
+    await cancelled;
   });
 
   it('rejects unknown tokens', async () => {

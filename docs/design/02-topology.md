@@ -64,6 +64,6 @@ These sessions are short. The Admin API does not accept them. A consent session 
 - Authentication comes first (§6.2). Then:
   - An unknown slug returns 404.
   - A disabled instance, or an instance of a disabled plugin, returns 503 with a JSON-RPC error.
-- Each instance has its own `McpServer` with `search` and `execute`. The tool descriptions come from the plugin manifest. For example, the model sees `acme.call(...)` on an endpoint of the plugin `acme`.
-- Core keys MCP sessions by instance and `Mcp-Session-Id`. A session records the principal (§6.2) and whether the client supports elicitation.
+- Each instance has its own `McpServer` with `search`, `execute` and `resume`, and the approval card (§5.7). The tool descriptions come from the plugin manifest. For example, the model sees `acme.call(...)` on an endpoint of the plugin `acme`.
+- Core keys MCP sessions by instance and `Mcp-Session-Id`. A session records the principal (§6.2) and whether the client supports elicitation. A parked execution (§5.6) does not belong to a session.
 - A principal can have 16 open MCP sessions. A new session closes the least recently used one.

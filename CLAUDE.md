@@ -1,6 +1,6 @@
 # Synoikia core
 
-One MCP server for many self-hosted services. Each plugin instance gets its own endpoint exposing two tools, `search(code)` and `execute(code)`, and every call goes through one sandbox, permission gate, approval flow, redaction and audit log. The software design description (SDD) is in `docs/design/`, one file per section; code comments cite its sections (`§5.2`).
+One MCP server for many self-hosted services. Each plugin instance gets its own endpoint exposing `search(code)`, `execute(code)` and `resume(executionId)` (for a call parked on an approval), and every call goes through one sandbox, permission gate, approval flow, redaction and audit log. The software design description (SDD) is in `docs/design/`, one file per section; code comments cite its sections (`§5.2`).
 
 **The rule everything follows: security lives in core, once.** A plugin only describes its upstream API; it never decides what is allowed. Don't add a plugin-side switch for anything the gate, sandbox, approvals, redaction or auth already decide. Core stays plugin-agnostic: no plugin names (TrueNAS, Seerr, Home Assistant) in core code, tests or UI placeholders. The plugins live in `via-justa/synoikia-core-plugins`.
 
@@ -57,7 +57,18 @@ Schema is `packages/core/src/db/schema.ts`. Migrations in `packages/core/drizzle
 
 ## Releases
 
-Maintainers bump versions; don't bump them unless asked. `@synoikia/plugin-sdk`, `@synoikia/core` and `@synoikia/create-plugin` publish to npm when their `version` changes on `main`. The Docker image uses the root `package.json` version, separate from the package versions. A breaking change to the SDK or `@synoikia/core/testing` breaks every plugin repo, so call it out.
+`@synoikia/plugin-sdk`, `@synoikia/core` and `@synoikia/create-plugin` publish to npm when their `version` changes on `main`. The Docker image uses the root `package.json` version, separate from the package versions.
+
+A PR bumps the version of each published package, and of the image, whose shipped content it changes, in the same PR. Docs-, test- and CI-only changes bump nothing.
+
+- Semver, while 0.x: a breaking change or a new feature bumps the minor; a fix bumps the patch.
+- `@synoikia/core`: changes under `packages/core/src` (including `testing/`) or its runtime dependencies.
+- `@synoikia/plugin-sdk`: changes under `packages/plugin-sdk/src` or its dependencies.
+- `@synoikia/create-plugin`: its own changes, and a patch whenever core or the SDK takes a minor bump (its `workspace:^` ranges are packed with the minor pinned).
+- Root `package.json` (the image): anything the image ships (core, admin UI, `Dockerfile`, image dependencies), by the same step as the largest package bump.
+- Name the new versions in the PR title, e.g. "(core 0.7.0, image 0.5.0)".
+
+A breaking change to the SDK or `@synoikia/core/testing` breaks every plugin repo, so call it out.
 
 ## Security review
 

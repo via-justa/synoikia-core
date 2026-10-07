@@ -238,8 +238,12 @@ export interface ApprovalView {
   diff: unknown;
   expiresAt: Date;
   confirmLiteral: string | null;
-  /** Ask for a TOTP code with the decision (locked operations without a recent one). */
+  /** Ask for a TOTP code with the decision (first approval in this browser, or a locked op). */
   needsTotp: boolean;
+  /** "Approve for this session" lengths (design §5.8); empty hides the option. */
+  grantOptions: { value: string; label: string }[];
+  /** The client's audit label, so the approver knows who a session grant covers. */
+  client: string | null;
   status: string;
   error?: string;
 }
@@ -281,7 +285,8 @@ export function approvalPage(c: Context, v: ApprovalView, status: 200 | 400 = 20
                 }
                 ${
                   v.needsTotp
-                    ? html`<label for="totp">Authenticator code (required to approve a locked operation)</label
+                    ? html`<label for="totp"
+                          >Authenticator code${v.locked ? ' (required to approve a locked operation)' : ''}</label
                         ><input
                           id="totp"
                           type="text"
@@ -295,8 +300,28 @@ export function approvalPage(c: Context, v: ApprovalView, status: 200 | 400 = 20
                 ${v.error ? html`<p class="error" role="alert">${v.error}</p>` : ''}
                 <div class="row">
                   <button class="danger" type="submit" name="decision" value="deny">Deny</button>
-                  <button class="primary" type="submit" name="decision" value="approve">Approve</button>
+                  <button class="primary" type="submit" name="decision" value="approve">
+                    ${v.grantOptions.length ? 'Approve once' : 'Approve'}
+                  </button>
                 </div>
+                ${
+                  v.grantOptions.length
+                    ? html`<div class="row">
+                          <button type="submit" name="decision" value="approve_session">
+                            Approve for this session
+                          </button>
+                          <select id="grant" name="grant" aria-label="Session length" style="flex:0 0 auto">
+                            ${v.grantOptions.map((o) => html`<option value="${o.value}">${o.label}</option>`)}
+                          </select>
+                        </div>
+                        <p class="muted">
+                          Covers every Ask operation of ${v.client ? html`<strong>${v.client}</strong>` : 'this client'}
+                          on
+                          <code>/${v.slug}</code> for that long, except locked operations and operations that need a
+                          typed confirmation. You can revoke it from the chat or the admin portal.
+                        </p>`
+                    : ''
+                }
               </form>`
           : html`<p class="error" role="status">This request is ${v.status.replace('_', ' ')}.</p>`
       }`,

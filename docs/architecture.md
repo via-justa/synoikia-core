@@ -613,8 +613,15 @@ sequenceDiagram
   else form elicitation opted in and plain write
     AP->>C: elicitInput(form: approve boolean)
     C-->>AP: approve, decided_via=elicitation
-  else no approval path
-    AP-->>G: deny (client_cannot_approve / no_approval_path)
+  else no client prompt: the execution parks (§5.6)
+    AP->>DB: approval_links (token hash, single use)
+    AP-->>C: execute returns awaiting_approval + page link
+    Note over C: approval card (MCP Apps) or the link as text
+    H->>PG: GET /a/token, sign in, POST decision
+    PG->>AP: approve (once, or for this session) / deny
+    C->>AP: resume(executionId) → result
+  else caller cannot park
+    AP-->>G: deny (client_cannot_approve / no_approval_path / too_many_parked)
   end
   alt timeout
     AP->>DB: status timed_out

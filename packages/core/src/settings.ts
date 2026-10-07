@@ -27,6 +27,14 @@ const SETTINGS_SCHEMAS = {
         .min(1)
         .max(24 * 30)
         .default(12),
+      /** Approval-page sign-in on the MCP port (design §5.3): TOTP once per browser for this long. */
+      approvalSessionIdleHours: z
+        .number()
+        .int()
+        .min(1)
+        .max(24 * 7)
+        .default(12),
+      approvalSessionAbsoluteDays: z.number().int().min(1).max(30).default(7),
     })
     .prefault({}),
   mcp: z

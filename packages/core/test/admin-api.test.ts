@@ -168,6 +168,42 @@ describe('setup, login and sessions', () => {
   });
 });
 
+describe('approval browsers and session grants', () => {
+  it('lists and signs out approval browsers, and lists and revokes session grants', async () => {
+    const t = await setup();
+    const b = await signedIn(t);
+    const admin = t.ctx.db.select().from(users).get()!;
+    t.ctx.sessions.create(admin.id, 'approval_ui', { idleMs: 60_000, absoluteMs: 60_000 }, { userAgent: 'Firefox' });
+    expect(await (await b.get('/api/profile/approval-sessions')).json()).toEqual([
+      expect.objectContaining({ userAgent: 'Firefox' }),
+    ]);
+    expect(await (await b.post('/api/profile/approval-sessions/revoke', {})).json()).toEqual({ revoked: 1 });
+    expect(await (await b.get('/api/profile/approval-sessions')).json()).toEqual([]);
+    // The admin session itself stays.
+    expect((await b.get('/api/profile')).status).toBe(200);
+    // A TOTP reset signs approval browsers out: their proof was made with the old authenticator.
+    t.ctx.sessions.create(admin.id, 'approval_ui', { idleMs: 60_000, absoluteMs: 60_000 });
+    expect((await b.post(`/api/users/${admin.id}/reset-totp`, {})).status).toBe(200);
+    expect(t.ctx.sessions.listKind(admin.id, 'approval_ui')).toEqual([]);
+
+    const instance = await t.ctx.instances.create({ pluginId: 'echo', slug: 'echo', connection: {} });
+    const grant = t.ctx.grants.create({
+      instanceId: instance.id,
+      principal: 'token:x',
+      client: 'token:Chat',
+      createdBy: 'admin',
+      approvalId: 'a1',
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    expect(await (await b.get(`/api/instances/${instance.id}/session-grants`)).json()).toEqual([
+      expect.objectContaining({ id: grant.id, client: 'token:Chat', createdBy: 'admin' }),
+    ]);
+    expect((await b.del(`/api/instances/${instance.id}/session-grants/${grant.id}`)).status).toBe(204);
+    expect((await b.del(`/api/instances/${instance.id}/session-grants/${grant.id}`)).status).toBe(404);
+    expect(t.ctx.grants.list()).toEqual([]);
+  });
+});
+
 describe('instances and access', () => {
   it('redacts registry attributes in the picker (review L12)', async () => {
     const t = await setup();

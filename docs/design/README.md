@@ -49,6 +49,9 @@ Diagrams of the system are in [`../architecture.md`](../architecture.md). The pl
 | Principal         | The authenticated identity that calls an endpoint.                                            |
 | Access ceiling    | The most that a principal can do: `read` or `write`.                                          |
 | Approval          | A human decision on one call, made on the approval page.                                      |
+| Parked execution  | An `execute` that waits on the server for an approval after its tool call answered.           |
+| Approval card     | The MCP Apps view that shows a parked approval in the chat. It cannot approve.                |
+| Session grant     | A time-limited permission, given on the approval page, that auto-approves `ask` for a client. |
 | Pre-approval rule | A stored rule that approves matching calls without a human.                                   |
 | Target            | A concrete upstream object that a call acts on, for example one device.                       |
 | Registry          | The local copy of the upstream objects that a plugin lists, for pickers and target selection. |
