@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { errorText, http } from '../../api';
 import ChipsInput from '../../components/ChipsInput.vue';
@@ -7,7 +7,7 @@ import ModalDialog from '../../components/ModalDialog.vue';
 import { AUTH_MODE_LABELS } from '../../format';
 import { useAppStore } from '../../stores/app';
 import { AUTH_MODES } from '../../types';
-import type { AuthMode, Instance } from '../../types';
+import type { AuthMode, Instance, SessionGrant } from '../../types';
 
 const props = defineProps<{ instance: Instance }>();
 const app = useAppStore();
@@ -21,6 +21,7 @@ const form = ref({
   authMode: (props.instance.authMode ?? '') as AuthMode | '',
   approvalTimeoutMin: s.approvalTimeoutMs / 60_000,
   formApprovals: s.formElicitationApprovals === 'writes',
+  sessionGrantMaxHours: s.sessionGrantMaxHours,
   executePerMinute: s.executePerMinute,
   writesPerMinute: s.writesPerMinute,
   sandboxTimeoutS: s.sandbox.timeoutMs / 1000,
@@ -31,6 +32,25 @@ const form = ref({
   memoryMb: s.memoryMb,
 });
 const message = ref<{ kind: 'ok' | 'error'; text: string }>();
+
+const grants = ref<SessionGrant[]>([]);
+const grantError = ref<string>();
+async function loadGrants() {
+  try {
+    grants.value = await http.get<SessionGrant[]>(`/api/instances/${props.instance.id}/session-grants`);
+  } catch (err) {
+    grantError.value = errorText(err);
+  }
+}
+async function revokeGrant(id: string) {
+  try {
+    await http.del(`/api/instances/${props.instance.id}/session-grants/${id}`);
+    await loadGrants();
+  } catch (err) {
+    grantError.value = errorText(err);
+  }
+}
+onMounted(loadGrants);
 const deleting = ref<{ confirm: string; note?: string }>();
 
 async function save() {
@@ -45,6 +65,7 @@ async function save() {
       settings: {
         approvalTimeoutMs: Math.round(f.approvalTimeoutMin * 60_000),
         formElicitationApprovals: f.formApprovals ? 'writes' : 'off',
+        sessionGrantMaxHours: f.sessionGrantMaxHours,
         executePerMinute: f.executePerMinute,
         writesPerMinute: f.writesPerMinute,
         sandbox: {
@@ -124,9 +145,20 @@ async function remove() {
         </div>
       </div>
       <p class="small muted">
-        Writes that ask are approved on an approval page: the MCP client asks you to open it, and you sign in with your
-        authenticator app there. Clients that can't open it get the call denied.
+        Writes that ask are approved on an approval page that you open from the client, and you sign in there with your
+        authenticator app once per browser. Clients that can't open the page themselves show the link, and the call
+        continues after you decide.
       </p>
+      <div class="form-grid">
+        <div class="field">
+          <label for="s-grant">Longest “Approve for this session” (hours)</label>
+          <input id="s-grant" v-model.number="form.sessionGrantMaxHours" type="number" min="0" max="24" />
+          <p class="help">
+            0 turns it off. While a session approval is active, every Ask operation of that client on this endpoint runs
+            without asking, except locked ones and ones that need a typed confirmation.
+          </p>
+        </div>
+      </div>
       <div class="field check">
         <label>
           <input v-model="form.formApprovals" type="checkbox" />
@@ -137,6 +169,32 @@ async function remove() {
         Any client connected to this endpoint could then approve its own writes, with nobody checking. Locked operations
         and ones that need a typed confirmation still need the approval page.
       </p>
+    </section>
+
+    <section class="card">
+      <h2>Active session approvals</h2>
+      <p v-if="grantError" class="alert error" role="alert">{{ grantError }}</p>
+      <p v-if="!grants.length" class="small muted">
+        None. An approver can give one from the approval page with “Approve for this session”.
+      </p>
+      <table v-else class="table">
+        <thead>
+          <tr>
+            <th>Client</th>
+            <th>Approved by</th>
+            <th>Until</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="g in grants" :key="g.id">
+            <td>{{ g.client ?? 'unknown client' }}</td>
+            <td>{{ g.createdBy }}</td>
+            <td>{{ new Date(g.expiresAt).toLocaleString() }}</td>
+            <td><button type="button" class="btn btn-sm btn-danger" @click="revokeGrant(g.id)">Revoke</button></td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
     <section class="card">

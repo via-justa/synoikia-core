@@ -29,6 +29,7 @@ export interface SessionInfo {
 export interface InstanceSettings {
   approvalTimeoutMs: number;
   formElicitationApprovals: 'off' | 'writes';
+  sessionGrantMaxHours: number;
   executePerMinute: number;
   writesPerMinute: number;
   sandbox: { timeoutMs: number; memoryMb: number; maxResultBytes: number };
@@ -330,6 +331,8 @@ export interface Settings {
     requireTotp: boolean;
     disableLocalLogin: boolean;
     sessionIdleMinutes: number;
+    approvalSessionIdleHours: number;
+    approvalSessionAbsoluteDays: number;
     sessionAbsoluteHours: number;
   };
   mcp: {
@@ -354,4 +357,13 @@ export interface Settings {
   forceLocalLogin: boolean;
   publicMcpUrl: string | null;
   publicAdminUrl: string | null;
+}
+
+/** A live "Approve for this session" grant on one endpoint (design §5.8). */
+export interface SessionGrant {
+  id: string;
+  client: string | null;
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
 }

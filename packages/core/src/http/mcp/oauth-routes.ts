@@ -26,7 +26,14 @@ const UI_SESSIONS = {
 const purposeOf = (continueTo: string): UiPurpose => (continueTo.startsWith('/a/') ? 'approval' : 'oauth');
 const UI_CSRF_COOKIE = 'syn_mcp_csrf';
 const OIDC_COOKIE = 'syn_mcp_oidc';
-const UI_LIMITS: SessionLimits = { idleMs: 15 * 60_000, absoluteMs: 60 * 60_000 };
+const OAUTH_UI_LIMITS: SessionLimits = { idleMs: 15 * 60_000, absoluteMs: 60 * 60_000 };
+
+/** The consent page keeps a short session; the approval page one browser-long session (design §5.3). */
+function uiLimits(ctx: AppContext, purpose: UiPurpose): SessionLimits {
+  if (purpose === 'oauth') return OAUTH_UI_LIMITS;
+  const s = getSettings(ctx.db, 'security');
+  return { idleMs: s.approvalSessionIdleHours * 3_600_000, absoluteMs: s.approvalSessionAbsoluteDays * 86_400_000 };
+}
 const FORM_TTL_MS = 10 * 60_000;
 const NEEDS_TOTP =
   'This server requires two-factor authentication. Set up your authenticator app in the admin portal (Profile) first.';
@@ -39,7 +46,7 @@ const safeContinue = (v: unknown) =>
 
 export function uiSession(ctx: AppContext, c: Context, purpose: UiPurpose): ValidSession | null {
   const { cookie, kind } = UI_SESSIONS[purpose];
-  return ctx.sessions.validate(getCookie(c, cookie), kind, UI_LIMITS);
+  return ctx.sessions.validate(getCookie(c, cookie), kind, uiLimits(ctx, purpose));
 }
 
 /** Double-submit CSRF for the MCP-port forms (SameSite=Strict cookie + hidden field). */
@@ -67,7 +74,8 @@ const totpProofs = new Map<string, number>();
 
 export function recordTotpProof(ctx: AppContext, idHash: string) {
   const now = ctx.now().getTime();
-  for (const [k, at] of totpProofs) if (now - at > UI_LIMITS.absoluteMs) totpProofs.delete(k);
+  const maxAge = uiLimits(ctx, 'approval').absoluteMs;
+  for (const [k, at] of totpProofs) if (now - at > maxAge) totpProofs.delete(k);
   totpProofs.set(idHash, now);
 }
 
@@ -80,7 +88,8 @@ export function sinceTotpProof(ctx: AppContext, session: ValidSession): number {
 function startUiSession(ctx: AppContext, c: Context, userId: string, method: string, continueTo: string) {
   const purpose = purposeOf(continueTo);
   const { cookie, kind, path } = UI_SESSIONS[purpose];
-  const raw = ctx.sessions.create(userId, kind, UI_LIMITS, {
+  const limits = uiLimits(ctx, purpose);
+  const raw = ctx.sessions.create(userId, kind, limits, {
     ip: clientIp(c, ctx.config.TRUST_PROXY),
     userAgent: c.req.header('user-agent'),
   });
@@ -91,7 +100,7 @@ function startUiSession(ctx: AppContext, c: Context, userId: string, method: str
     secure: isSecure(c, ctx.config.TRUST_PROXY),
     sameSite: 'Lax',
     path,
-    maxAge: UI_LIMITS.absoluteMs / 1000,
+    maxAge: limits.absoluteMs / 1000,
   });
   ctx.users.markLogin(userId);
   writeAudit(ctx.db, {

@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Manifest, ResolvedTarget } from '@synoikia/plugin-sdk';
 import { and, eq } from 'drizzle-orm';
-import type { ApprovalService, ClientPrompts, Decision } from '../approvals/service.js';
+import type { SessionGrantService } from '../approvals/grants.js';
+import type { ExecutionRegistry } from '../runtime/executions.js';
+import type { ApprovalService, ClientPrompts, Decision, ParkHook } from '../approvals/service.js';
 import { writeAudit } from '../audit.js';
 import type { AuditEvent } from '../audit.js';
 import { resolveAccess } from '../catalog/groups.js';
@@ -21,7 +23,7 @@ import { redactDiff, redactPaths, redactResult } from './redact.js';
 import type { Redactor } from './redact.js';
 
 /** The permission gate (design §5.2), the only path from sandboxed code to `invoke`: resolve → attest →
- * access → targets → prepareWrite → [rule | human] → invoke → redact → audit (every branch audited). */
+ * access → targets → prepareWrite → [grant | rule | human] → invoke → redact → audit (every branch audited). */
 
 export interface GateDeps {
   db: Db;
@@ -29,6 +31,15 @@ export interface GateDeps {
   limiter: SlidingWindowLimiter;
   attestationKey: Buffer;
   now?: () => Date;
+  /** Session grants (design §5.8); without it, no grant applies. */
+  grants?: SessionGrantService;
+  /** Parked executions (design §5.6); without it, nothing parks. */
+  executions?: ExecutionRegistry;
+}
+
+/** How an execution parks (design §5.6): the gate audits the hand-over and reports each decision. */
+export interface GatePark extends ParkHook {
+  settled(approvalId: string, decision: { outcome: string; decidedBy?: string }): void;
 }
 
 export interface InstanceRuntime {
@@ -52,6 +63,8 @@ export interface CallerContext {
   principal: AccessPrincipal;
   /** Present only for a live session whose client advertised elicitation. */
   prompts?: ClientPrompts;
+  /** Without a usable prompt, the execution may park and hand out the approval link (design §5.6). */
+  parkable?: boolean;
 }
 
 type OperationRow = typeof operations.$inferSelect;
@@ -102,18 +115,21 @@ const DENIAL_MESSAGES: Record<string, string> = {
   prompt_failed: 'needs approval, but the client could not show the approval prompt',
   confirmation_mismatch: 'was denied (confirmation mismatch)',
   endpoint_stopped: 'was cancelled: the endpoint was stopped or reconfigured while it waited for approval',
+  too_many_parked:
+    'needs approval, and too many earlier calls of this client still wait for one; resume or finish those first',
 };
 
-/** The gate bindings for one `execute` run; once `signal` aborts, leftover calls are refused and open
- * approvals cancelled, so nothing runs after the tool call returned. */
+/** The gate bindings for one `execute` run; once `signal` aborts (the tool call ended, or its parked run
+ * was stopped), leftover calls are refused and open approvals cancelled. */
 export function createGateBindings(
   deps: GateDeps,
   rt: InstanceRuntime,
   caller: CallerContext,
   signal: AbortSignal = new AbortController().signal,
+  opts: { executionId?: string; park?: GatePark } = {},
 ): Record<string, Record<string, Binding>> {
   const now = deps.now ?? (() => new Date());
-  const executionId = randomUUID();
+  const executionId = opts.executionId ?? randomUUID();
   let queue: Promise<unknown> = Promise.resolve();
   const openApprovals = new Set<string>();
   signal.addEventListener('abort', () => {
@@ -257,12 +273,22 @@ export function createGateBindings(
         if (isWrite && !deps.limiter.allows(writeBucket, rt.settings.writesPerMinute, 60_000)) overWriteBudget();
 
         // 6. Level `write`: acknowledged writes are auto-approved. Level `ask` (a write, or a read given
-        //    its own Ask): pre-approval rules, which never cover locked ops nor unacknowledged writes.
+        //    its own Ask): a session grant, then pre-approval rules; neither covers locked ops.
         let preapproved = false;
         if (mode === 'auto') {
           preapproved = true;
           decision = 'auto-approved:level';
         } else if (!operation.locked && access.reachable && access.level === 'ask') {
+          // A session grant (§5.8) covers Ask, but never typed-confirmation ops nor locked ones.
+          const grant = operation.typedConfirmation
+            ? undefined
+            : deps.grants?.active(rt.instanceId, principalKey(caller));
+          if (grant) {
+            preapproved = true;
+            decision = `auto-approved:grant:${grant.id}`;
+          }
+        }
+        if (!preapproved && !operation.locked && access.reachable && access.level === 'ask') {
           const targetCovers = operation.matchProfile
             ? rt.manifest.matchProfiles[operation.matchProfile]?.find((f) => f.field === '$targets')?.covers
             : undefined;
@@ -293,6 +319,24 @@ export function createGateBindings(
             );
           }
           ensureRunning();
+          let parked = false;
+          const park: ParkHook | undefined = opts.park && {
+            reserve: () => opts.park!.reserve(),
+            offer: (a) => {
+              parked = true;
+              writeAudit(
+                deps.db,
+                {
+                  ...audit,
+                  decision: 'awaiting_approval',
+                  durationMs: Date.now() - started,
+                  detail: { ...audit.detail, approvalId: a.approvalId, channel: 'link' },
+                },
+                now(),
+              );
+              opts.park!.offer(a);
+            },
+          };
           const paramsHash = sha256Hex(
             canonicalJson({ key: operation.key, params, targets, expectedHash: expectedHash ?? null }),
           );
@@ -319,6 +363,7 @@ export function createGateBindings(
               isWrite &&
               !operation.locked &&
               !operation.typedConfirmation,
+            park,
           });
           audit.detail.approvalId = request.id;
           openApprovals.add(request.id);
@@ -329,6 +374,7 @@ export function createGateBindings(
             openApprovals.delete(request.id);
             budget.resume();
           }
+          if (parked) opts.park!.settled(request.id, { outcome: approval.outcome, decidedBy: approval.decidedBy });
           audit.decidedBy = approval.decidedBy;
           audit.decidedVia = approval.via;
           if (approval.outcome === 'cancelled' && signal.aborted) ensureRunning();
@@ -353,6 +399,25 @@ export function createGateBindings(
             );
           }
           decision = 'human-approved';
+          const maxHours = rt.settings.sessionGrantMaxHours;
+          if (
+            approval.sessionGrantUntil &&
+            deps.grants &&
+            maxHours > 0 &&
+            !operation.locked &&
+            !operation.typedConfirmation
+          ) {
+            // The page offers only allowed lengths; the cap is enforced here too.
+            const cap = now().getTime() + maxHours * 3_600_000;
+            deps.grants.create({
+              instanceId: rt.instanceId,
+              principal: principalKey(caller),
+              client: caller.client.id,
+              createdBy: approval.decidedBy ?? 'unknown',
+              approvalId: request.id,
+              expiresAt: new Date(Math.min(approval.sessionGrantUntil.getTime(), cap)),
+            });
+          }
         }
       }
 

@@ -9,7 +9,10 @@ import { effectiveAccess } from '../gate/access.js';
 import type { AccessPrincipal } from '../gate/access.js';
 import { currentGuide, issueAttestationKey } from '../gate/attestation.js';
 import { createGateBindings, principalKey } from '../gate/pipeline.js';
-import type { CallerContext, GateDeps, InstanceRuntime } from '../gate/pipeline.js';
+import type { CallerContext, GateDeps, GatePark, InstanceRuntime } from '../gate/pipeline.js';
+import type { ParkedApproval } from '../approvals/service.js';
+import { pendingResult, RESUME_WAIT_MS } from './executions.js';
+import type { ExecuteResult } from './executions.js';
 import { BindingError, runInSandbox } from '../sandbox/index.js';
 import type { Binding, SandboxResult } from '../sandbox/index.js';
 
@@ -21,8 +24,11 @@ export const SANDBOX_CONCURRENCY = { perInstance: 4, total: 16 };
 const running = new Map<string, number>();
 let runningTotal = 0;
 
+/** Parked scripts still running, across all registries (they gave back their concurrency slot). */
+let parkedRunning = 0;
+
 /** Scripts running now, across all instances (shutdown waits for cancelled ones to return). */
-export const sandboxesRunning = () => runningTotal;
+export const sandboxesRunning = () => runningTotal + parkedRunning;
 
 function admit(deps: GateDeps, rt: InstanceRuntime, caller: CallerContext): SandboxResult | (() => void) {
   const who = principalKey(caller);
@@ -51,27 +57,101 @@ export async function executeCode(
   caller: CallerContext,
   code: string,
   signal?: AbortSignal,
-): Promise<SandboxResult> {
+): Promise<ExecuteResult> {
   const release = admit(deps, rt, caller);
   if (typeof release !== 'function') return release;
-  // Ends with the sandbox (return, error or timeout) or earlier, when the request or session goes away.
+  // Ends with the sandbox (return, error or timeout) or earlier, when the request or session goes away;
+  // once parked, only the registry ends it (design §5.6).
   const run = new AbortController();
   const stop = () => run.abort();
   signal?.addEventListener('abort', stop);
   if (signal?.aborted) stop();
-  try {
-    return await runInSandbox({
-      code,
-      bindings: createGateBindings(deps, rt, caller, run.signal),
-      limits: rt.settings.sandbox,
-      // Each gated call's result was already redacted; this covers anything the script derived or logged.
-      redact: rt.redact,
-    });
-  } finally {
+
+  const executionId = randomUUID();
+  const registry = caller.parkable ? deps.executions : undefined;
+  const owner = principalKey(caller);
+  let adopted = false;
+  let firstPark!: (a: ParkedApproval) => void;
+  const parkedFirst = new Promise<ParkedApproval>((resolve) => (firstPark = resolve));
+  const park: GatePark | undefined = registry && {
+    reserve: () => adopted || registry.hasRoom(owner, rt.instanceId),
+    offer: (a) => (adopted ? registry.awaiting(executionId, a) : firstPark(a)),
+    settled: (approvalId, decision) => registry.settled(executionId, approvalId, decision),
+  };
+
+  const sandbox = runInSandbox({
+    code,
+    bindings: createGateBindings(deps, rt, caller, run.signal, { executionId, park }),
+    limits: rt.settings.sandbox,
+    // Each gated call's result was already redacted; this covers anything the script derived or logged.
+    redact: rt.redact,
+  });
+  const first = await Promise.race([
+    sandbox.then((result) => ({ result })),
+    parkedFirst.then((approval) => ({ approval })),
+  ]);
+  signal?.removeEventListener('abort', stop);
+  release();
+  if ('result' in first) {
     stop();
-    signal?.removeEventListener('abort', stop);
-    release();
+    return first.result;
   }
+
+  // Parked: the run outlives this tool call, under the registry's caps instead of a concurrency slot.
+  registry!.adopt({ id: executionId, owner, instanceId: rt.instanceId, approval: first.approval, abort: stop });
+  adopted = true;
+  parkedRunning++;
+  void sandbox.then((result) => {
+    parkedRunning--;
+    stop();
+    registry!.finish(executionId, result);
+  });
+  return pendingResult(executionId, first.approval);
+}
+
+/** `resume(executionId)` (design §5.6): the parked run's result, or that it still waits. */
+export async function resumeExecution(
+  deps: GateDeps,
+  rt: InstanceRuntime,
+  caller: CallerContext,
+  executionId: string,
+  signal?: AbortSignal,
+): Promise<ExecuteResult> {
+  const outcome = deps.executions
+    ? await deps.executions.wait(executionId, principalKey(caller), rt.instanceId, RESUME_WAIT_MS, signal)
+    : 'not_found';
+  const result: ExecuteResult =
+    outcome === 'not_found'
+      ? {
+          ok: false,
+          error: {
+            code: 'EXECUTION_NOT_FOUND',
+            message:
+              'No parked execution with this id: it finished and was collected, expired, or the server restarted',
+          },
+          logs: [],
+        }
+      : outcome === 'busy'
+        ? {
+            ok: false,
+            error: { code: 'BUSY', message: 'Another resume is already waiting on this execution' },
+            logs: [],
+          }
+        : outcome;
+  writeAudit(
+    deps.db,
+    {
+      kind: 'call',
+      instanceId: rt.instanceId,
+      decision: 'resumed',
+      actorKind: 'mcp_client',
+      actorId: caller.client.id,
+      resultStatus: result.ok ? 'ok' : 'status' in result ? 'pending' : 'error',
+      detail: { executionId, ...(result.ok ? {} : { error: result.error.code }) },
+    },
+    deps.now?.() ?? new Date(),
+  );
+  return result;
 }
 
 type OperationRow = typeof operations.$inferSelect;
@@ -86,15 +166,32 @@ export interface CatalogFindQuery {
   limit?: number;
 }
 
-function describeOp(op: OperationRow, groupKey: string | undefined, access: ReturnType<typeof effectiveAccess>) {
+function describeOp(
+  op: OperationRow,
+  groupKey: string | undefined,
+  access: ReturnType<typeof effectiveAccess>,
+  granted = false,
+) {
+  // A session grant (design §5.8) turns Ask into auto-approval, except for locked and typed-confirmation ops.
+  const mode =
+    access.reachable &&
+    access.mode === 'approve' &&
+    granted &&
+    !op.locked &&
+    !op.typedConfirmation &&
+    access.level === 'ask'
+      ? 'auto'
+      : access.reachable
+        ? access.mode
+        : undefined;
   return {
     key: op.key,
     displayName: op.displayName ?? undefined,
     group: groupKey,
     classification: op.locked ? 'locked' : op.classification,
     // Whether a call runs straight away, waits for a human, or is auto-approved at level `write`.
-    approval: access.reachable
-      ? ({ run: 'none', approve: 'required', auto: 'auto' } as const)[access.mode]
+    approval: mode
+      ? ({ run: 'none', approve: 'required', auto: 'auto' } as const)[mode]
       : op.locked || op.classification === 'write'
         ? 'required'
         : 'none',
@@ -105,7 +202,12 @@ function describeOp(op: OperationRow, groupKey: string | undefined, access: Retu
   };
 }
 
-function catalogBindings(db: Db, instanceId: string, principal: AccessPrincipal): Record<string, Binding> {
+function catalogBindings(
+  db: Db,
+  instanceId: string,
+  principal: AccessPrincipal,
+  granted: () => boolean,
+): Record<string, Binding> {
   const load = () => {
     const groups = new Map(
       db
@@ -148,7 +250,7 @@ function catalogBindings(db: Db, instanceId: string, principal: AccessPrincipal)
             .toLowerCase();
           if (!hay.includes(text)) continue;
         }
-        out.push(describeOp(op, group?.key, access));
+        out.push(describeOp(op, group?.key, access, granted()));
         if (out.length >= limit) break;
       }
       return out;
@@ -158,7 +260,11 @@ function catalogBindings(db: Db, instanceId: string, principal: AccessPrincipal)
       const op = ops.find((o) => o.key === key);
       if (!op) return null;
       const access = accessOf(op, groups);
-      return { ...describeOp(op, groups.get(op.groupId)?.key, access), paramsSchema: op.paramsSchema, docs: op.docs };
+      return {
+        ...describeOp(op, groups.get(op.groupId)?.key, access, granted()),
+        paramsSchema: op.paramsSchema,
+        docs: op.docs,
+      };
     },
     groups: async () => listGroups(db, instanceId).filter((g) => !g.stale),
   };
@@ -234,7 +340,12 @@ function searchBindings(
   caller: CallerContext,
 ): Record<string, Record<string, Binding>> {
   const bindings: Record<string, Record<string, Binding>> = {
-    catalog: catalogBindings(deps.db, rt.instanceId, caller.principal),
+    catalog: catalogBindings(
+      deps.db,
+      rt.instanceId,
+      caller.principal,
+      () => !!deps.grants?.active(rt.instanceId, principalKey(caller)),
+    ),
   };
   if (rt.manifest.capabilities.registry) {
     bindings.registry = {

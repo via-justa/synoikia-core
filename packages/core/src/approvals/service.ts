@@ -7,7 +7,8 @@ import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
 import type { ApprovalLinkService } from './links.js';
 
 /** Human approval (design §5.3): URL mode sends a human to our page to decide; form mode only for opted-in
- * plain writes; anything else, and any timeout, is denied. A client's answer never approves a risky call. */
+ * plain writes; otherwise the execution parks and hands out the page link (§5.6). Any timeout is denied.
+ * A client's answer never approves a risky call. */
 
 export type DecisionOutcome = 'approved' | 'denied' | 'timed_out' | 'cancelled';
 export type DecisionChannel = 'elicitation' | 'url';
@@ -17,6 +18,8 @@ export interface Decision {
   via?: DecisionChannel;
   decidedBy?: string;
   reason?: string;
+  /** The approver also granted this client the endpoint's Ask operations until then (§5.8). */
+  sessionGrantUntil?: Date;
 }
 
 export interface UrlPromptRequest {
@@ -53,6 +56,23 @@ export interface ClientPrompts {
   form?: (req: FormPromptRequest) => Promise<FormPromptResponse>;
 }
 
+/** A parked approval as the execution hands it to the agent: the page link replaces the client prompt. */
+export interface ParkedApproval {
+  approvalId: string;
+  /** Path of the approval page on the MCP listener; the MCP layer makes it absolute. */
+  path: string;
+  operationKey: string;
+  summary: string;
+  expiresAt: Date;
+}
+
+/** Lets an execution park (design §5.6) when the client has no usable prompt. */
+export interface ParkHook {
+  /** False when the caller is over its cap of parked executions. */
+  reserve(): boolean;
+  offer(approval: ParkedApproval): void;
+}
+
 export interface ApprovalRequestInput {
   instanceId: string;
   operationId: string;
@@ -71,6 +91,8 @@ export interface ApprovalRequestInput {
   prompts?: ClientPrompts;
   /** The endpoint lets form prompts approve, and this is a plain write (not locked, no typed confirmation). */
   formApprovals: boolean;
+  /** Present when the execution can park; used only when no client prompt applies. */
+  park?: ParkHook;
 }
 
 interface Live {
@@ -138,10 +160,19 @@ export class ApprovalService {
     };
 
     const prompts = input.prompts ?? {};
-    const channel = prompts.url ? 'url' : prompts.form && input.formApprovals ? 'form' : null;
+    let channel: 'url' | 'form' | 'link' | null = prompts.url
+      ? 'url'
+      : prompts.form && input.formApprovals
+        ? 'form'
+        : null;
+    let overParkCap = false;
+    if (!channel && input.park) {
+      if (input.park.reserve()) channel = 'link';
+      else overParkCap = true;
+    }
     if (!channel) {
       // A form-only client can't carry a human's approval for this call; no prompts at all is worse.
-      const reason = prompts.form ? 'client_cannot_approve' : 'no_approval_path';
+      const reason = overParkCap ? 'too_many_parked' : prompts.form ? 'client_cannot_approve' : 'no_approval_path';
       this.db
         .insert(pendingApprovals)
         .values({ ...row, status: 'denied', decidedAt: now })
@@ -169,7 +200,16 @@ export class ApprovalService {
     });
 
     if (channel === 'url') this.offerUrl(id, row.expiresAt, input);
-    else this.offerForm(id, input);
+    else if (channel === 'link') {
+      const token = this.links.create(id, row.expiresAt);
+      input.park!.offer({
+        approvalId: id,
+        path: `/a/${token}`,
+        operationKey: input.operationKey,
+        summary: input.summary,
+        expiresAt: row.expiresAt,
+      });
+    } else this.offerForm(id, input);
     return { id, decision };
   }
 
@@ -224,7 +264,10 @@ export class ApprovalService {
   }
 
   /** The approval page's decision. A wrong typed confirmation is rejected so the approver can retry. */
-  decide(id: string, input: { approve: boolean; confirm?: string; decidedBy: string }): Decision {
+  decide(
+    id: string,
+    input: { approve: boolean; confirm?: string; decidedBy: string; sessionGrantUntil?: Date },
+  ): Decision {
     const live = this.live.get(id);
     if (!live) {
       const row = this.db.select().from(pendingApprovals).where(eq(pendingApprovals.id, id)).get();
@@ -238,6 +281,7 @@ export class ApprovalService {
       outcome: input.approve ? 'approved' : 'denied',
       via: 'url',
       decidedBy: input.decidedBy,
+      ...(input.approve && input.sessionGrantUntil ? { sessionGrantUntil: input.sessionGrantUntil } : {}),
     };
     live.settle(decision);
     return decision;

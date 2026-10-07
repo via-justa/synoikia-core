@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { SessionGrantService } from './approvals/grants.js';
 import { ApprovalLinkService } from './approvals/links.js';
 import { ApprovalService } from './approvals/service.js';
 import { McpTokenService } from './auth/mcp-tokens.js';
@@ -24,6 +25,7 @@ import type { FetchLike } from './notify/service.js';
 import { discoverPlugins, syncPluginRegistry } from './plugins/discovery.js';
 import { PluginRepoService } from './plugins/repos.js';
 import type { FetchBytes } from './plugins/repos.js';
+import { ExecutionRegistry } from './runtime/executions.js';
 import { sandboxesRunning } from './runtime/index.js';
 import { normalizeStoredSettings } from './settings.js';
 
@@ -45,6 +47,10 @@ export interface AppContext {
   oauth: OAuthService;
   instances: InstanceManager;
   approvals: ApprovalService;
+  /** Session grants (design §5.8). */
+  grants: SessionGrantService;
+  /** Parked executions (design §5.6). */
+  executions: ExecutionRegistry;
   limiter: SlidingWindowLimiter;
   links: ApprovalLinkService;
   notifier: NotifierService;
@@ -112,9 +118,14 @@ export async function createAppContext(config: Config, opts: AppOptions = {}): P
     );
   const links = new ApprovalLinkService(db, now);
   const approvals = new ApprovalService(db, links, now);
-  // An approval must not outlive the plugin process and configuration it was asked for.
+  const grants = new SessionGrantService(db, now);
+  const executions = new ExecutionRegistry(() => now().getTime());
+  // An approval, a parked run or a grant must not outlive the plugin process and configuration it was given for.
   events.on('instance.status', ({ instanceId, status }) => {
-    if (status === 'stopped') approvals.cancelForInstance(instanceId, 'endpoint_stopped');
+    if (status !== 'stopped') return;
+    approvals.cancelForInstance(instanceId, 'endpoint_stopped');
+    executions.abort(instanceId);
+    grants.endForInstance(instanceId, 'endpoint_stopped');
   });
 
   const keys = {
@@ -151,6 +162,7 @@ export async function createAppContext(config: Config, opts: AppOptions = {}): P
     for (const t of timers) clearInterval(t);
     // Cancelled approvals end their tool calls first, so closing sessions doesn't cut them off mid-reply.
     approvals.cancelAll('shutdown');
+    executions.abort();
     // Give the scripts those calls belonged to a moment to return their result to the client.
     if (sandboxesRunning() > 0) {
       for (const until = Date.now() + 2000; sandboxesRunning() > 0 && Date.now() < until;)
@@ -173,6 +185,8 @@ export async function createAppContext(config: Config, opts: AppOptions = {}): P
     oauth: new OAuthService(db, now),
     instances,
     approvals,
+    grants,
+    executions,
     limiter,
     links,
     notifier,
@@ -180,7 +194,7 @@ export async function createAppContext(config: Config, opts: AppOptions = {}): P
     keys,
     warnings,
     now,
-    gateDeps: () => ({ db, approvals, limiter, attestationKey: keys.attestation, now }),
+    gateDeps: () => ({ db, approvals, limiter, attestationKey: keys.attestation, now, grants, executions }),
     discoverPlugins: discover,
     async start() {
       await instances.startAll();

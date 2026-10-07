@@ -331,6 +331,22 @@ export function registerProfileRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     return c.json({ status: 'ok' });
   });
 
+  // Approval browsers (design §5.3): MCP-port sign-ins that approve without a new TOTP code.
+  app.get('/api/profile/approval-sessions', (c) => c.json(ctx.sessions.listKind(c.get('user').id, 'approval_ui')));
+
+  app.post('/api/profile/approval-sessions/revoke', (c) => {
+    const user = c.get('user');
+    const count = ctx.sessions.revokeKind(user.id, 'approval_ui');
+    writeAudit(ctx.db, {
+      kind: 'auth',
+      decision: 'approval_sessions_revoked',
+      actorKind: 'user',
+      actorId: user.id,
+      detail: { count },
+    });
+    return c.json({ revoked: count });
+  });
+
   app.post('/api/profile/totp/begin', (c) => c.json(ctx.users.beginTotp(c.get('user').id)));
 
   app.post('/api/profile/totp/confirm', async (c) => {

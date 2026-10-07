@@ -110,13 +110,13 @@ await h.execute(`return await acme.call('scene.delete', { id: 'evening' })`, {
 - runs the bundle as a child under the permission model, as in production;
 - fails with an error if the entry is not built. Plugin `test` scripts build first.
 
-| Area       | Harness functions                                                                                                                                   |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Calls      | `execute(code, { onApproval })` and `search(code)`, on the same path as an MCP client. `onApproval` decides each approval, with typed confirmation. |
-| Access     | `setGroupLevel`, `setOperationLevel`, `addRule`                                                                                                     |
-| Inspection | `operation(key)`, `operations()`, `registry()`, `audit({ operationKey })`, `instance()`, `approvalErrors`                                           |
-| Upstream   | `testConnection(connection)`, `syncNow()`                                                                                                           |
-| Lifecycle  | `stop()` stops core and removes the temporary directory                                                                                             |
+| Area       | Harness functions                                                                                                                                                                                                                                                                                            |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Calls      | `execute(code, { onApproval })` and `search(code)`, on the same path as an MCP client. `onApproval` decides each approval, with typed confirmation. With `{ park: true }`, the call parks as for a client without prompts (§5.6): `parkedApproval(result)` decides it and `resume(executionId)` collects it. |
+| Access     | `setGroupLevel`, `setOperationLevel`, `addRule`                                                                                                                                                                                                                                                              |
+| Inspection | `operation(key)`, `operations()`, `registry()`, `audit({ operationKey })`, `instance()`, `approvalErrors`                                                                                                                                                                                                    |
+| Upstream   | `testConnection(connection)`, `syncNow()`                                                                                                                                                                                                                                                                    |
+| Lifecycle  | `stop()` stops core and removes the temporary directory                                                                                                                                                                                                                                                      |
 
 The same package has `startFakeHttp` (a fake HTTP upstream) and `checkPluginContract` (the end-to-end checks that each plugin repeats).
 

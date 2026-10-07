@@ -1,6 +1,6 @@
 # Synoikia core
 
-One MCP server for many self-hosted services. Each plugin instance gets its own endpoint exposing two tools, `search(code)` and `execute(code)`, and every call goes through one sandbox, permission gate, approval flow, redaction and audit log. The software design description (SDD) is in `docs/design/`, one file per section; code comments cite its sections (`§5.2`).
+One MCP server for many self-hosted services. Each plugin instance gets its own endpoint exposing `search(code)`, `execute(code)` and `resume(executionId)` (for a call parked on an approval), and every call goes through one sandbox, permission gate, approval flow, redaction and audit log. The software design description (SDD) is in `docs/design/`, one file per section; code comments cite its sections (`§5.2`).
 
 **The rule everything follows: security lives in core, once.** A plugin only describes its upstream API; it never decides what is allowed. Don't add a plugin-side switch for anything the gate, sandbox, approvals, redaction or auth already decide. Core stays plugin-agnostic: no plugin names (TrueNAS, Seerr, Home Assistant) in core code, tests or UI placeholders. The plugins live in `via-justa/synoikia-core-plugins`.
 
