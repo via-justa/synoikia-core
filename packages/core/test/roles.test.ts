@@ -253,3 +253,35 @@ describe('own pre-approval rules in the gate', () => {
     expect(evaluate(t.userId)).toEqual({ kind: 'no_match' });
   });
 });
+
+describe('admin rules and roles', () => {
+  it('are not called inert while a role puts the operation at Ask', async () => {
+    const t = await setup();
+    await t.admin.patch(`/api/instances/${t.instanceId}/groups/echo`, { level: 'write' });
+    const ops = (await (await t.admin.get(`/api/instances/${t.instanceId}/operations`)).json()) as {
+      id: string;
+      key: string;
+    }[];
+    const set = ops.find((o) => o.key === 'echo.set')!;
+    await t.admin.post(`/api/instances/${t.instanceId}/rules`, { operationId: set.id, reason: 'house rule' });
+    const inert = async () =>
+      ((await (await t.admin.get(`/api/instances/${t.instanceId}/rules`)).json()) as { inert: string | null }[])[0]!
+        .inert;
+    expect(await inert()).toBe('level_write');
+    await t.admin.put(`/api/roles/${t.roleId}/endpoints/${t.instanceId}/groups/echo`, { level: 'ask' });
+    expect(await inert()).toBeNull();
+  });
+});
+
+describe('sign-up names', () => {
+  it('answers a taken name without saying it exists, and refuses proxy-style names', async () => {
+    const t = await setup();
+    updateSettings(t.ctx.db, 'security', { localSignup: true, defaultRoleId: t.roleId });
+    const visitor = await browser(t.app).init();
+    const taken = await visitor.post('/auth/register', { username: 'OLGA', password: PASSWORD });
+    expect(taken.status).toBe(400);
+    expect(await taken.json()).toMatchObject({ error: 'registration_failed' });
+    const service = await visitor.post('/auth/register', { username: 'service:abc', password: PASSWORD });
+    expect(await service.json()).toMatchObject({ error: 'invalid_username' });
+  });
+});

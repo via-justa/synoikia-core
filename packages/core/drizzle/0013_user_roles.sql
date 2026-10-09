@@ -58,6 +58,6 @@ ALTER TABLE `users` ADD `role_id` text DEFAULT 'admin' NOT NULL;--> statement-br
 -- The built-in Admin role: every existing user keeps full administration.
 INSERT INTO `roles` (`id`, `name`, `built_in`, `can_set_own_levels`, `can_manage_own_rules`, `can_see_status`)
   VALUES ('admin', 'Admin', 1, 1, 1, 1);--> statement-breakpoint
--- Every credential has an owner whose role decides its reach: tokens without a creator go to the oldest user.
-UPDATE `mcp_tokens` SET `created_by` = (SELECT `id` FROM `users` ORDER BY `created_at`, `id` LIMIT 1)
+-- Every credential has an owner whose role decides its reach: tokens without a creator go to the oldest enabled user.
+UPDATE `mcp_tokens` SET `created_by` = (SELECT `id` FROM `users` ORDER BY `disabled`, `created_at`, `id` LIMIT 1)
   WHERE `created_by` IS NULL;

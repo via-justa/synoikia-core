@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AppContext } from '../src/app.js';
 import { setGroupLevel, updateOperation } from '../src/catalog/groups.js';
 import { setRoleLevel } from '../src/catalog/role-levels.js';
-import { auditLog, operations } from '../src/db/schema.js';
+import { auditLog, operations, users } from '../src/db/schema.js';
 import { hostAllowed, LogThrottle, MAX_SESSIONS_PER_PRINCIPAL } from '../src/http/mcp/endpoint.js';
 import { createAdminApp } from '../src/http/admin-app.js';
 import { createMcpApp } from '../src/http/mcp-app.js';
@@ -596,6 +596,9 @@ describe('MCP endpoint with bearer tokens', () => {
     updateSettings(ctx.db, 'security', { defaultRoleId: viewers.id });
     // The admin matches case-insensitively and keeps the Admin role.
     expect((await initAs('ADMIN')).status).toBe(200);
+    // A self-registered account never stands for a proxy identity, whatever its name.
+    await ctx.users.register({ username: 'Carol', password: PASSWORD }, 'signup');
+    expect((await initAs('carol')).status).toBe(403);
     const client = new Client({ name: 'e2e', version: '1' });
     await client.connect(
       new StreamableHTTPClientTransport(new URL(`${base}/echo-two`), {
@@ -624,6 +627,39 @@ describe('MCP endpoint with bearer tokens', () => {
     await client.close();
     updateSettings(ctx.db, 'security', { defaultRoleId: null });
     await ctx.instances.update(otherInstanceId, { authMode: null });
+  });
+});
+
+describe('credential owners', () => {
+  it('refuses a token once its owner’s role loses the endpoint, or the owner is disabled', async () => {
+    const role = ctx.roles.create({ name: 'Token owners' });
+    ctx.roles.setInstances(role.id, [instanceId]);
+    setRoleLevel(ctx.db, role.id, instanceId, { group: 'echo' }, 'read');
+    const dan = await ctx.users.create({ username: 'dan', password: PASSWORD, roleId: role.id });
+    const { token } = ctx.tokens.create({ name: 'dan', scope: ['*'] }, { userId: dan.id });
+    const init = () =>
+      fetch(`${base}/echo`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'x', version: '1' } },
+        }),
+      });
+    expect((await init()).status).toBe(200);
+    ctx.roles.setInstances(role.id, []);
+    const refused = await init();
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ error: 'insufficient_scope' });
+    ctx.roles.setInstances(role.id, [instanceId]);
+    ctx.db.update(users).set({ disabled: true }).where(eq(users.id, dan.id)).run();
+    expect((await init()).status).toBe(403);
   });
 });
 

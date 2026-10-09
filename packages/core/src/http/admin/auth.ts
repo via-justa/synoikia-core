@@ -186,7 +186,15 @@ export function registerAuthRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     if (!signupOpen(ctx))
       return c.json({ error: 'registration_closed', message: 'This server does not accept new accounts' }, 403);
     const body = await readJson(c, LoginBody);
-    const created = await ctx.users.register({ username: body.username, password: body.password }, 'signup');
+    let created;
+    try {
+      created = await ctx.users.register({ username: body.username, password: body.password }, 'signup');
+    } catch (err) {
+      // One answer for a taken name: sign-up must not list which accounts exist.
+      if (err instanceof ConflictError && err.code === 'username_taken')
+        return c.json({ error: 'registration_failed', message: 'Choose another username' }, 400);
+      throw err;
+    }
     const user = ctx.users.get(created.id);
     startSession(c, ctx, user, 'signup');
     return c.json({ status: 'ok', mustEnrollTotp: mustEnrollTotp(ctx, user) }, 201);

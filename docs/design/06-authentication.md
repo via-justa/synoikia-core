@@ -63,7 +63,7 @@ The authentication mode is a global default (Settings → MCP Access). Each inst
 
 - **Cloudflare Access.** If the admin sets `teamDomain` and `aud`, the `Cf-Access-Jwt-Assertion` header must verify against the JWKS of the team. A service token records `service:<client id>`. Core refuses an assertion that names nobody.
 - **Trusted identity header.** An optional header, for example `Remote-User` from Authelia, gives the identity.
-- **User.** Core finds the user whose user name is the identity. Upper and lower case do not matter. If there is no such user, self-registration (§6.5) creates one. If self-registration is off, or the identity is not a valid user name, core refuses the request with 403.
+- **User.** Core finds the user whose user name is the identity. Upper and lower case do not matter. Only a user that an admin made, or that `external` mode registered, can match. A user from the sign-up form or OIDC never matches, so nobody can take a proxy identity first. If there is no such user, self-registration (§6.5) creates one. If self-registration is off, the name is taken, or the identity is not a valid user name, core refuses the request with 403.
 - Core refuses a caller that the proxy does not name (401). Each call belongs to a user.
 - The portal shows a warning for `external` without JWT verification. Port 8080 must then be reachable only through the proxy.
 
@@ -152,7 +152,7 @@ Each user has one role. A role decides what the user can reach and change.
 
 Self-registration is off by default. It is on while an admin sets a default role (Settings → Admin UI settings). The default role can be any role, also Admin. The portal then asks for a typed confirmation.
 
-A user that self-registration makes gets the default role. Core audits it as `user_registered` with its source:
+A user that self-registration makes gets the default role. Core records the source in `registered_via` and audits it as `user_registered`. User names are unique without regard to case. A name from the sign-up form or OIDC cannot contain `:`. The sign-up form gives one error for a taken name, and does not tell that the name exists.
 
 | Source     | When                                                                                                                                |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |

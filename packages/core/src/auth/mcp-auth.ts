@@ -167,14 +167,15 @@ function owned(ctx: AppContext, base: Unowned, userId: string | null | undefined
 
 /** A user named by the proxy: matched by username, else registered with the default role (design §6.5). */
 async function externalUser(ctx: AppContext, name: string): Promise<string | undefined> {
-  const found = ctx.users.byUsernameInsensitive(name);
+  const found = ctx.users.byExternalIdentity(name);
   if (found) return found.id;
   if (!ctx.users.registrationOpen()) return undefined;
   try {
     return (await ctx.users.register({ username: name }, 'external')).id;
   } catch (err) {
-    // A concurrent first request registered it; a name that isn't a valid username stays unknown.
-    if (err instanceof ConflictError) return ctx.users.byUsernameInsensitive(name)?.id;
+    // A concurrent first request registered it; a name taken by a self-registered user, or not a valid
+    // username, stays unknown.
+    if (err instanceof ConflictError) return ctx.users.byExternalIdentity(name)?.id;
     if (err instanceof ValidationError) return undefined;
     throw err;
   }

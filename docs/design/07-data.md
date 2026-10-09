@@ -6,13 +6,13 @@ Core keeps all data in one SQLite file, `DATA_DIR/synoikia.sqlite` (default `/da
 
 **Identity and admin authentication**
 
-| Table         | Holds                                                                                                                                                                                   |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `users`       | `username` (unique), `password_hash`, `totp_secret_enc`, `totp_enabled`, `totp_last_step`, `recovery_codes_hash`, `oidc_issuer`, `oidc_subject`, `last_login_at`, `disabled`, `role_id` |
-| `roles`       | `name` (unique), `built_in` (the Admin role, id `admin`), `can_set_own_levels`, `can_manage_own_rules`, `can_see_status`                                                                |
-| `sessions`    | `id_hash` (key), `user_id`, `kind` (`admin`, `oauth_ui`, `approval_ui`), `last_seen_at`, `expires_at`, `ip`, `user_agent`                                                               |
-| `settings`    | `key`, `value` (JSON): authentication defaults, rate limits, flags                                                                                                                      |
-| `oidc_config` | One row: `issuer`, `client_id`, `client_secret_enc`, `scopes`, `allow_policy`, `auto_provision`, `enabled`                                                                              |
+| Table         | Holds                                                                                                                                                                                                                                                            |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users`       | `username` (unique), `password_hash`, `totp_secret_enc`, `totp_enabled`, `totp_last_step`, `recovery_codes_hash`, `oidc_issuer`, `oidc_subject`, `last_login_at`, `disabled`, `role_id`, `registered_via` (`oidc`, `external`, `signup`; NULL: made by an admin) |
+| `roles`       | `name` (unique), `built_in` (the Admin role, id `admin`), `can_set_own_levels`, `can_manage_own_rules`, `can_see_status`                                                                                                                                         |
+| `sessions`    | `id_hash` (key), `user_id`, `kind` (`admin`, `oauth_ui`, `approval_ui`), `last_seen_at`, `expires_at`, `ip`, `user_agent`                                                                                                                                        |
+| `settings`    | `key`, `value` (JSON): authentication defaults, rate limits, flags                                                                                                                                                                                               |
+| `oidc_config` | One row: `issuer`, `client_id`, `client_secret_enc`, `scopes`, `allow_policy`, `auto_provision`, `enabled`                                                                                                                                                       |
 
 **Plugins**
 

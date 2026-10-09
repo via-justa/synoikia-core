@@ -99,6 +99,13 @@
       "when": 1791565313730,
       "tag": "0013_user_roles",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1791567509760,
+      "tag": "0014_user_registration_source",
+      "breakpoints": true
     }
   ]
 }

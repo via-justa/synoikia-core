@@ -113,7 +113,14 @@ export class UserService {
     return this.db.select().from(users).where(eq(users.username, username)).get();
   }
 
-  /** Case-insensitive match, for identities named by a proxy (design §6.2). */
+  /** The user a proxy-named identity is (design §6.2): only one an admin made or that `external` mode
+   * registered, so nobody can claim a proxy identity by signing up or through OIDC first. */
+  byExternalIdentity(identity: string): UserRow | undefined {
+    const found = this.byUsernameInsensitive(identity);
+    return found && (found.registeredVia === null || found.registeredVia === 'external') ? found : undefined;
+  }
+
+  /** Case-insensitive match. */
   byUsernameInsensitive(username: string): UserRow | undefined {
     return this.db
       .select()
@@ -146,7 +153,8 @@ export class UserService {
         'Usernames are 2–64 letters, digits, dots, dashes, underscores or @',
       );
     }
-    if (this.byUsername(username)) throw new ConflictError('username_taken', 'That username is taken');
+    // Unique regardless of case: proxy identities match names that way (design §6.2).
+    if (this.byUsernameInsensitive(username)) throw new ConflictError('username_taken', 'That username is taken');
     if (input.password !== undefined) checkPasswordPolicy(input.password);
     const row = {
       id: randomUUID(),
@@ -154,13 +162,20 @@ export class UserService {
       passwordHash: input.password ? await hash(input.password, ARGON) : null,
       createdAt: new Date(),
       roleId,
+      registeredVia: opts.source ?? null,
     };
     this.db.transaction((tx) => {
       // Re-checked after the (slow) hash, in the same transaction as the insert: of two concurrent
       // first-run setups only one creates a user.
       if (opts.onlyIfFirst && (tx.select({ n: count() }).from(users).get()?.n ?? 0) > 0)
         throw new ConflictError('setup_done', 'Setup has already been completed');
-      if (tx.select({ id: users.id }).from(users).where(eq(users.username, username)).get())
+      if (
+        tx
+          .select({ id: users.id })
+          .from(users)
+          .where(sql`lower(${users.username}) = lower(${username})`)
+          .get()
+      )
         throw new ConflictError('username_taken', 'That username is taken');
       tx.insert(users).values(row).run();
       writeAudit(tx, {
@@ -178,6 +193,12 @@ export class UserService {
   async register(input: { username: string; password?: string }, source: RegistrationSource): Promise<PublicUser> {
     const roleId = getSettings(this.db, 'security').defaultRoleId;
     if (!roleId) throw new ConflictError('registration_closed', 'This server does not accept new accounts');
+    // `:` names Cloudflare service tokens (`service:<id>`); only the proxy may bring such a name.
+    if (source !== 'external' && input.username.includes(':'))
+      throw new ValidationError(
+        'invalid_username',
+        'Usernames are 2–64 letters, digits, dots, dashes, underscores or @',
+      );
     return this.create({ ...input, roleId }, {}, { source });
   }
 

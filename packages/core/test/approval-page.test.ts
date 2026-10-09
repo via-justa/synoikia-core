@@ -46,7 +46,7 @@ const hidden = (page: string, name: string) => new RegExp(`name="${name}" value=
 /** An echo endpoint at Ask, an admin (with TOTP unless `totp: false`) and one call awaiting approval. */
 async function withPendingCall(
   code: string,
-  opts: { totp?: boolean; lockedAsk?: boolean; ownedByOther?: boolean } = {},
+  opts: { totp?: boolean; lockedAsk?: boolean; ownedByOther?: boolean; ownerless?: boolean } = {},
 ) {
   const dataDir = mkdtempSync(path.join(tmpdir(), 'synoikia-approval-'));
   cleanup.push(() => rmSync(dataDir, { recursive: true, force: true }));
@@ -81,7 +81,11 @@ async function withPendingCall(
       principal: {
         ceiling: 'write' as const,
         roleId: 'admin',
-        userId: opts.ownedByOther ? (await ctx.users.create({ username: 'bob', password: PASSWORD })).id : admin.id,
+        userId: opts.ownerless
+          ? undefined
+          : opts.ownedByOther
+            ? (await ctx.users.create({ username: 'bob', password: PASSWORD })).id
+            : admin.id,
       },
       prompts: {
         url: async (req) => {
@@ -379,6 +383,16 @@ describe('approval page', () => {
     expect(html).toContain('belongs to another user');
     expect(html).not.toContain('echo.set');
     expect((await t.browse(t.page, { decision: 'approve', csrf: 'x' })).status).toBe(403);
+  });
+
+  it('leaves a call without an owner to admins', async () => {
+    const t = await withPendingCall(`return await echo.call('echo.set', { name: 'vol/a' });`, { ownerless: true });
+    const role = t.ctx.roles.create({ name: 'Viewers' });
+    // Another admin stays, so the signed-in admin can become a Viewer.
+    await t.ctx.users.create({ username: 'other-admin', password: PASSWORD });
+    t.ctx.users.setRole(t.adminId, role.id, {});
+    expect((await t.signIn(t.page)).status).toBe(303);
+    expect((await t.browse(t.page)).status).toBe(403);
   });
 
   it('rejects unknown tokens', async () => {

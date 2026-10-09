@@ -4,7 +4,7 @@ import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { writeAudit } from '../audit.js';
 import type { Db } from '../db/index.js';
-import { operations, preApprovalRules, users } from '../db/schema.js';
+import { operations, preApprovalRules, roleInstances, roles, users } from '../db/schema.js';
 import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
 import { FULL_ACCESS } from '../gate/access.js';
 import type { AccessPrincipal } from '../gate/access.js';
@@ -79,16 +79,38 @@ function checkMatchAgainstProfile(manifest: Manifest, op: OperationRow, match: R
   if (misfit) throw misfit;
 }
 
+/** Whether some role that has the endpoint can reach the operation at Ask, or lower it to Ask itself. */
+function firesForSomeRole(db: Db, instanceId: string, key: string): boolean {
+  return db
+    .select({ role: roles })
+    .from(roleInstances)
+    .innerJoin(roles, eq(roleInstances.roleId, roles.id))
+    .where(eq(roleInstances.instanceId, instanceId))
+    .all()
+    .some(({ role }) => {
+      const access = resolveAccess(db, instanceId, key, { ceiling: 'write', roleId: role.id });
+      return access.reachable && (access.level === 'ask' || (role.canSetOwnLevels && access.level === 'write'));
+    });
+}
+
 function describe(db: Db, instanceId: string, rule: RuleRow, op: OperationRow, owner?: UserRow) {
   // An own rule fires only where its owner's levels put the operation at Ask (design §6.4).
   const principal: AccessPrincipal = owner ? { ceiling: 'write', roleId: owner.roleId, userId: owner.id } : FULL_ACCESS;
   const access = resolveAccess(db, instanceId, op.key, principal);
+  const inert = !rule.enabled
+    ? null
+    : !access.reachable
+      ? access.reason
+      : access.level === 'write'
+        ? 'level_write'
+        : null;
   return {
     ...rule,
     owner: owner ? { id: owner.id, username: owner.username } : null,
     operation: { id: op.id, key: op.key, locked: op.locked, matchProfile: op.matchProfile },
-    /** Rules only fire at level `ask`; on unreachable or `write` operations they never do (UI flags it). */
-    inert: !rule.enabled ? null : !access.reachable ? access.reason : access.level === 'write' ? 'level_write' : null,
+    /** Rules only fire at level `ask`; on unreachable or `write` operations they never do (UI flags it).
+     * An admin rule is inert only if it is for every role that has the endpoint. */
+    inert: inert && !owner && firesForSomeRole(db, instanceId, op.key) ? null : inert,
   };
 }
 

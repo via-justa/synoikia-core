@@ -43,6 +43,8 @@ export const users = sqliteTable('users', {
   disabled: flag('disabled').notNull().default(false),
   /** References `roles`; SQLite can't add that constraint to an existing table, so RoleService keeps it. */
   roleId: text('role_id').notNull().default(ADMIN_ROLE_ID),
+  /** How the user came to exist without an admin (design §6.5); null: an admin or setup made it. */
+  registeredVia: text('registered_via', { enum: ['oidc', 'external', 'signup'] }),
 });
 
 export const sessions = sqliteTable(
