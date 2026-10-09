@@ -4,7 +4,7 @@
 
 1. Core runs the code in a new `isolated-vm` isolate (§5.4).
 2. The code can use these read-only APIs. Core answers them from the database. They never call the plugin.
-   - `catalog.find({ text?, group?, tag?, kind?, classification?, includeDisabled? })` returns descriptors. By default it returns only callable operations (§5.2.1). Each has `approval: 'none' | 'required' | 'auto'`: it runs, it asks a human, or it runs without a question at level `write`. With `includeDisabled`, it also returns the other operations, marked `disabled` with a `reason`: `level_none`, `token_read_only` or `locked_not_opted_in`.
+   - `catalog.find({ text?, group?, tag?, kind?, classification?, includeDisabled? })` returns descriptors. By default it returns only callable operations (§5.2.1). Each has `approval: 'none' | 'required' | 'auto'`: it runs, it asks a human, or it runs without a question at level `write`. With `includeDisabled`, it also returns the other operations, marked `disabled` with a `reason`: `level_none`, `token_read_only` or `locked_not_opted_in`. For a user who is not an admin, it never returns an operation that the user cannot call (§6.4).
    - `catalog.groups()` returns `{ key, label, level, counts: { read, write, locked, pendingReview, overridden } }[]`. The model can then tell the user why an operation is not callable.
    - `catalog.get(key)` returns the full descriptor with `paramsSchema` and docs.
    - `registry.find({ kind?, text?, parent?, scopes? })` returns matching registry entries only, never the full registry. It exists only if the plugin has `registry`.
@@ -87,6 +87,7 @@ binding(args)
 - `prefix` matches at a path segment boundary. `tank/media` matches `tank/media` and `tank/media/tv`, but not `tank/media-private`.
 - `rate_limit` and `window_seconds` use `pre_approval_hits`. Over the limit, the call goes to a human. Core does not refuse it.
 - A rule applies only at level `ask`. It never applies to a locked operation. A rule on a hidden operation, or on one at level `write`, has no effect, and the rule list shows this.
+- An admin rule has no owner. It applies to the calls of all users. An own rule (§6.4) has an owner. It applies only to the calls of its owner, and only while the role of the owner allows own rules.
 
 ## 5.2.1 Access levels
 
@@ -111,12 +112,22 @@ Read or write comes from the upstream API, through the plugin. For example, a RE
 | write  | `none`, `ask`, `write` | off · each call asks · runs without a question after acknowledgement |
 | locked | `none`, `ask`          | off · each call asks, with typed confirmation and a new TOTP code    |
 
+**Roles.** The levels above are the levels of the endpoint. They apply to the Admin role. For a user with another role (§6.4), two more layers limit them:
+
+- **Role maximum.** The admin sets it for each group of an endpoint, and for an operation if necessary. It has the same "follow the group" meaning as the endpoint level. A group or operation without a role maximum is `none`.
+- **Personal level.** A user sets it if the role allows personal levels. It has the same meaning. If it is not set, the role maximum applies.
+
+The level in force for the user is the most restrictive of the three. For one operation, the order from restrictive to open is `none`, `ask`, `read`, `write`. A role maximum and a personal level never open more than the endpoint level.
+
 One function, `effectiveAccess` in `packages/core/src/gate/access.ts`, makes this decision. The gate, `search` and the portal all use it:
 
 ```
 effectiveAccess(op, group, principal):
   group missing or level not known  → hidden (group_missing)
   level = level in force            -- own level (narrowed to its kind), else the group table
+  principal is not admin:
+    endpoint not in the role        → hidden (not_in_role)
+    level = most restrictive of level, role maximum, personal level
   level == none                     → hidden (locked_not_opted_in for a locked op, else level_none)
   op is read and not locked         → run, or approve at its own ask
   principal ceiling == read         → hidden (token_read_only)
@@ -162,7 +173,7 @@ A human must make an approval, not the client that made the call. The answer to 
    - the instance, the operation key, and the redacted parameters for display;
    - `params_hash`: SHA-256 over the canonical JSON of the key, the parameters, the resolved targets and the expected hash;
    - the summary, `confirm_literal` and the diff;
-   - the client identity and the MCP session;
+   - the client identity, the user who owns the credential (`owner_user_id`), and the MCP session;
    - `expires_at`: 15 minutes by default, set for each instance.
      Core keeps the parameters that are not redacted in memory only.
 2. **Channel.** Core uses the first channel that applies, in this order:
@@ -182,7 +193,7 @@ A human must make an approval, not the client that made the call. The answer to 
 7. **Single use.** An approval allows one `invoke` of exactly its `params_hash`. A new call makes a new approval.
 8. **Timeout.** An approval that times out is denied and logged as `timed-out`. Core never allows a call on timeout.
 9. **Tool annotations.** `search` has `readOnlyHint: true`. `execute` has `readOnlyHint: false, destructiveHint: true, openWorldHint: true`. Clients that confirm tool calls themselves use these hints. The gate does not depend on them.
-10. **Who can approve.** Any enabled portal user who can sign in on the MCP listener with TOTP. This includes users that OIDC creates automatically. Keep the user list and the OIDC allow policy to the persons who must have this power. Each decision records who made it.
+10. **Who can approve.** Only the user who owns the credential of the call (§6.4). Another user gets 403 and does not see the call, also if that user is an admin. A call without an owner can come only from inside core, for example the test harness. For such a call, an admin decides. The approver must sign in on the MCP listener with TOTP. Each decision records who made it.
 11. **Redacted values.** The approval page shows the same redacted parameters as the audit log. A value under a sensitive key shows as `[REDACTED]`. The approval page must not show secrets. A plugin summary for such an operation tells what changes without the value.
 
 **Approval states.**

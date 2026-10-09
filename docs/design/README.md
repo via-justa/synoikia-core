@@ -46,7 +46,11 @@ Diagrams of the system are in [`../architecture.md`](../architecture.md). The pl
 | Access level      | `none`, `read`, `ask` or `write`. It controls if an operation runs, asks, or is off.          |
 | Locked operation  | An operation that always needs a human approval with a typed confirmation.                    |
 | Split twin        | A second, locked key for an operation, used when its risk depends on its parameters.          |
-| Principal         | The authenticated identity that calls an endpoint.                                            |
+| Principal         | The authenticated identity that calls an endpoint. Each principal belongs to one user.        |
+| Role              | What a user can reach: the built-in Admin role, or a role that an admin makes (§6.4).         |
+| Role maximum      | The highest access level that a role allows for a group or an operation.                      |
+| Personal level    | An access level that a user sets for their own calls, at most the role maximum.               |
+| Self-registration | The creation of a user without an admin, with the default role (§6.5).                        |
 | Access ceiling    | The most that a principal can do: `read` or `write`.                                          |
 | Approval          | A human decision on one call, made on the approval page.                                      |
 | Parked execution  | An `execute` that waits on the server for an approval after its tool call answered.           |

@@ -14,8 +14,8 @@ const newName = ref('');
 const SWITCHES = [
   {
     key: 'canSetOwnLevels',
-    label: 'Set own levels',
-    help: 'Users lower or raise their own levels up to the role maximum.',
+    label: 'Set personal levels',
+    help: 'Users set personal levels for their own calls, up to the role maximum.',
   },
   {
     key: 'canManageOwnRules',

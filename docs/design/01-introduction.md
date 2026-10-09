@@ -26,7 +26,7 @@ The design has these parts:
 
 ## 1.4 Limits of the design
 
-- There are no roles. All portal users are admins. The user table exists for OIDC, TOTP and audit records.
+- Each user has one role (§6.4). Only the Admin role administers the server. The other roles are made by an admin and only limit access.
 - There is one core process. It owns the SQLite file. The design does not scale across hosts.
 - Core does not terminate TLS. A reverse proxy does this.
 - There is no endpoint that combines the tools of many instances. Each instance is its own MCP server.
