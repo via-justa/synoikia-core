@@ -18,6 +18,8 @@ Plugin authoring: `docs/plugin-authoring.md`. SDK code is bundled into every plu
 
 Each security-critical directory under `packages/core/src` (`gate/`, `sandbox/`, `plugins/`, `auth/`) has a short `README.md` with its pipeline and design sections. Read it before changing that module.
 
+Admin UI work (any `.vue` file or `packages/admin-ui`) follows the `vue-development` skill (`.claude/skills/vue-development/`): vue-query for server state, Pinia setup stores for the session only, shared composables, `styles.css` tokens, `ModalDialog` over native dialogs. Load it before writing or reviewing portal code.
+
 ## Commands
 
 Node 22.12+ or 24 (`.nvmrc` pins 22), pnpm 10.
