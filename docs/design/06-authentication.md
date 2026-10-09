@@ -146,7 +146,7 @@ Each user has one role. A role decides what the user can reach and change.
 - A change to a role or to a role maximum applies to the next call. It also applies to a parked execution before it continues.
 - When an admin removes an endpoint from a role, core deletes the role maximums for that endpoint.
 - Core refuses to delete a role that a user has (409 `role_in_use`), or that is the default role (409 `default_role`).
-- The rule editor of a user gets option lists and registry entries only for the match fields of the operations that the user can write rules for. Registry entries come without their attributes.
+- The rule editor of a user gets option lists and registry entries only for the match fields of the operations that the user can write rules for. Registry entries come without their attributes. Core refuses a manifest in which a match field and a connection-form field use the same options source.
 - If an admin turns off "Set personal levels", core ignores the personal levels and keeps them. It does the same for own rules.
 
 ## 6.5 Self-registration

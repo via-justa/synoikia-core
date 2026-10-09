@@ -33,6 +33,19 @@ describe('parseManifest', () => {
     expect(() => parseManifest({ ...minimal, ...patch })).toThrow();
   });
 
+  it('refuses an options source shared by the connection form and a rule picker', () => {
+    const withSources = (form: string, rule: string) => ({
+      ...minimal,
+      connection: {
+        schema: { type: 'object', properties: { pool: { type: 'string' } } },
+        ui: { pool: { widget: 'select', optionsSource: form } },
+      },
+      matchProfiles: { p: [{ field: '/app', label: 'App', op: 'in', widget: 'multiselect', optionsSource: rule }] },
+    });
+    expect(() => parseManifest(withSources('pools', 'pools'))).toThrow(/also feeds the connection form/);
+    expect(parseManifest(withSources('pools', 'apps')).matchProfiles.p).toHaveLength(1);
+  });
+
   it('rejects an unknown widget', () => {
     expect(() =>
       parseManifest({
