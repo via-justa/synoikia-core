@@ -20,6 +20,8 @@ Each security-critical directory under `packages/core/src` (`gate/`, `sandbox/`,
 
 Admin UI work (any `.vue` file or `packages/admin-ui`) follows the `vue-development` skill (`.claude/skills/vue-development/`): vue-query for server state, Pinia setup stores for the session only, shared composables, `styles.css` tokens, `ModalDialog` over native dialogs. Load it before writing or reviewing portal code.
 
+Backend work (`packages/core`, `packages/plugin-sdk`, `packages/create-plugin`) follows the `core-development` skill (`.claude/skills/core-development/`): thin Hono routes over services, zod at every boundary, `ServiceError` codes, audit in the write's transaction, reuse of the shared helpers. Load it before writing or reviewing backend code.
+
 ## Commands
 
 Node 22.12+ or 24 (`.nvmrc` pins 22), pnpm 10.
