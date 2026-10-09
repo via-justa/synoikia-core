@@ -44,7 +44,10 @@ function formBrowser(app: Pick<Hono, 'request'>) {
 const hidden = (page: string, name: string) => new RegExp(`name="${name}" value="([^"]*)"`).exec(page)?.[1] ?? '';
 
 /** An echo endpoint at Ask, an admin (with TOTP unless `totp: false`) and one call awaiting approval. */
-async function withPendingCall(code: string, opts: { totp?: boolean; lockedAsk?: boolean } = {}) {
+async function withPendingCall(
+  code: string,
+  opts: { totp?: boolean; lockedAsk?: boolean; ownedByOther?: boolean } = {},
+) {
   const dataDir = mkdtempSync(path.join(tmpdir(), 'synoikia-approval-'));
   cleanup.push(() => rmSync(dataDir, { recursive: true, force: true }));
   let clock = Date.now();
@@ -74,7 +77,12 @@ async function withPendingCall(code: string, opts: { totp?: boolean; lockedAsk?:
     ctx.instances.runtime(instance.id),
     {
       client: { kind: 'mcp_client', id: 'claude' },
-      principal: { ceiling: 'write' as const, roleId: 'admin' },
+      // The caller's credential belongs to the admin, unless another user's client made the call.
+      principal: {
+        ceiling: 'write' as const,
+        roleId: 'admin',
+        userId: opts.ownedByOther ? (await ctx.users.create({ username: 'bob', password: PASSWORD })).id : admin.id,
+      },
       prompts: {
         url: async (req) => {
           opened.push(req);
@@ -261,7 +269,10 @@ describe('approval page', () => {
     expect(grant!.expiresAt.getTime() - Date.now()).toBeLessThanOrEqual(3_600_000 + 5_000);
 
     const instanceId = grant!.instanceId;
-    const caller = { client: { kind: 'mcp_client' as const, id: 'claude' }, principal: { ceiling: 'write' as const, roleId: 'admin' } };
+    const caller = {
+      client: { kind: 'mcp_client' as const, id: 'claude' },
+      principal: { ceiling: 'write' as const, roleId: 'admin' },
+    };
     const again = await executeCode(
       t.ctx.gateDeps(),
       t.ctx.instances.runtime(instanceId),
@@ -357,6 +368,17 @@ describe('approval page', () => {
     expect(await (await t.browse(opened[1]!.path)).text()).toContain('Sign in to review this approval request');
     t.ctx.approvals.cancelAll();
     await cancelled;
+  });
+
+  it('lets only the user whose client made the call decide, even against another admin', async () => {
+    const t = await withPendingCall(`return await echo.call('echo.set', { name: 'vol/a' });`, { ownedByOther: true });
+    expect((await t.signIn(t.page)).status).toBe(303);
+    const page = await t.browse(t.page);
+    expect(page.status).toBe(403);
+    const html = await page.text();
+    expect(html).toContain('belongs to another user');
+    expect(html).not.toContain('echo.set');
+    expect((await t.browse(t.page, { decision: 'approve', csrf: 'x' })).status).toBe(403);
   });
 
   it('rejects unknown tokens', async () => {

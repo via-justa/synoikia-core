@@ -333,7 +333,10 @@ describe('InstanceManager', () => {
     const deps = { db: t.db, approvals, limiter: new SlidingWindowLimiter(), attestationKey: randomBytes(32) };
     const rt = t.manager.runtime(inst.id);
     // Level Write with every write acknowledged: echo.guided runs without anyone approving it.
-    const caller = { client: { kind: 'mcp_client' as const, id: 'c' }, principal: { ceiling: 'write' as const, roleId: 'admin' } };
+    const caller = {
+      client: { kind: 'mcp_client' as const, id: 'c' },
+      principal: { ceiling: 'write' as const, roleId: 'admin' },
+    };
 
     const guide = await searchCode(deps, rt, caller, `return await guides.get('echo.guided');`);
     expect(guide).toMatchObject({ ok: true, value: { required: true, version: 'v1', content: 'Read me first.' } });

@@ -335,7 +335,8 @@ export function registerOAuthRoutes(app: Hono, ctx: AppContext, oauth: OAuthServ
     // Bind each resource to the instance it names right now; one renamed since the form was shown drops out.
     const current = new Map(oauthEndpoints(c).map((e) => [e.resource, e.id]));
     const resources = [...new Set(chosen.map(canonicalResource))].filter(
-      (r) => form.offered.includes(r) && current.has(r) && roleHasInstance(ctx.db, session.user.roleId, current.get(r)!),
+      (r) =>
+        form.offered.includes(r) && current.has(r) && roleHasInstance(ctx.db, session.user.roleId, current.get(r)!),
     );
     if (resources.length === 0) {
       return consentPage(c, {

@@ -149,7 +149,12 @@ const refuse = (status: 401 | 403, error: string, message: string, detail: strin
 function owned(ctx: AppContext, base: Unowned, userId: string | null | undefined, instanceId: string): McpAuthResult {
   const user = userId ? ctx.db.select().from(users).where(eq(users.id, userId)).get() : undefined;
   if (!user || user.disabled)
-    return refuse(403, 'forbidden', 'The account behind this credential is disabled', `${base.label}: no enabled owner`);
+    return refuse(
+      403,
+      'forbidden',
+      'The account behind this credential is disabled',
+      `${base.label}: no enabled owner`,
+    );
   if (!roleHasInstance(ctx.db, user.roleId, instanceId))
     return refuse(
       403,
@@ -232,7 +237,12 @@ export async function authenticateMcp(
     const header = settings.trustedIdentityHeader;
     const named = header && c.req.header(header)?.trim().slice(0, 200);
     if (named) {
-      const base: Unowned = { kind: 'external', principal: `ext:${named}`, label: `external:${named}`, access: 'write' };
+      const base: Unowned = {
+        kind: 'external',
+        principal: `ext:${named}`,
+        label: `external:${named}`,
+        access: 'write',
+      };
       const userId = await externalUser(ctx, named);
       if (!userId) return unknownUser(base);
       return owned(ctx, base, userId, instance.id);

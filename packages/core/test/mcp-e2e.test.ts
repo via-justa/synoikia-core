@@ -209,7 +209,10 @@ describe('MCP endpoint with bearer tokens', () => {
     expect(await status()).toMatchObject({ state: 'pending' });
 
     // Another credential can neither follow nor see it.
-    const { token: other } = ctx.tokens.create({ name: 'other', scope: [instanceId], access: 'write' }, { userId: adminId });
+    const { token: other } = ctx.tokens.create(
+      { name: 'other', scope: [instanceId], access: 'write' },
+      { userId: adminId },
+    );
     const stranger = await connect('echo', other);
     expect(parse(await stranger.callTool({ name: 'resume', arguments: { executionId } }))).toMatchObject({
       error: 'EXECUTION_NOT_FOUND',
@@ -273,7 +276,10 @@ describe('MCP endpoint with bearer tokens', () => {
     ctx.approvals.decide(approvalIdOf(locked), { approve: false, decidedBy: 'admin' });
 
     // Another credential can't end it.
-    const { token: other } = ctx.tokens.create({ name: 'other2', scope: [instanceId], access: 'write' }, { userId: adminId });
+    const { token: other } = ctx.tokens.create(
+      { name: 'other2', scope: [instanceId], access: 'write' },
+      { userId: adminId },
+    );
     const stranger = await connect('echo', other);
     const tried = await stranger.callTool({ name: 'session_grant_revoke', arguments: { grantId: grant.id } });
     expect(parse(tried)).toEqual({ revoked: false });
@@ -346,7 +352,10 @@ describe('MCP endpoint with bearer tokens', () => {
   });
 
   it('cancels an open approval when its endpoint is stopped', async () => {
-    const { token } = ctx.tokens.create({ name: 'stop', scope: [otherInstanceId], access: 'write' }, { userId: adminId });
+    const { token } = ctx.tokens.create(
+      { name: 'stop', scope: [otherInstanceId], access: 'write' },
+      { userId: adminId },
+    );
     await ctx.instances.syncNow(otherInstanceId);
     setGroupLevel(ctx.db, otherInstanceId, 'echo', 'ask');
     let prompted!: (id: string) => void;

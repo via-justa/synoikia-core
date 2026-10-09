@@ -297,7 +297,13 @@ describe('0013 user roles migration', () => {
     expect(db.select().from(schema.roles).all()).toEqual([
       expect.objectContaining({ id: 'admin', name: 'Admin', builtIn: true }),
     ]);
-    expect(db.select().from(schema.users).all().map((u) => u.roleId)).toEqual(['admin', 'admin']);
+    expect(
+      db
+        .select()
+        .from(schema.users)
+        .all()
+        .map((u) => u.roleId),
+    ).toEqual(['admin', 'admin']);
     const owner = (id: string) =>
       db.select().from(schema.mcpTokens).where(eq(schema.mcpTokens.id, id)).get()?.createdBy;
     expect(owner('t1')).toBe('u1');

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allowedLevels, effectiveAccess, levelInForce, normalizeLevel } from '../src/gate/access.js';
+import { allowedLevels, capLevel, effectiveAccess, levelInForce, normalizeLevel } from '../src/gate/access.js';
 import type { AccessLevel, AccessOperation } from '../src/gate/access.js';
 
 const read: AccessOperation = { classification: 'read', locked: false, levelOverride: null, writeAcknowledged: false };
@@ -154,5 +154,41 @@ describe('effectiveAccess', () => {
       }
     }
     expect(effectiveAccess(write, at('none'), readOnly)).toEqual({ reachable: false, reason: 'level_none' });
+  });
+});
+
+describe('role caps (design §5.2.1)', () => {
+  const member = { ceiling: 'write' as const, roleId: 'r1', userId: 'u1' };
+
+  it('fails closed for a non-admin without the role’s levels', () => {
+    expect(effectiveAccess(read, at('read'), member)).toEqual({ reachable: false, reason: 'not_in_role' });
+    expect(effectiveAccess(read, at('read'), member, { role: null })).toEqual({
+      reachable: false,
+      reason: 'not_in_role',
+    });
+    // An unset role level is None.
+    expect(effectiveAccess(read, at('read'), member, { role: {} })).toEqual({ reachable: false, reason: 'level_none' });
+  });
+
+  it.each([
+    // [name, op, endpoint level, role layer, own layer, expected level]
+    ['role caps a write at Ask', write, 'write', { group: 'ask' }, undefined, 'ask'],
+    ['endpoint caps the role', write, 'ask', { group: 'write' }, undefined, 'ask'],
+    ['role group Read turns writes off', write, 'write', { group: 'read' }, undefined, 'none'],
+    ['role op entry wins over its group', write, 'write', { group: 'read', op: 'write' }, undefined, 'write'],
+    ['own Ask on a read is tighter than Read', read, 'read', { group: 'read' }, { op: 'ask' }, 'ask'],
+    ['own level never widens the role', write, 'write', { group: 'ask' }, { op: 'write' }, 'ask'],
+    ['an unset own level follows the role', write, 'write', { group: 'write' }, {}, 'write'],
+    ['a locked op needs its own Ask everywhere', locked, 'ask', { group: 'write' }, undefined, 'none'],
+    ['a locked op opened by every layer', { ...locked, levelOverride: 'ask' }, 'ask', { op: 'ask' }, undefined, 'ask'],
+  ] as const)('%s', (_name, op, endpoint, role, own, expected) => {
+    expect(capLevel(op, endpoint, role, own)).toBe(expected);
+  });
+
+  it('keeps the credential ceiling on top', () => {
+    expect(effectiveAccess(write, at('write'), { ...member, ceiling: 'read' }, { role: { group: 'write' } })).toEqual({
+      reachable: false,
+      reason: 'token_read_only',
+    });
   });
 });
