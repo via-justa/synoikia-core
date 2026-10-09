@@ -131,7 +131,7 @@ describe('setup, login and sessions', () => {
   it('keeps single sign-on usable while local login is off (review L18)', async () => {
     const t = await setup();
     const b = await signedIn(t);
-    const sso = (await (await b.post('/api/users', { username: 'sso', password: PASSWORD })).json()) as { id: string };
+    const sso = (await (await b.post('/api/users', { username: 'sso', password: PASSWORD, roleId: 'admin' })).json()) as { id: string };
     t.ctx.db
       .update(users)
       .set({ oidcIssuer: 'https://idp.example.com', oidcSubject: 'sub-1' })
@@ -154,7 +154,7 @@ describe('setup, login and sessions', () => {
   it('manages users; password changes sign out other sessions', async () => {
     const t = await setup();
     const b = await signedIn(t);
-    const created = (await (await b.post('/api/users', { username: 'second', password: PASSWORD })).json()) as {
+    const created = (await (await b.post('/api/users', { username: 'second', password: PASSWORD, roleId: 'admin' })).json()) as {
       id: string;
     };
     const other = await t.client();

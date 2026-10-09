@@ -170,12 +170,13 @@ export class OAuthService {
 
   // ── grants & codes ──
 
-  listGrants() {
+  listGrants(userId?: string) {
     return this.db
       .select({ grant: oauthGrants, client: oauthClients, user: users })
       .from(oauthGrants)
       .innerJoin(oauthClients, eq(oauthGrants.clientId, oauthClients.id))
       .innerJoin(users, eq(oauthGrants.userId, users.id))
+      .where(userId ? eq(oauthGrants.userId, userId) : undefined)
       .orderBy(asc(oauthGrants.createdAt))
       .all()
       .map(({ grant, client, user }) => ({

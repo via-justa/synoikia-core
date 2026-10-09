@@ -4,8 +4,10 @@ import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { writeAudit } from '../audit.js';
 import type { Db } from '../db/index.js';
-import { operations, preApprovalRules } from '../db/schema.js';
+import { operations, preApprovalRules, users } from '../db/schema.js';
 import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
+import { FULL_ACCESS } from '../gate/access.js';
+import type { AccessPrincipal } from '../gate/access.js';
 import { MatchSchema } from '../gate/match.js';
 import { resolveAccess } from './groups.js';
 
@@ -31,6 +33,7 @@ export type RuleInput = z.infer<typeof RuleInputSchema>;
 
 type OperationRow = typeof operations.$inferSelect;
 type RuleRow = typeof preApprovalRules.$inferSelect;
+type UserRow = typeof users.$inferSelect;
 
 function loadOperation(db: Db, instanceId: string, operationId: string): OperationRow {
   const op = db
@@ -76,10 +79,13 @@ function checkMatchAgainstProfile(manifest: Manifest, op: OperationRow, match: R
   if (misfit) throw misfit;
 }
 
-function describe(db: Db, instanceId: string, rule: RuleRow, op: OperationRow) {
-  const access = resolveAccess(db, instanceId, op.key);
+function describe(db: Db, instanceId: string, rule: RuleRow, op: OperationRow, owner?: UserRow) {
+  // An own rule fires only where its owner's levels put the operation at Ask (design §6.4).
+  const principal: AccessPrincipal = owner ? { ceiling: 'write', roleId: owner.roleId, userId: owner.id } : FULL_ACCESS;
+  const access = resolveAccess(db, instanceId, op.key, principal);
   return {
     ...rule,
+    owner: owner ? { id: owner.id, username: owner.username } : null,
     operation: { id: op.id, key: op.key, locked: op.locked, matchProfile: op.matchProfile },
     /** Rules only fire at level `ask`; on unreachable or `write` operations they never do (UI flags it). */
     inert: !rule.enabled ? null : !access.reachable ? access.reason : access.level === 'write' ? 'level_write' : null,
@@ -88,13 +94,26 @@ function describe(db: Db, instanceId: string, rule: RuleRow, op: OperationRow) {
 
 export function listRules(db: Db, instanceId: string) {
   return db
-    .select({ rule: preApprovalRules, op: operations })
+    .select({ rule: preApprovalRules, op: operations, owner: users })
     .from(preApprovalRules)
     .innerJoin(operations, eq(preApprovalRules.operationId, operations.id))
+    .leftJoin(users, eq(preApprovalRules.ownerUserId, users.id))
     .where(eq(preApprovalRules.instanceId, instanceId))
     .orderBy(asc(operations.key), asc(preApprovalRules.createdAt))
     .all()
-    .map(({ rule, op }) => describe(db, instanceId, rule, op));
+    .map(({ rule, op, owner }) => describe(db, instanceId, rule, op, owner ?? undefined));
+}
+
+/** A rule as the given owner may touch it: admins (no owner) any rule, a user only their own. */
+function ownedRule(db: Db, instanceId: string, ruleId: string, owner?: string): RuleRow {
+  const rule = db
+    .select()
+    .from(preApprovalRules)
+    .where(and(eq(preApprovalRules.id, ruleId), eq(preApprovalRules.instanceId, instanceId)))
+    .get();
+  if (!rule || (owner !== undefined && rule.ownerUserId !== owner))
+    throw new NotFoundError('rule_not_found', 'No such rule');
+  return rule;
 }
 
 export function createRule(
@@ -103,6 +122,7 @@ export function createRule(
   instanceId: string,
   raw: unknown,
   actor: { userId?: string } = {},
+  opts: { owner?: string } = {},
 ) {
   const input = RuleInputSchema.parse(raw);
   const op = loadOperation(db, instanceId, input.operationId);
@@ -122,6 +142,7 @@ export function createRule(
         reason: input.reason,
         enabled: input.enabled,
         createdBy: actor.userId ?? null,
+        ownerUserId: opts.owner ?? null,
         createdAt: new Date(),
       })
       .run();
@@ -132,7 +153,7 @@ export function createRule(
       decision: 'rule_created',
       actorKind: 'user',
       actorId: actor.userId,
-      detail: { ruleId: id, ...input },
+      detail: { ruleId: id, ...input, ...(opts.owner ? { owner: opts.owner } : {}) },
     });
   });
   return listRules(db, instanceId).find((r) => r.id === id)!;
@@ -145,13 +166,9 @@ export function updateRule(
   ruleId: string,
   raw: unknown,
   actor: { userId?: string } = {},
+  opts: { owner?: string } = {},
 ) {
-  const before = db
-    .select()
-    .from(preApprovalRules)
-    .where(and(eq(preApprovalRules.id, ruleId), eq(preApprovalRules.instanceId, instanceId)))
-    .get();
-  if (!before) throw new NotFoundError('rule_not_found', 'No such rule');
+  const before = ownedRule(db, instanceId, ruleId, opts.owner);
   const input = RuleInputSchema.parse({ ...before, ...(raw as object) });
   const op = loadOperation(db, instanceId, input.operationId);
   if (op.locked) throw new ConflictError('operation_locked', `${op.key} is locked and can never be pre-approved`);
@@ -181,13 +198,14 @@ export function updateRule(
   return listRules(db, instanceId).find((r) => r.id === ruleId)!;
 }
 
-export function deleteRule(db: Db, instanceId: string, ruleId: string, actor: { userId?: string } = {}) {
-  const before = db
-    .select()
-    .from(preApprovalRules)
-    .where(and(eq(preApprovalRules.id, ruleId), eq(preApprovalRules.instanceId, instanceId)))
-    .get();
-  if (!before) throw new NotFoundError('rule_not_found', 'No such rule');
+export function deleteRule(
+  db: Db,
+  instanceId: string,
+  ruleId: string,
+  actor: { userId?: string } = {},
+  opts: { owner?: string } = {},
+) {
+  const before = ownedRule(db, instanceId, ruleId, opts.owner);
   db.transaction((tx) => {
     tx.delete(preApprovalRules).where(eq(preApprovalRules.id, ruleId)).run();
     writeAudit(tx, {

@@ -12,6 +12,7 @@ import { loadConfig } from '../config/env.js';
 import { secretFieldNames } from '../instances/connection.js';
 import { auditLog, operations, pendingApprovals, plugins, registryEntries } from '../db/schema.js';
 import type { AccessLevel } from '../gate/access.js';
+import { FULL_ACCESS } from '../gate/access.js';
 import type { CallerContext } from '../gate/pipeline.js';
 import { executeCode, resumeExecution, searchCode } from '../runtime/index.js';
 import type { ExecuteResult, PendingResult } from '../runtime/executions.js';
@@ -142,7 +143,7 @@ function harness(ctx: AppContext, manifest: Manifest, instanceId: string, work: 
     const onApproval = opts.onApproval;
     return {
       client: { kind: 'mcp_client', id: 'harness' },
-      principal: { ceiling: 'write' },
+      principal: FULL_ACCESS,
       mcpSessionId: 'harness-session',
       parkable: !onApproval && !!opts.park,
       prompts: onApproval

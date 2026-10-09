@@ -140,7 +140,7 @@ describe('parked executions', () => {
     setGroupLevel(ctx.db, instance.id, 'echo', 'ask');
     const caller = (id = 'chat', extra: Partial<CallerContext> = {}): CallerContext => ({
       client: { kind: 'mcp_client', id },
-      principal: { ceiling: 'write' },
+      principal: { ceiling: 'write' as const, roleId: 'admin' },
       parkable: true,
       ...extra,
     });
@@ -290,7 +290,7 @@ describe('parked executions', () => {
     const locked = await t.exec(`await echo.call('echo.delete', { name: 'vol/x' });`);
     expect(locked).toMatchObject({ status: 'awaiting_approval' });
     t.ctx.approvals.decide(pendingId(t.ctx, locked), { approve: false, decidedBy: 'admin' });
-    const readOnly = await t.exec(SET, { ...t.caller(), principal: { ceiling: 'read' } });
+    const readOnly = await t.exec(SET, { ...t.caller(), principal: { ceiling: 'read' as const, roleId: 'admin' } });
     expect(readOnly).toMatchObject({ ok: false, error: { code: 'OPERATION_DISABLED' } });
     // The catalog tells the agent the grant makes the write run straight away.
     const found = await searchCode(

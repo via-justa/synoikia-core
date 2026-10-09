@@ -103,6 +103,7 @@ const DISABLED_MESSAGES: Record<string, string> = {
   level_none: 'is disabled on this endpoint (access level None)',
   token_read_only: 'is a write, and this connection was granted read-only access',
   locked_not_opted_in: 'is a protected operation that the administrator has not enabled',
+  not_in_role: 'is not available to your role',
   unknown_operation: 'is not in the current catalog',
 };
 
@@ -310,7 +311,14 @@ export function createGateBindings(
             : undefined;
           const outcome = evaluatePreApproval(
             deps.db,
-            { instanceId: rt.instanceId, operationId: operation.id, params, targets, targetCovers },
+            {
+              instanceId: rt.instanceId,
+              operationId: operation.id,
+              params,
+              targets,
+              targetCovers,
+              userId: caller.principal.userId,
+            },
             now(),
           );
           if (outcome.kind === 'auto_approved') {
@@ -370,6 +378,7 @@ export function createGateBindings(
             diff: redactDiff(diff as Parameters<typeof redactDiff>[0], rt.redact, operation.sensitiveParams),
             expectedHash,
             client: caller.client,
+            ownerUserId: caller.principal.userId,
             mcpSessionId: caller.mcpSessionId,
             timeoutMs: rt.settings.approvalTimeoutMs,
             prompts: caller.prompts,

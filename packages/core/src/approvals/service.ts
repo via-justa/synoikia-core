@@ -86,6 +86,8 @@ export interface ApprovalRequestInput {
   diff?: unknown;
   expectedHash?: string;
   client: { kind: string; id?: string };
+  /** The user who owns the calling credential; only they decide on the approval page (design §5.3). */
+  ownerUserId?: string;
   mcpSessionId?: string;
   timeoutMs: number;
   prompts?: ClientPrompts;
@@ -150,6 +152,7 @@ export class ApprovalService {
       expectedHash: input.expectedHash ?? null,
       clientKind: input.client.kind,
       clientId: input.client.id ?? null,
+      ownerUserId: input.ownerUserId ?? null,
       mcpSessionId: input.mcpSessionId ?? null,
       requestedAt: now,
       expiresAt: new Date(now.getTime() + input.timeoutMs),

@@ -16,6 +16,7 @@ import { SecretBox } from '../src/crypto/index.js';
 import { openDatabase } from '../src/db/index.js';
 import { auditLog, users } from '../src/db/schema.js';
 import { ConflictError, ValidationError } from '../src/errors.js';
+import { updateSettings } from '../src/settings.js';
 
 const cleanup: (() => unknown)[] = [];
 afterEach(async () => {
@@ -343,8 +344,11 @@ describe('OidcService', () => {
       allowPolicy: { emails: [], subjects: [], group: 'admins', groupsClaim: 'groups' },
     });
     const second = await signIn(service, idp, { sub: 'u-2', email: 'new.person@example.com', groups: ['admins'] });
+    // Auto-provisioning is self-registration: off until an admin picks a default role.
+    expect(await service.resolveUser(t.users, second.identity)).toBeNull();
+    updateSettings(t.db, 'security', { defaultRoleId: 'admin' });
     const provisioned = await service.resolveUser(t.users, second.identity);
-    expect(provisioned).toMatchObject({ username: 'new.person', oidcSubject: 'u-2' });
+    expect(provisioned).toMatchObject({ username: 'new.person', oidcSubject: 'u-2', roleId: 'admin' });
   });
 
   it('uses an email only when the IdP marks it verified', async () => {
@@ -359,6 +363,7 @@ describe('OidcService', () => {
       autoProvision: true,
       allowPolicy: { emails: ['admin@example.com'], subjects: [], group: '', groupsClaim: 'groups' },
     });
+    updateSettings(t.db, 'security', { defaultRoleId: 'admin' });
     for (const emailVerified of [null, false] as const) {
       const { identity } = await signIn(service, idp, {
         sub: `u-${emailVerified}`,

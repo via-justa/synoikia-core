@@ -282,3 +282,25 @@ describe('0012 sensitive result migration', () => {
     expect(version('i3')).toBeNull();
   });
 });
+
+describe('0013 user roles migration', () => {
+  it('creates the Admin role, keeps every user an admin and gives owner-less tokens an owner', () => {
+    const { dir, sqlite } = databaseAt('0012_sensitive_result');
+    sqlite.exec(`
+      INSERT INTO users (id, username, created_at) VALUES ('u2', 'second', 2000);
+      INSERT INTO users (id, username, created_at) VALUES ('u1', 'first', 1000);
+      INSERT INTO mcp_tokens (id, name, token_hash, scope, created_by) VALUES ('t1', 'orphan', 'h1', '["*"]', NULL);
+      INSERT INTO mcp_tokens (id, name, token_hash, scope, created_by) VALUES ('t2', 'owned', 'h2', '["*"]', 'u2');
+    `);
+    sqlite.close();
+    const db = openDatabase({ dataDir: dir });
+    expect(db.select().from(schema.roles).all()).toEqual([
+      expect.objectContaining({ id: 'admin', name: 'Admin', builtIn: true }),
+    ]);
+    expect(db.select().from(schema.users).all().map((u) => u.roleId)).toEqual(['admin', 'admin']);
+    const owner = (id: string) =>
+      db.select().from(schema.mcpTokens).where(eq(schema.mcpTokens.id, id)).get()?.createdBy;
+    expect(owner('t1')).toBe('u1');
+    expect(owner('t2')).toBe('u2');
+  });
+});

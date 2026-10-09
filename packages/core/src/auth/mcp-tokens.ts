@@ -25,6 +25,7 @@ type TokenRow = typeof mcpTokens.$inferSelect;
 
 const publicToken = (t: TokenRow) => ({
   id: t.id,
+  createdBy: t.createdBy,
   name: t.name,
   scope: t.scope,
   access: t.access,
@@ -40,11 +41,22 @@ export class McpTokenService {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  list() {
-    return this.db.select().from(mcpTokens).orderBy(asc(mcpTokens.createdAt)).all().map(publicToken);
+  list(owner?: string) {
+    return this.db
+      .select()
+      .from(mcpTokens)
+      .where(owner ? eq(mcpTokens.createdBy, owner) : undefined)
+      .orderBy(asc(mcpTokens.createdAt))
+      .all()
+      .map(publicToken);
   }
 
-  create(raw: unknown, actor: { userId?: string } = {}) {
+  ownerOf(id: string): string | null | undefined {
+    return this.db.select({ by: mcpTokens.createdBy }).from(mcpTokens).where(eq(mcpTokens.id, id)).get()?.by;
+  }
+
+  /** Every token has an owner: their role decides what it reaches (design §6.4). */
+  create(raw: unknown, actor: { userId: string }) {
     const input = CreateTokenSchema.parse(raw);
     if (input.expiresAt && input.expiresAt.getTime() <= this.now().getTime()) {
       throw new ValidationError('invalid_expiry', 'Expiry must be in the future');
@@ -71,7 +83,7 @@ export class McpTokenService {
           tokenHash: sha256(token),
           scope: input.scope,
           access: input.access,
-          createdBy: actor.userId ?? null,
+          createdBy: actor.userId,
           createdAt: this.now(),
           expiresAt: input.expiresAt ?? null,
         })

@@ -35,6 +35,10 @@ const SETTINGS_SCHEMAS = {
         .max(24 * 7)
         .default(12),
       approvalSessionAbsoluteDays: z.number().int().min(1).max(30).default(7),
+      /** Role of self-registered users (design §6.5); null turns self-registration off. */
+      defaultRoleId: z.string().min(1).max(64).nullable().default(null),
+      /** The "Create account" form on the sign-in page; needs a default role. */
+      localSignup: z.boolean().default(false),
     })
     .prefault({}),
   mcp: z

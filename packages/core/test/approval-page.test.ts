@@ -74,7 +74,7 @@ async function withPendingCall(code: string, opts: { totp?: boolean; lockedAsk?:
     ctx.instances.runtime(instance.id),
     {
       client: { kind: 'mcp_client', id: 'claude' },
-      principal: { ceiling: 'write' },
+      principal: { ceiling: 'write' as const, roleId: 'admin' },
       prompts: {
         url: async (req) => {
           opened.push(req);
@@ -261,7 +261,7 @@ describe('approval page', () => {
     expect(grant!.expiresAt.getTime() - Date.now()).toBeLessThanOrEqual(3_600_000 + 5_000);
 
     const instanceId = grant!.instanceId;
-    const caller = { client: { kind: 'mcp_client' as const, id: 'claude' }, principal: { ceiling: 'write' as const } };
+    const caller = { client: { kind: 'mcp_client' as const, id: 'claude' }, principal: { ceiling: 'write' as const, roleId: 'admin' } };
     const again = await executeCode(
       t.ctx.gateDeps(),
       t.ctx.instances.runtime(instanceId),
@@ -328,7 +328,7 @@ describe('approval page', () => {
       t.ctx.instances.runtime(instanceId),
       {
         client: { kind: 'mcp_client', id: 'claude' },
-        principal: { ceiling: 'write' },
+        principal: { ceiling: 'write' as const, roleId: 'admin' },
         prompts: { url: async (req) => (opened.push(req), { action: 'accept' }) },
       },
       `return (await echo.call('echo.set', { name: 'vol/b' })).key;`,
@@ -348,7 +348,7 @@ describe('approval page', () => {
       t.ctx.instances.runtime(instanceId),
       {
         client: { kind: 'mcp_client', id: 'claude' },
-        principal: { ceiling: 'write' },
+        principal: { ceiling: 'write' as const, roleId: 'admin' },
         prompts: { url: async (req) => (opened.push(req), { action: 'accept' }) },
       },
       `await echo.call('echo.set', { name: 'vol/c' });`,

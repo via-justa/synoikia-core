@@ -1,21 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { hash, verify } from '@node-rs/argon2';
-import { and, asc, count, eq } from 'drizzle-orm';
+import { and, asc, count, eq, ne, sql } from 'drizzle-orm';
 import { writeAudit } from '../audit.js';
 import { aad } from '../crypto/index.js';
 import type { SecretBox } from '../crypto/index.js';
 import type { Db } from '../db/index.js';
-import { users } from '../db/schema.js';
+import { roles, users } from '../db/schema.js';
 import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
+import { ADMIN_ROLE_ID } from '../gate/access.js';
+import { getSettings } from '../settings.js';
+import { toPublicRole } from './roles.js';
+import type { PublicRole } from './roles.js';
 import { randomToken, sha256 } from './tokens.js';
 import { generateTotpSecret, otpauthUri, verifyTotp } from './totp.js';
 
-/** Portal accounts (design §6.1): argon2id passwords, optional TOTP with recovery codes and OIDC link;
- * no roles. */
+/** Portal accounts (design §6.1): argon2id passwords, optional TOTP with recovery codes and OIDC link,
+ * and one role each (design §6.4). */
 
 // argon2id, m = 64 MiB, t = 3, p = 1 (design §6.1). @node-rs/argon2 defaults to argon2id.
 const ARGON = { memoryCost: 65536, timeCost: 3, parallelism: 1 };
-const USERNAME = /^[a-zA-Z0-9._@-]{2,64}$/;
+const USERNAME = /^[a-zA-Z0-9._@:-]{2,64}$/;
 const RECOVERY_CODES = 10;
 
 export type UserRow = typeof users.$inferSelect;
@@ -29,9 +33,13 @@ export interface PublicUser {
   disabled: boolean;
   createdAt: Date;
   lastLoginAt: Date | null;
+  role: PublicRole;
 }
 
-export const toPublicUser = (u: UserRow): PublicUser => ({
+/** How a user came to exist without an admin creating them (design §6.5). */
+export type RegistrationSource = 'oidc' | 'external' | 'signup';
+
+const toPublicUser = (u: UserRow, role: PublicRole): PublicUser => ({
   id: u.id,
   username: u.username,
   totpEnabled: u.totpEnabled,
@@ -40,6 +48,7 @@ export const toPublicUser = (u: UserRow): PublicUser => ({
   disabled: u.disabled,
   createdAt: u.createdAt,
   lastLoginAt: u.lastLoginAt,
+  role,
 });
 
 function checkPasswordPolicy(password: string) {
@@ -63,7 +72,35 @@ export class UserService {
   }
 
   list(): PublicUser[] {
-    return this.db.select().from(users).orderBy(asc(users.username)).all().map(toPublicUser);
+    return this.db
+      .select()
+      .from(users)
+      .orderBy(asc(users.username))
+      .all()
+      .map((u) => this.toPublic(u));
+  }
+
+  /** A user's role; a dangling role id (none can be made through the API) reads as no access. */
+  roleOf(u: UserRow): PublicRole {
+    const role = this.db.select().from(roles).where(eq(roles.id, u.roleId)).get();
+    return role
+      ? toPublicRole(role)
+      : {
+          id: u.roleId,
+          name: 'Unknown',
+          isAdmin: false,
+          canSetOwnLevels: false,
+          canManageOwnRules: false,
+          canSeeStatus: false,
+        };
+  }
+
+  toPublic(u: UserRow): PublicUser {
+    return toPublicUser(u, this.roleOf(u));
+  }
+
+  isAdmin(u: UserRow): boolean {
+    return u.roleId === ADMIN_ROLE_ID;
   }
 
   get(id: string): UserRow {
@@ -76,6 +113,16 @@ export class UserService {
     return this.db.select().from(users).where(eq(users.username, username)).get();
   }
 
+  /** Case-insensitive match, for identities named by a proxy (design §6.2). */
+  byUsernameInsensitive(username: string): UserRow | undefined {
+    return this.db
+      .select()
+      .from(users)
+      .where(sql`lower(${users.username}) = lower(${username})`)
+      .orderBy(asc(users.createdAt))
+      .get();
+  }
+
   byOidc(issuer: string, subject: string): UserRow | undefined {
     return this.db
       .select()
@@ -85,10 +132,13 @@ export class UserService {
   }
 
   async create(
-    input: { username: string; password?: string },
+    input: { username: string; password?: string; roleId?: string },
     actor: { userId?: string } = {},
-    opts: { onlyIfFirst?: boolean } = {},
+    opts: { onlyIfFirst?: boolean; source?: RegistrationSource } = {},
   ): Promise<PublicUser> {
+    const roleId = input.roleId ?? ADMIN_ROLE_ID;
+    if (!this.db.select({ id: roles.id }).from(roles).where(eq(roles.id, roleId)).get())
+      throw new ValidationError('unknown_role', 'No such role');
     const username = input.username.trim();
     if (!USERNAME.test(username)) {
       throw new ValidationError(
@@ -103,6 +153,7 @@ export class UserService {
       username,
       passwordHash: input.password ? await hash(input.password, ARGON) : null,
       createdAt: new Date(),
+      roleId,
     };
     this.db.transaction((tx) => {
       // Re-checked after the (slow) hash, in the same transaction as the insert: of two concurrent
@@ -114,13 +165,55 @@ export class UserService {
       tx.insert(users).values(row).run();
       writeAudit(tx, {
         kind: 'auth',
-        decision: 'user_created',
+        decision: opts.source ? 'user_registered' : 'user_created',
         actorKind: actor.userId ? 'user' : 'system',
         actorId: actor.userId,
-        detail: { username },
+        detail: { username, roleId, ...(opts.source ? { source: opts.source } : {}) },
       });
     });
-    return toPublicUser(this.get(row.id));
+    return this.toPublic(this.get(row.id));
+  }
+
+  /** Self-registration (design §6.5): only while an admin has set a default role, which the user gets. */
+  async register(input: { username: string; password?: string }, source: RegistrationSource): Promise<PublicUser> {
+    const roleId = getSettings(this.db, 'security').defaultRoleId;
+    if (!roleId) throw new ConflictError('registration_closed', 'This server does not accept new accounts');
+    return this.create({ ...input, roleId }, {}, { source });
+  }
+
+  registrationOpen(): boolean {
+    const roleId = getSettings(this.db, 'security').defaultRoleId;
+    return !!roleId && !!this.db.select({ id: roles.id }).from(roles).where(eq(roles.id, roleId)).get();
+  }
+
+  /** Enabled admins other than `except`: someone must always be left to administer the server. */
+  private otherAdmins(except: string): number {
+    return (
+      this.db
+        .select({ n: count() })
+        .from(users)
+        .where(and(eq(users.roleId, ADMIN_ROLE_ID), eq(users.disabled, false), ne(users.id, except)))
+        .get()?.n ?? 0
+    );
+  }
+
+  setRole(userId: string, roleId: string, actor: { userId?: string } = {}) {
+    const user = this.get(userId);
+    if (!this.db.select({ id: roles.id }).from(roles).where(eq(roles.id, roleId)).get())
+      throw new ValidationError('unknown_role', 'No such role');
+    if (user.roleId === roleId) return;
+    if (user.roleId === ADMIN_ROLE_ID && !user.disabled && this.otherAdmins(userId) === 0)
+      throw new ConflictError('last_admin', 'You cannot remove the last enabled admin');
+    this.db.transaction((tx) => {
+      tx.update(users).set({ roleId }).where(eq(users.id, userId)).run();
+      writeAudit(tx, {
+        kind: 'auth',
+        decision: 'user_role_changed',
+        actorKind: 'user',
+        actorId: actor.userId,
+        detail: { username: user.username, from: user.roleId, to: roleId },
+      });
+    });
   }
 
   /** First-run setup: only while no users exist (design §6.1). */
@@ -175,6 +268,8 @@ export class UserService {
       if (active.length === 1 && active[0]!.id === userId) {
         throw new ConflictError('last_user', 'You cannot disable the last active user');
       }
+      if (user.roleId === ADMIN_ROLE_ID && !user.disabled && this.otherAdmins(userId) === 0)
+        throw new ConflictError('last_admin', 'You cannot disable the last enabled admin');
     }
     this.db.transaction((tx) => {
       tx.update(users).set({ disabled }).where(eq(users.id, userId)).run();

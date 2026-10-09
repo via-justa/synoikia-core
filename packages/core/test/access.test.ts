@@ -7,7 +7,7 @@ const write: AccessOperation = { ...read, classification: 'write', writeAcknowle
 const locked: AccessOperation = { ...write, locked: true };
 
 const at = (level: AccessLevel) => ({ level });
-const readOnly = { ceiling: 'read' as const };
+const readOnly = { ceiling: 'read' as const, roleId: 'admin' };
 
 describe('effectiveAccess', () => {
   it.each([

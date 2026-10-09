@@ -1,7 +1,7 @@
 import type { ResolvedTarget } from '@synoikia/plugin-sdk';
-import { and, asc, count, eq, gt } from 'drizzle-orm';
-import type { Db } from '../db/index.js';
-import { preApprovalHits, preApprovalRules } from '../db/schema.js';
+import { and, asc, count, eq, gt, isNull, or } from 'drizzle-orm';
+import type { Db, DbLike } from '../db/index.js';
+import { preApprovalHits, preApprovalRules, roles, users } from '../db/schema.js';
 import { conditionsHold, coversAllParams, MatchSchema } from './match.js';
 
 export type PreApprovalOutcome =
@@ -9,6 +9,17 @@ export type PreApprovalOutcome =
   /** Rules matched but all were at their rate limit: the call falls back to a human. */
   | { kind: 'rate_limited'; ruleIds: string[] }
   | { kind: 'no_match' };
+
+function ownRulesOn(db: DbLike, userId: string | undefined): boolean {
+  if (!userId) return false;
+  const row = db
+    .select({ on: roles.canManageOwnRules })
+    .from(users)
+    .innerJoin(roles, eq(users.roleId, roles.id))
+    .where(eq(users.id, userId))
+    .get();
+  return !!row?.on;
+}
 
 /** Finds a matching, unexpired rule with budget left and records the hit, in one transaction. Never
  * called for locked operations (design §5.2). */
@@ -21,6 +32,8 @@ export function evaluatePreApproval(
     targets: readonly ResolvedTarget[];
     /** The params subtrees a `$targets` condition covers (the profile field's `covers`), for strict matching. */
     targetCovers?: readonly string[];
+    /** The caller's user: their own rules apply too while their role allows own rules (design §6.4). */
+    userId?: string;
   },
   now = new Date(),
 ): PreApprovalOutcome {
@@ -33,6 +46,9 @@ export function evaluatePreApproval(
           eq(preApprovalRules.instanceId, input.instanceId),
           eq(preApprovalRules.operationId, input.operationId),
           eq(preApprovalRules.enabled, true),
+          ownRulesOn(tx, input.userId)
+            ? or(isNull(preApprovalRules.ownerUserId), eq(preApprovalRules.ownerUserId, input.userId!))
+            : isNull(preApprovalRules.ownerUserId),
         ),
       )
       .orderBy(asc(preApprovalRules.createdAt))
