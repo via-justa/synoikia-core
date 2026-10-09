@@ -68,6 +68,18 @@ export function registerApprovalRoutes(app: Hono, ctx: AppContext) {
       403,
     );
 
+  /** Only the credential's owner decides (design §5.3); a call without one, only an admin. */
+  const mayDecide = (session: ValidSession, data: Loaded) =>
+    data.approval.ownerUserId ? data.approval.ownerUserId === session.user.id : ctx.users.isAdmin(session.user);
+
+  const notYours = (c: Context) =>
+    errorPage(
+      c,
+      'Not your request',
+      'This approval request belongs to another user. Only the person whose client made the call can decide.',
+      403,
+    );
+
   const render = (c: Context, token: string, data: Loaded, session: ValidSession, error?: string) =>
     approvalPage(
       c,
@@ -100,6 +112,7 @@ export function registerApprovalRoutes(app: Hono, ctx: AppContext) {
     if (!data) return gone(c);
     const session = uiSession(ctx, c, 'approval');
     if (!session) return renderLogin(ctx, c, `/a/${token}`, 'Sign in to review this approval request.');
+    if (!mayDecide(session, data)) return notYours(c);
     if (!session.user.totpEnabled) return noTotp(c);
     return render(c, token, data, session);
   });
@@ -111,6 +124,7 @@ export function registerApprovalRoutes(app: Hono, ctx: AppContext) {
     if (!data) return gone(c);
     const session = uiSession(ctx, c, 'approval');
     if (!session) return renderLogin(ctx, c, `/a/${token}`, 'Your sign-in expired. Sign in again to decide.');
+    if (!mayDecide(session, data)) return notYours(c);
     if (!session.user.totpEnabled) return noTotp(c);
     if (!checkUiCsrf(c, body.csrf)) return render(c, token, data, session, 'The form expired; try again.');
     const approve = body.decision === 'approve' || body.decision === 'approve_session';

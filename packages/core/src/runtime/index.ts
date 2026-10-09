@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
 import { writeAudit } from '../audit.js';
 import { accessInput, listGroups } from '../catalog/groups.js';
+import { loadCaps } from '../catalog/role-levels.js';
 import { findRegistryEntries } from '../catalog/registry.js';
 import type { Db } from '../db/index.js';
 import { guides, operationGroups, operations } from '../db/schema.js';
@@ -244,22 +245,26 @@ function catalogBindings(
       .where(and(eq(operations.instanceId, instanceId), eq(operations.stale, false)))
       .orderBy(asc(operations.key))
       .all();
-    return { groups, ops };
+    return { groups, ops, caps: loadCaps(db, instanceId, principal) };
   };
-  const accessOf = (op: OperationRow, groups: Map<string, typeof operationGroups.$inferSelect>) =>
-    effectiveAccess(accessInput(op), groups.get(op.groupId), principal);
+  const accessOf = (
+    op: OperationRow,
+    groups: Map<string, typeof operationGroups.$inferSelect>,
+    caps: ReturnType<typeof loadCaps>,
+  ) => effectiveAccess(accessInput(op), groups.get(op.groupId), principal, caps?.(op));
 
   return {
     find: async ([rawQuery]) => {
       const q = (rawQuery ?? {}) as CatalogFindQuery;
       const text = q.text?.toLowerCase();
       const limit = Math.min(Math.max(1, Number(q.limit) || 50), 200);
-      const { groups, ops } = load();
+      const { groups, ops, caps } = load();
       const out = [];
       for (const op of ops) {
         const group = groups.get(op.groupId);
-        const access = accessOf(op, groups);
-        if (!access.reachable && !q.includeDisabled) continue;
+        const access = accessOf(op, groups, caps);
+        // A non-admin never sees what their role keeps from them, not even as disabled (design §6.4).
+        if (!access.reachable && (!q.includeDisabled || caps)) continue;
         if (q.group && group?.key !== q.group) continue;
         if (q.tag && op.tag !== q.tag) continue;
         if (q.kind && op.kind !== q.kind) continue;
@@ -277,17 +282,25 @@ function catalogBindings(
       return out;
     },
     get: async ([key]) => {
-      const { groups, ops } = load();
+      const { groups, ops, caps } = load();
       const op = ops.find((o) => o.key === key);
       if (!op) return null;
-      const access = accessOf(op, groups);
+      const access = accessOf(op, groups, caps);
+      if (!access.reachable && caps) return null;
       return {
         ...describeOp(op, groups.get(op.groupId)?.key, access, granted()),
         paramsSchema: op.paramsSchema,
         docs: op.docs,
       };
     },
-    groups: async () => listGroups(db, instanceId).filter((g) => !g.stale),
+    groups: async () => {
+      // A non-admin sees only the groups that hold something they can call.
+      const { groups, ops, caps } = load();
+      if (!caps) return listGroups(db, instanceId).filter((g) => !g.stale);
+      const open = new Set(ops.filter((op) => accessOf(op, groups, caps).reachable).map((op) => op.groupId));
+      const keys = new Set([...open].map((id) => groups.get(id)?.key));
+      return listGroups(db, instanceId).filter((g) => !g.stale && keys.has(g.key));
+    },
   };
 }
 

@@ -8,6 +8,7 @@ import RegistryPicker from '../../components/RegistryPicker.vue';
 import { REASON_LABELS, ago, formatDate } from '../../format';
 import type {
   Instance,
+  LevelView,
   MatchCondition,
   MatchField,
   Operation,
@@ -19,8 +20,14 @@ import type {
 
 /** Pre-approval rules (design §5.2): a catalog operation (never locked), a match from its declared
  * fields, a required reason, optional rate limit and expiry. */
-const props = defineProps<{ instance: Instance }>();
-const base = computed(() => `/api/instances/${props.instance.id}`);
+const props = defineProps<{
+  instance: Pick<Instance, 'id'> & { plugin?: Pick<Instance['plugin'], 'id'> };
+  own?: boolean;
+}>();
+// `own`: a user's own rules on `/api/me` (design §6.4); admin rules show there read-only.
+const base = computed(() =>
+  props.own ? `/api/me/endpoints/${props.instance.id}` : `/api/instances/${props.instance.id}`,
+);
 
 const rules = ref<Rule[]>([]);
 const ops = ref<Operation[]>([]);
@@ -30,6 +37,27 @@ const error = ref<string>();
 
 async function load() {
   try {
+    if (props.own) {
+      const [r, view, form] = await Promise.all([
+        http.get<Rule[]>(`${base.value}/rules`),
+        http.get<LevelView>(`${base.value}/access`),
+        http.get<{ matchProfiles: Record<string, MatchField[]>; targets: TargetsDecl | null }>(
+          `${base.value}/rule-form`,
+        ),
+      ]);
+      rules.value = r;
+      ops.value = view.operations.map(
+        (o) =>
+          ({
+            ...o,
+            classification: o.classification === 'locked' ? 'write' : o.classification,
+            locked: o.classification === 'locked',
+          }) as unknown as Operation,
+      );
+      profiles.value = form.matchProfiles;
+      targets.value = form.targets ?? undefined;
+      return;
+    }
     const [r, o, plugins] = await Promise.all([
       http.get<Rule[]>(`${base.value}/rules`),
       http.get<Operation[]>(`${base.value}/operations`),
@@ -37,7 +65,7 @@ async function load() {
     ]);
     rules.value = r;
     ops.value = o;
-    const manifest = plugins.find((p) => p.id === props.instance.plugin.id)?.manifest;
+    const manifest = plugins.find((p) => p.id === props.instance.plugin?.id)?.manifest;
     profiles.value = manifest?.matchProfiles ?? {};
     targets.value = manifest?.targets;
   } catch (err) {
@@ -322,6 +350,8 @@ const TIPS = {
           <tr v-for="r in rules" :key="r.id" :class="{ off: !r.enabled }">
             <td>
               <span class="mono">{{ r.operation.key }}</span>
+              <span v-if="own && !r.editable" class="pill info">Admin</span>
+              <span v-else-if="!own && r.owner" class="pill info">{{ r.owner.username }}</span>
               <div v-if="r.inert" class="pill warn">inert: {{ reasonText(r.inert) }}</div>
               <div v-if="r.strictMissAt" class="small warn-text">
                 Skipped a call with parameters this rule doesn't accept ({{ ago(r.strictMissAt) }}). Edit it to accept
@@ -340,7 +370,8 @@ const TIPS = {
               <span v-if="!r.rateLimit && !r.expiresAt" class="muted">none</span>
             </td>
             <td class="small">{{ r.reason }}</td>
-            <td class="right">
+            <td v-if="own && !r.editable" class="right small muted">Set by an admin</td>
+            <td v-else class="right">
               <button class="btn btn-sm" type="button" @click="toggle(r)">
                 {{ r.enabled ? 'Disable' : 'Enable' }}
               </button>
@@ -390,7 +421,7 @@ const TIPS = {
           <RegistryPicker
             v-if="f.field === '$targets' && targets"
             v-model="valueOf(f).targets"
-            :instance-id="instance.id"
+            :base="base"
             :targets="targets"
             :options="targetOptions(f)"
           />

@@ -2,6 +2,7 @@ import type { Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppContext } from '../../app.js';
 import { writeAudit } from '../../audit.js';
+import { roleHasInstance } from '../../catalog/role-levels.js';
 import { effectiveAuthMode, publicMcpBase, resourceUrl } from '../../auth/mcp-auth.js';
 import { canonicalResource, OAuthError } from '../../auth/oauth.js';
 import type { OAuthService } from '../../auth/oauth.js';
@@ -279,13 +280,17 @@ export function registerOAuthRoutes(app: Hono, ctx: AppContext, oauth: OAuthServ
     const session = uiSession(ctx, c, 'oauth');
     const continueTo = `/oauth/authorize?${q.toString()}`;
     if (!session) return renderLogin(ctx, c, continueTo, `Sign in to let ${client.name} use your MCP endpoints.`);
+    // A user can only hand out endpoints their role has (design §6.4).
+    const mine = offered.filter((e) => roleHasInstance(ctx.db, session.user.roleId, e.id));
+    if (mine.length === 0)
+      return errorPage(c, 'No endpoints', 'None of the requested endpoints is available to your account.', 403);
 
     const form: AuthorizeRequest = {
       clientId: client.clientId,
       redirectUri,
       state: q.get('state') ?? undefined,
       codeChallenge: challenge,
-      offered: offered.map((e) => e.resource),
+      offered: mine.map((e) => e.resource),
       preselected: requested,
       session: sha256(getCookie(c, UI_SESSIONS.oauth.cookie) ?? ''),
     };
@@ -293,7 +298,7 @@ export function registerOAuthRoutes(app: Hono, ctx: AppContext, oauth: OAuthServ
       clientName: client.name,
       redirectHost: new URL(redirectUri).host || redirectUri,
       username: session.user.username,
-      endpoints: offered.map((e) => ({ ...e, checked: requested.includes(e.resource) })),
+      endpoints: mine.map((e) => ({ ...e, checked: requested.includes(e.resource) })),
       formToken: signPayload(ctx.keys.state, form, FORM_TTL_MS),
       access: 'read',
     });
@@ -330,7 +335,8 @@ export function registerOAuthRoutes(app: Hono, ctx: AppContext, oauth: OAuthServ
     // Bind each resource to the instance it names right now; one renamed since the form was shown drops out.
     const current = new Map(oauthEndpoints(c).map((e) => [e.resource, e.id]));
     const resources = [...new Set(chosen.map(canonicalResource))].filter(
-      (r) => form.offered.includes(r) && current.has(r),
+      (r) =>
+        form.offered.includes(r) && current.has(r) && roleHasInstance(ctx.db, session.user.roleId, current.get(r)!),
     );
     if (resources.length === 0) {
       return consentPage(c, {

@@ -58,6 +58,9 @@ const handlers = {
     reply(id, { text: `${key} ${JSON.stringify(params)}`, ...(confirmLiteral ? { confirmLiteral } : {}) });
   },
   getGuide: (id) => reply(id, { version: 'v1', content: 'Read me first.' }),
+  // An option whose label and meta carry the connection secret, as a careless plugin might.
+  optionsFor: (id, { query }) =>
+    reply(id, [{ value: 'a', label: `A ${secrets.token ?? ''} ${query ?? ''}`, meta: { token: 'meta-secret' } }]),
   invoke(id, { key, params, context }) {
     const tryFs = (fn) => {
       try {

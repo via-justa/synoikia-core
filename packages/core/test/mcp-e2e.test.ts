@@ -9,7 +9,8 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AppContext } from '../src/app.js';
 import { setGroupLevel, updateOperation } from '../src/catalog/groups.js';
-import { auditLog, operations } from '../src/db/schema.js';
+import { setRoleLevel } from '../src/catalog/role-levels.js';
+import { auditLog, operations, users } from '../src/db/schema.js';
 import { hostAllowed, LogThrottle, MAX_SESSIONS_PER_PRINCIPAL } from '../src/http/mcp/endpoint.js';
 import { createAdminApp } from '../src/http/admin-app.js';
 import { createMcpApp } from '../src/http/mcp-app.js';
@@ -32,6 +33,7 @@ let dataDir: string;
 let base: string;
 let instanceId: string;
 let otherInstanceId: string;
+let adminId: string;
 
 beforeAll(async () => {
   dataDir = mkdtempSync(path.join(tmpdir(), 'synoikia-e2e-'));
@@ -45,7 +47,7 @@ beforeAll(async () => {
     },
     { memoryDb: true },
   );
-  await ctx.users.create({ username: 'admin', password: PASSWORD });
+  adminId = (await ctx.users.create({ username: 'admin', password: PASSWORD })).id;
   servers = await startServers(ctx);
   base = `http://127.0.0.1:${servers.mcp.port}`;
   // OAuth is off until the public URL is known (review M12); the port is only known now.
@@ -107,7 +109,7 @@ const parse = (res: unknown) =>
 
 describe('MCP endpoint with bearer tokens', () => {
   it('exposes search, execute and resume (plus the card’s app-only tools), with plugin-specific descriptions', async () => {
-    const { token } = ctx.tokens.create({ name: 'e2e', scope: [instanceId] });
+    const { token } = ctx.tokens.create({ name: 'e2e', scope: [instanceId] }, { userId: adminId });
     const client = await connect('echo', token);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
@@ -140,7 +142,7 @@ describe('MCP endpoint with bearer tokens', () => {
   });
 
   it('runs search and read-only execute, redacting secrets', async () => {
-    const { token } = ctx.tokens.create({ name: 'e2e', scope: ['*'] });
+    const { token } = ctx.tokens.create({ name: 'e2e', scope: ['*'] }, { userId: adminId });
     const client = await connect('echo', token);
     const found = parse(
       await client.callTool({
@@ -160,7 +162,7 @@ describe('MCP endpoint with bearer tokens', () => {
   });
 
   it('never takes a form-only client’s own answer as approval', async () => {
-    const { token } = ctx.tokens.create({ name: 'e2e', scope: [instanceId], access: 'write' });
+    const { token } = ctx.tokens.create({ name: 'e2e', scope: [instanceId], access: 'write' }, { userId: adminId });
     const shown: ElicitParams[] = [];
     const client = await connect('echo', token, {
       mode: 'form',
@@ -185,7 +187,7 @@ describe('MCP endpoint with bearer tokens', () => {
   });
 
   it('parks a call for a client without prompts; each write runs once and resume returns the result', async () => {
-    const { token } = ctx.tokens.create({ name: 'parker', scope: [instanceId], access: 'write' });
+    const { token } = ctx.tokens.create({ name: 'parker', scope: [instanceId], access: 'write' }, { userId: adminId });
     const client = await connect('echo', token);
     const first = parse(
       await client.callTool({
@@ -207,7 +209,10 @@ describe('MCP endpoint with bearer tokens', () => {
     expect(await status()).toMatchObject({ state: 'pending' });
 
     // Another credential can neither follow nor see it.
-    const { token: other } = ctx.tokens.create({ name: 'other', scope: [instanceId], access: 'write' });
+    const { token: other } = ctx.tokens.create(
+      { name: 'other', scope: [instanceId], access: 'write' },
+      { userId: adminId },
+    );
     const stranger = await connect('echo', other);
     expect(parse(await stranger.callTool({ name: 'resume', arguments: { executionId } }))).toMatchObject({
       error: 'EXECUTION_NOT_FOUND',
@@ -249,7 +254,7 @@ describe('MCP endpoint with bearer tokens', () => {
   });
 
   it('a session grant runs later Ask writes of that client without asking, never locked ones, until revoked', async () => {
-    const { token } = ctx.tokens.create({ name: 'granted', scope: [instanceId], access: 'write' });
+    const { token } = ctx.tokens.create({ name: 'granted', scope: [instanceId], access: 'write' }, { userId: adminId });
     const client = await connect('echo', token);
     const exec = async (code: string) => parse(await client.callTool({ name: 'execute', arguments: { code } }));
     const first = await exec(`return (await echo.call('echo.set', { name: 'vol/g' })).key;`);
@@ -271,7 +276,10 @@ describe('MCP endpoint with bearer tokens', () => {
     ctx.approvals.decide(approvalIdOf(locked), { approve: false, decidedBy: 'admin' });
 
     // Another credential can't end it.
-    const { token: other } = ctx.tokens.create({ name: 'other2', scope: [instanceId], access: 'write' });
+    const { token: other } = ctx.tokens.create(
+      { name: 'other2', scope: [instanceId], access: 'write' },
+      { userId: adminId },
+    );
     const stranger = await connect('echo', other);
     const tried = await stranger.callTool({ name: 'session_grant_revoke', arguments: { grantId: grant.id } });
     expect(parse(tried)).toEqual({ revoked: false });
@@ -285,7 +293,7 @@ describe('MCP endpoint with bearer tokens', () => {
   });
 
   it('sends the user to the approval page (URL prompt) and continues once a human decides there', async () => {
-    const { token } = ctx.tokens.create({ name: 'e2e', scope: [instanceId], access: 'write' });
+    const { token } = ctx.tokens.create({ name: 'e2e', scope: [instanceId], access: 'write' }, { userId: adminId });
     const shown: ElicitParams[] = [];
     const completed: string[] = [];
     const client = await connect('echo', token, {
@@ -344,7 +352,10 @@ describe('MCP endpoint with bearer tokens', () => {
   });
 
   it('cancels an open approval when its endpoint is stopped', async () => {
-    const { token } = ctx.tokens.create({ name: 'stop', scope: [otherInstanceId], access: 'write' });
+    const { token } = ctx.tokens.create(
+      { name: 'stop', scope: [otherInstanceId], access: 'write' },
+      { userId: adminId },
+    );
     await ctx.instances.syncNow(otherInstanceId);
     setGroupLevel(ctx.db, otherInstanceId, 'echo', 'ask');
     let prompted!: (id: string) => void;
@@ -374,7 +385,7 @@ describe('MCP endpoint with bearer tokens', () => {
   });
 
   it('returns a structured tool error when the user declines the prompt', async () => {
-    const { token } = ctx.tokens.create({ name: 'e2e', scope: [instanceId], access: 'write' });
+    const { token } = ctx.tokens.create({ name: 'e2e', scope: [instanceId], access: 'write' }, { userId: adminId });
     const client = await connect('echo', token, { mode: 'url', onElicit: () => 'decline' });
     const res = await client.callTool({
       name: 'execute',
@@ -386,7 +397,7 @@ describe('MCP endpoint with bearer tokens', () => {
   });
 
   it('keeps read-only tokens away from writes', async () => {
-    const { token } = ctx.tokens.create({ name: 'reader', scope: [instanceId] }); // access defaults to read
+    const { token } = ctx.tokens.create({ name: 'reader', scope: [instanceId] }, { userId: adminId }); // access defaults to read
     const client = await connect('echo', token, { mode: 'url', onElicit: () => ({}) });
     const found = parse(
       await client.callTool({
@@ -425,7 +436,7 @@ describe('MCP endpoint with bearer tokens', () => {
       `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/echo"`,
     );
     expect((await init('Bearer syn_nope')).status).toBe(401);
-    const other = ctx.tokens.create({ name: 'other', scope: [otherInstanceId] });
+    const other = ctx.tokens.create({ name: 'other', scope: [otherInstanceId] }, { userId: adminId });
     expect((await init(`Bearer ${other.token}`)).status).toBe(403);
     ctx.tokens.revoke(other.id);
     expect((await init(`Bearer ${other.token}`)).status).toBe(401);
@@ -440,8 +451,8 @@ describe('MCP endpoint with bearer tokens', () => {
         await client.close();
         return res;
       };
-      const a = ctx.tokens.create({ name: 'Claude', scope: [instanceId] }).token;
-      const b = ctx.tokens.create({ name: 'Claude', scope: [instanceId] }).token;
+      const a = ctx.tokens.create({ name: 'Claude', scope: [instanceId] }, { userId: adminId }).token;
+      const b = ctx.tokens.create({ name: 'Claude', scope: [instanceId] }, { userId: adminId }).token;
       expect(await run(a)).toEqual({ result: 1 });
       expect(await run(a)).toMatchObject({ error: 'RATE_LIMITED' });
       expect(await run(b)).toEqual({ result: 1 });
@@ -451,7 +462,7 @@ describe('MCP endpoint with bearer tokens', () => {
   });
 
   it('caps open sessions per principal, closing the least recently used', async () => {
-    const { token } = ctx.tokens.create({ name: 'many', scope: [instanceId] });
+    const { token } = ctx.tokens.create({ name: 'many', scope: [instanceId] }, { userId: adminId });
     const clients = [];
     for (let i = 0; i <= MAX_SESSIONS_PER_PRINCIPAL; i++) clients.push(await connect('echo', token));
     // The first session was evicted by the one past the cap; the newest still works.
@@ -462,7 +473,7 @@ describe('MCP endpoint with bearer tokens', () => {
 
   it('refuses rebound hosts and foreign origins (DNS rebinding)', async () => {
     const app = createMcpApp(ctx);
-    const { token } = ctx.tokens.create({ name: 'rebind', scope: [instanceId] });
+    const { token } = ctx.tokens.create({ name: 'rebind', scope: [instanceId] }, { userId: adminId });
     const init = (headers: Record<string, string>) =>
       app.request('/echo', {
         method: 'POST',
@@ -499,7 +510,7 @@ describe('MCP endpoint with bearer tokens', () => {
         },
         body: '{}',
       });
-    const { token } = ctx.tokens.create({ name: 'l16', scope: ['*'] });
+    const { token } = ctx.tokens.create({ name: 'l16', scope: ['*'] }, { userId: adminId });
     await ctx.instances.update(otherInstanceId, { enabled: false });
     try {
       for (const slug of ['echo-two', 'no-such-endpoint', 'echo']) {
@@ -518,8 +529,8 @@ describe('MCP endpoint with bearer tokens', () => {
   });
 
   it('binds sessions to the principal that created them', async () => {
-    const a = ctx.tokens.create({ name: 'a', scope: ['*'] });
-    const b = ctx.tokens.create({ name: 'b', scope: ['*'] });
+    const a = ctx.tokens.create({ name: 'a', scope: ['*'] }, { userId: adminId });
+    const b = ctx.tokens.create({ name: 'b', scope: ['*'] }, { userId: adminId });
     const client = await connect('echo', a.token);
     const sessionId = (client as unknown as { _transport: { sessionId: string } })._transport.sessionId;
     const hijack = await fetch(`${base}/echo`, {
@@ -537,46 +548,57 @@ describe('MCP endpoint with bearer tokens', () => {
     await client.close();
   });
 
-  it('keeps anonymous external clients apart by address (review L17)', async () => {
-    const config = ctx.config as { TRUST_PROXY: number | boolean };
-    const savedProxy = config.TRUST_PROXY;
-    config.TRUST_PROXY = 1;
+  it('refuses anonymous external callers: every call belongs to a user', async () => {
     updateSettings(ctx.db, 'mcp', { trustedIdentityHeader: '' });
     await ctx.instances.update(otherInstanceId, { authMode: 'external' });
     try {
-      const rpc = (ip: string, body: unknown, session?: string) =>
-        fetch(`${base}/echo-two`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            accept: 'application/json, text/event-stream',
-            'x-forwarded-for': ip,
-            ...(session ? { 'mcp-session-id': session, 'mcp-protocol-version': '2025-06-18' } : {}),
-          },
-          body: JSON.stringify(body),
-        });
-      const init = await rpc('203.0.113.1', {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'a', version: '1' } },
+      const res = await fetch(`${base}/echo-two`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'a', version: '1' } },
+        }),
       });
-      expect(init.status).toBe(200);
-      const session = init.headers.get('mcp-session-id')!;
-      const list = { jsonrpc: '2.0', id: 2, method: 'tools/list' };
-      // Another anonymous caller can't ride on that session.
-      expect((await rpc('198.51.100.7', list, session)).status).toBe(404);
-      expect((await rpc('203.0.113.1', list, session)).status).toBe(200);
+      expect(res.status).toBe(401);
     } finally {
-      config.TRUST_PROXY = savedProxy;
       await ctx.instances.update(otherInstanceId, { authMode: null });
     }
   });
 
-  it('serves external mode with a trusted identity header', async () => {
+  it('serves external mode with a trusted identity header, registering unknown names with the default role', async () => {
     updateSettings(ctx.db, 'mcp', { trustedIdentityHeader: 'remote-user' });
     await ctx.instances.update(otherInstanceId, { authMode: 'external' });
     await ctx.instances.syncNow(otherInstanceId);
+    const initAs = (name: string) =>
+      fetch(`${base}/echo-two`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          'remote-user': name,
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'a', version: '1' } },
+        }),
+      });
+    // Self-registration is off until an admin sets a default role.
+    expect((await initAs('alice')).status).toBe(403);
+    expect(ctx.users.byUsername('alice')).toBeUndefined();
+    const viewers = ctx.roles.create({ name: 'Viewers' });
+    ctx.roles.setInstances(viewers.id, [otherInstanceId]);
+    setRoleLevel(ctx.db, viewers.id, otherInstanceId, { group: 'echo' }, 'read');
+    updateSettings(ctx.db, 'security', { defaultRoleId: viewers.id });
+    // The admin matches case-insensitively and keeps the Admin role.
+    expect((await initAs('ADMIN')).status).toBe(200);
+    // A self-registered account never stands for a proxy identity, whatever its name.
+    await ctx.users.register({ username: 'Carol', password: PASSWORD }, 'signup');
+    expect((await initAs('carol')).status).toBe(403);
     const client = new Client({ name: 'e2e', version: '1' });
     await client.connect(
       new StreamableHTTPClientTransport(new URL(`${base}/echo-two`), {
@@ -592,8 +614,52 @@ describe('MCP endpoint with bearer tokens', () => {
       .filter((a) => a.kind === 'call')
       .at(-1);
     expect(last?.actorId).toBe('external:alice');
+    expect(ctx.users.byUsername('alice')?.roleId).toBe(viewers.id);
+    // The role's maximum is Read: writes are out of reach and out of sight.
+    const found = parse(
+      await client.callTool({
+        name: 'search',
+        arguments: { code: `return (await catalog.find({ includeDisabled: true })).map((o) => o.key);` },
+      }),
+    );
+    expect(found).toEqual({ result: expect.arrayContaining(['echo.query']) });
+    expect((found as { result: string[] }).result).not.toContain('echo.set');
     await client.close();
+    updateSettings(ctx.db, 'security', { defaultRoleId: null });
     await ctx.instances.update(otherInstanceId, { authMode: null });
+  });
+});
+
+describe('credential owners', () => {
+  it('refuses a token once its owner’s role loses the endpoint, or the owner is disabled', async () => {
+    const role = ctx.roles.create({ name: 'Token owners' });
+    ctx.roles.setInstances(role.id, [instanceId]);
+    setRoleLevel(ctx.db, role.id, instanceId, { group: 'echo' }, 'read');
+    const dan = await ctx.users.create({ username: 'dan', password: PASSWORD, roleId: role.id });
+    const { token } = ctx.tokens.create({ name: 'dan', scope: ['*'] }, { userId: dan.id });
+    const init = () =>
+      fetch(`${base}/echo`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'x', version: '1' } },
+        }),
+      });
+    expect((await init()).status).toBe(200);
+    ctx.roles.setInstances(role.id, []);
+    const refused = await init();
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ error: 'insufficient_scope' });
+    ctx.roles.setInstances(role.id, [instanceId]);
+    ctx.db.update(users).set({ disabled: true }).where(eq(users.id, dan.id)).run();
+    expect((await init()).status).toBe(403);
   });
 });
 
@@ -1128,7 +1194,7 @@ describe('server log for refused connections', () => {
   });
 
   it('logs a refused Origin, an opened session and transport errors', async () => {
-    const { token } = ctx.tokens.create({ name: 'log', scope: [instanceId] });
+    const { token } = ctx.tokens.create({ name: 'log', scope: [instanceId] }, { userId: adminId });
     const { lines, restore } = capture();
     try {
       // fetch won't set Host; a foreign Origin goes through the same check.

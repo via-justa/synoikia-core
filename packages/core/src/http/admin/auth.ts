@@ -5,7 +5,6 @@ import type { AppContext } from '../../app.js';
 import { writeAudit } from '../../audit.js';
 import type { SessionLimits } from '../../auth/sessions.js';
 import { randomToken, safeEqual, signPayload, verifyPayload } from '../../auth/tokens.js';
-import { toPublicUser } from '../../auth/users.js';
 import type { UserRow } from '../../auth/users.js';
 import { ConflictError } from '../../errors.js';
 import { getSettings } from '../../settings.js';
@@ -107,6 +106,19 @@ export function requireUser(ctx: AppContext): MiddlewareHandler<AdminEnv> {
   };
 }
 
+/** After `requireUser`: the Admin role only (design §6.4). */
+export function requireAdmin(ctx: AppContext): MiddlewareHandler<AdminEnv> {
+  return async (c, next) => {
+    if (!ctx.users.isAdmin(c.get('user')))
+      return c.json({ error: 'forbidden', message: 'Only administrators can do this' }, 403);
+    return next();
+  };
+}
+
+/** The sign-in page offers "Create account" (design §6.5). */
+export const signupOpen = (ctx: AppContext) =>
+  localLoginEnabled(ctx) && getSettings(ctx.db, 'security').localSignup && ctx.users.registrationOpen();
+
 function startSession(c: Context, ctx: AppContext, user: UserRow, method: string) {
   const raw = ctx.sessions.create(user.id, 'admin', sessionLimits(ctx), {
     ip: clientIp(c, ctx.config.TRUST_PROXY),
@@ -147,6 +159,7 @@ export function registerAuthRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     const base = {
       setupRequired: ctx.users.count() === 0,
       localLoginEnabled: localLoginEnabled(ctx),
+      signupOpen: signupOpen(ctx),
       oidc: { enabled: !!oidc?.enabled, label: oidc?.label ?? 'SSO' },
     };
     const session = ctx.sessions.validate(readSessionCookie(c), 'admin', sessionLimits(ctx));
@@ -154,7 +167,7 @@ export function registerAuthRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     return c.json({
       authenticated: true,
       ...base,
-      user: toPublicUser(session.user),
+      user: ctx.users.toPublic(session.user),
       mustEnrollTotp: mustEnrollTotp(ctx, session.user),
     });
   });
@@ -164,6 +177,27 @@ export function registerAuthRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     const created = await ctx.users.setupFirstUser(body.username, body.password);
     startSession(c, ctx, ctx.users.get(created.id), 'setup');
     return c.json({ status: 'ok', user: created });
+  });
+
+  app.post('/auth/register', async (c) => {
+    const ip = clientIp(c, ctx.config.TRUST_PROXY);
+    if (!ctx.throttle.allowIp(ip))
+      return c.json({ error: 'rate_limited', message: 'Too many attempts; try again later' }, 429);
+    if (!signupOpen(ctx))
+      return c.json({ error: 'registration_closed', message: 'This server does not accept new accounts' }, 403);
+    const body = await readJson(c, LoginBody);
+    let created;
+    try {
+      created = await ctx.users.register({ username: body.username, password: body.password }, 'signup');
+    } catch (err) {
+      // One answer for a taken name: sign-up must not list which accounts exist.
+      if (err instanceof ConflictError && err.code === 'username_taken')
+        return c.json({ error: 'registration_failed', message: 'Choose another username' }, 400);
+      throw err;
+    }
+    const user = ctx.users.get(created.id);
+    startSession(c, ctx, user, 'signup');
+    return c.json({ status: 'ok', mustEnrollTotp: mustEnrollTotp(ctx, user) }, 201);
   });
 
   app.post('/auth/login', async (c) => {
@@ -317,7 +351,7 @@ export function registerAuthRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
 }
 
 export function registerProfileRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
-  app.get('/api/profile', (c) => c.json(toPublicUser(ctx.users.get(c.get('user').id))));
+  app.get('/api/profile', (c) => c.json(ctx.users.toPublic(ctx.users.get(c.get('user').id))));
 
   app.post('/api/profile/password', async (c) => {
     const body = await readJson(c, z.object({ currentPassword: z.string().optional(), newPassword: z.string() }));

@@ -6,6 +6,7 @@ import { operationGroupAliases, operationGroups, operations, pluginInstances } f
 import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
 import { ACCESS_LEVELS, FULL_ACCESS, allowedLevels, effectiveAccess, isAccessLevel, minLevel } from '../gate/access.js';
 import type { AccessDecision, AccessLevel, AccessPrincipal } from '../gate/access.js';
+import { loadCaps } from './role-levels.js';
 
 /** Group access management (design §5.2.1): audited `config` events, unreachable from sandboxed code. */
 
@@ -132,7 +133,7 @@ export function resolveAccess(
     .get();
   if (!op || op.stale) return { reachable: false, reason: 'unknown_operation' };
   const group = db.select().from(operationGroups).where(eq(operationGroups.id, op.groupId)).get();
-  return effectiveAccess(accessInput(op), group, principal);
+  return effectiveAccess(accessInput(op), group, principal, loadCaps(db, instanceId, principal)?.(op));
 }
 
 // ── group level ──────────────────────────────────────────────────────────────────────────────────

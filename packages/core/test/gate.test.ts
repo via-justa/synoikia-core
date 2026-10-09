@@ -57,7 +57,7 @@ async function setup(settings: Partial<InstanceSettings> = {}) {
   const setLevel = (level: AccessLevel) => setGroupLevel(db, instanceId, 'echo', level);
   const caller = (prompts?: ClientPrompts, ceiling: AccessCeiling = 'write'): CallerContext => ({
     client: { kind: 'mcp_client', id: 'claude-test' },
-    principal: { ceiling },
+    principal: { ceiling, roleId: 'admin' },
     prompts,
   });
   const exec = (code: string, prompts?: ClientPrompts, ceiling?: AccessCeiling) =>

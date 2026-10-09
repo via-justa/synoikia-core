@@ -6,6 +6,22 @@ export type Level = 'none' | 'read' | 'ask' | 'write';
 export const LEVELS: Level[] = ['none', 'read', 'ask', 'write'];
 export type Ceiling = 'read' | 'write';
 
+export interface PublicRole {
+  id: string;
+  name: string;
+  isAdmin: boolean;
+  canSetOwnLevels: boolean;
+  canManageOwnRules: boolean;
+  canSeeStatus: boolean;
+}
+
+/** A role as the Roles page lists it. */
+export interface RoleRow extends PublicRole {
+  users: number;
+  instanceIds: string[];
+  isDefault: boolean;
+}
+
 export interface PublicUser {
   id: string;
   username: string;
@@ -15,12 +31,14 @@ export interface PublicUser {
   disabled: boolean;
   createdAt: string;
   lastLoginAt: string | null;
+  role: PublicRole;
 }
 
 export interface SessionInfo {
   authenticated: boolean;
   setupRequired: boolean;
   localLoginEnabled: boolean;
+  signupOpen?: boolean;
   oidc: { enabled: boolean; label: string };
   user?: PublicUser;
   mustEnrollTotp?: boolean;
@@ -211,6 +229,10 @@ export interface Rule {
   inert: string | null;
   /** Last time the conditions held but the call had parameters the rule doesn't accept. */
   strictMissAt: string | null;
+  /** A user's own rule (design §6.4); null for an admin rule. */
+  owner?: { id: string; username: string } | null;
+  /** On `/api/me`: whether the caller may change it. */
+  editable?: boolean;
 }
 
 export interface RegistryEntry {
@@ -242,6 +264,8 @@ export interface AuditRow {
 
 export interface Token {
   id: string;
+  /** The user who owns the token; their role decides what it reaches. */
+  createdBy: string | null;
   name: string;
   scope: string[];
   access: Ceiling;
@@ -334,6 +358,9 @@ export interface Settings {
     approvalSessionIdleHours: number;
     approvalSessionAbsoluteDays: number;
     sessionAbsoluteHours: number;
+    /** Role of self-registered users; null turns self-registration off (design §6.5). */
+    defaultRoleId: string | null;
+    localSignup: boolean;
   };
   mcp: {
     defaultAuthMode: AuthMode;
@@ -366,4 +393,51 @@ export interface SessionGrant {
   createdBy: string;
   createdAt: string;
   expiresAt: string;
+}
+
+/** The levels of one role (and one user) on an endpoint (`/api/roles/…/access`, `/api/me/…/access`). */
+export interface LevelView {
+  groups: {
+    key: string;
+    label: string;
+    endpointLevel: Level;
+    roleLevel: Level | null;
+    ownLevel: Level | null;
+  }[];
+  operations: {
+    id: string;
+    key: string;
+    displayName: string | null;
+    description: string | null;
+    group: string | null;
+    classification: 'read' | 'write' | 'locked';
+    matchProfile: string | null;
+    allowedLevels: Level[];
+    endpointLevel: Level;
+    roleLevel: Level | null;
+    roleMax: Level;
+    ownLevel: Level | null;
+    level: Level;
+    reachable: boolean;
+    mode: 'run' | 'approve' | 'auto' | null;
+    reason: string | null;
+  }[];
+}
+
+/** An endpoint of the signed-in user's role (`/api/me/endpoints`). */
+export interface MyEndpoint {
+  id: string;
+  slug: string;
+  displayName: string;
+  endpointUrl: string;
+  authMode: AuthMode;
+  status?: {
+    enabled: boolean;
+    state: Instance['status'];
+    error: string | null;
+    plugin: string;
+    upstreamVersion: string | null;
+    lastSyncedAt: string | null;
+    lastSyncStatus: string | null;
+  };
 }

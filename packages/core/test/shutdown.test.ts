@@ -47,7 +47,7 @@ describe('graceful shutdown (review M16)', () => {
     );
 
     // An MCP client whose user opened the approval page but never decides.
-    const { token } = ctx.tokens.create({ name: 't', scope: [instanceId], access: 'write' });
+    const { token } = ctx.tokens.create({ name: 't', scope: [instanceId], access: 'write' }, { userId: user.id });
     const client = new Client({ name: 't', version: '1' }, { capabilities: { elicitation: { url: {} } } });
     let prompted!: () => void;
     const shown = new Promise<void>((r) => (prompted = r));

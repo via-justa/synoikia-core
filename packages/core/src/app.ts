@@ -7,6 +7,7 @@ import { OAuthService } from './auth/oauth.js';
 import { OidcService } from './auth/oidc.js';
 import { SessionService } from './auth/sessions.js';
 import { LoginThrottle } from './auth/throttle.js';
+import { RoleService } from './auth/roles.js';
 import { UserService } from './auth/users.js';
 import type { Config } from './config/env.js';
 import { loadMasterKey, SecretBox } from './crypto/index.js';
@@ -40,6 +41,7 @@ export interface AppContext {
   secrets: SecretBox;
   events: CoreEvents;
   users: UserService;
+  roles: RoleService;
   sessions: SessionService;
   throttle: LoginThrottle;
   oidc: OidcService;
@@ -178,6 +180,7 @@ export async function createAppContext(config: Config, opts: AppOptions = {}): P
     secrets,
     events,
     users,
+    roles: new RoleService(db),
     sessions: new SessionService(db, secrets.deriveKey('session-pepper'), now),
     throttle: new LoginThrottle(),
     oidc: new OidcService(db, secrets, keys.state, opts.oidcAllowInsecure ?? false),

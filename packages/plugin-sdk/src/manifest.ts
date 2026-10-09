@@ -190,6 +190,23 @@ export const ManifestSchema = z
         });
       }
     }
+    // Rule pickers can be served to non-admins (core §6.4); `optionsFor` can't tell the two callers apart.
+    const formSources = new Set(
+      Object.values(m.connection.ui)
+        .map((h) => h.optionsSource)
+        .filter(Boolean),
+    );
+    for (const [profile, fields] of Object.entries(m.matchProfiles)) {
+      fields.forEach((f, i) => {
+        if (f.optionsSource && formSources.has(f.optionsSource)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['matchProfiles', profile, i, 'optionsSource'],
+            message: 'also feeds the connection form; use a separate source for rule pickers',
+          });
+        }
+      });
+    }
     if (m.capabilities.targets && !m.targets) {
       ctx.addIssue({
         code: 'custom',

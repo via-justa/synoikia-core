@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { http } from '../api';
-import type { Instance, Overview } from '../types';
+import type { Instance, MyEndpoint, Overview } from '../types';
 
 type Listener = (event: string, data: unknown) => void;
 
@@ -8,6 +8,8 @@ type Listener = (event: string, data: unknown) => void;
 export const useAppStore = defineStore('app', {
   state: () => ({
     overview: null as Overview | null,
+    /** The signed-in user's endpoints (`/api/me/endpoints`), for every role. */
+    mine: [] as MyEndpoint[],
     listeners: new Set<Listener>(),
     source: null as EventSource | null,
   }),
@@ -17,6 +19,9 @@ export const useAppStore = defineStore('app', {
   actions: {
     async refresh() {
       this.overview = await http.get<Overview>('/api/overview');
+    },
+    async refreshMine() {
+      this.mine = await http.get<MyEndpoint[]>('/api/me/endpoints');
     },
     bySlug(slug: string): Instance | undefined {
       return this.instances.find((i) => i.slug === slug);

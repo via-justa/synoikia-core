@@ -7,6 +7,7 @@ export interface SessionState {
   authenticated: boolean;
   setupRequired: boolean;
   localLoginEnabled: boolean;
+  signupOpen: boolean;
   oidcEnabled: boolean;
   oidcLabel: string;
   user?: PublicUser;
@@ -21,12 +22,16 @@ export const useSessionStore = defineStore('session', {
     authenticated: false,
     setupRequired: false,
     localLoginEnabled: true,
+    signupOpen: false,
     oidcEnabled: false,
     oidcLabel: 'SSO',
+    user: undefined,
     mustEnrollTotp: false,
   }),
   getters: {
     username: (s) => s.user?.username,
+    isAdmin: (s) => s.user?.role.isAdmin ?? false,
+    role: (s) => s.user?.role,
   },
   actions: {
     async load() {
@@ -36,6 +41,7 @@ export const useSessionStore = defineStore('session', {
         authenticated: s?.authenticated ?? false,
         setupRequired: s?.setupRequired ?? false,
         localLoginEnabled: s?.localLoginEnabled ?? true,
+        signupOpen: s?.signupOpen ?? false,
         oidcEnabled: s?.oidc.enabled ?? false,
         oidcLabel: s?.oidc.label ?? 'SSO',
         user: s?.user,
@@ -50,6 +56,11 @@ export const useSessionStore = defineStore('session', {
     },
     async verifyTotp(code: string): Promise<LoginResult> {
       await http.post('/auth/totp', { code });
+      await this.load();
+      return this.mustEnrollTotp ? 'must_enroll_totp' : 'ok';
+    },
+    async register(username: string, password: string): Promise<LoginResult> {
+      await http.post('/auth/register', { username, password });
       await this.load();
       return this.mustEnrollTotp ? 'must_enroll_totp' : 'ok';
     },

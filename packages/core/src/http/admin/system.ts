@@ -4,7 +4,6 @@ import { asc, count, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { AppContext } from '../../app.js';
 import { auditCsvChunks, queryAudit } from '../../audit-query.js';
-import { toPublicUser } from '../../auth/users.js';
 import { pluginInstances, plugins } from '../../db/schema.js';
 import { ConflictError, NotFoundError, ValidationError } from '../../errors.js';
 import { CORE_EVENT_NAMES } from '../../events.js';
@@ -186,16 +185,23 @@ export function registerSystemRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     return c.body(null, 204);
   });
 
-  // ── users (no roles: every user is an admin) ──
+  // ── users (design §6.1, §6.4) ──
 
   app.get('/api/users', (c) => c.json(ctx.users.list()));
   app.post('/api/users', async (c) => {
-    const body = await readJson(c, z.object({ username: z.string(), password: z.string().optional() }));
+    const body = await readJson(
+      c,
+      z.object({ username: z.string(), password: z.string().optional(), roleId: z.string().min(1) }),
+    );
     return c.json(await ctx.users.create(body, actor(c)), 201);
   });
   app.patch('/api/users/:id', async (c) => {
-    const body = await readJson(c, z.object({ disabled: z.boolean().optional(), password: z.string().optional() }));
+    const body = await readJson(
+      c,
+      z.object({ disabled: z.boolean().optional(), password: z.string().optional(), roleId: z.string().optional() }),
+    );
     const id = c.req.param('id');
+    if (body.roleId !== undefined) ctx.users.setRole(id, body.roleId, actor(c));
     if (body.disabled !== undefined) {
       if (id === c.get('user').id && body.disabled)
         throw new ConflictError('self_disable', 'You cannot disable yourself');
@@ -213,13 +219,13 @@ export function registerSystemRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
       ctx.sessions.revokeUser(id);
       ctx.oauth.revokeUserGrants(id, 'password_changed', actor(c));
     }
-    return c.json(toPublicUser(ctx.users.get(id)));
+    return c.json(ctx.users.toPublic(ctx.users.get(id)));
   });
   app.post('/api/users/:id/reset-totp', (c) => {
     ctx.users.resetTotp(c.req.param('id'), actor(c));
     // An approval browser's TOTP proof must not outlive the authenticator it was made with.
     ctx.sessions.revokeKind(c.req.param('id'), 'approval_ui');
-    return c.json(toPublicUser(ctx.users.get(c.req.param('id'))));
+    return c.json(ctx.users.toPublic(ctx.users.get(c.req.param('id'))));
   });
 
   // ── settings ──
@@ -246,6 +252,7 @@ export function registerSystemRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     const section = c.req.param('section');
     if (!isSettingsSection(section)) throw new NotFoundError('unknown_section', 'Unknown settings section');
     const body = await readJson(c, z.record(z.string(), z.unknown()));
+    if (section === 'security' && typeof body.defaultRoleId === 'string') ctx.roles.get(body.defaultRoleId);
     // Disabling local login locks everyone out unless SSO works and someone can use it (design §6.1).
     if (section === 'security' && body.disableLocalLogin === true) {
       if (!ctx.oidc.isEnabled() || !ctx.users.hasOidcLinkedUser()) {

@@ -4,17 +4,21 @@ import { errorText, http } from '../../api';
 import ModalDialog from '../../components/ModalDialog.vue';
 import { ago } from '../../format';
 import { useSessionStore } from '../../stores/session';
-import type { PublicUser } from '../../types';
+import type { PublicUser, RoleRow } from '../../types';
 
 const session = useSessionStore();
 const users = ref<PublicUser[]>([]);
 const error = ref<string>();
-const adding = ref<{ username: string; password: string; note?: string }>();
+const roles = ref<RoleRow[]>([]);
+const adding = ref<{ username: string; password: string; roleId: string; note?: string }>();
 const resetting = ref<{ user: PublicUser; password: string; note?: string }>();
 
 async function load() {
   try {
-    users.value = await http.get<PublicUser[]>('/api/users');
+    [users.value, roles.value] = await Promise.all([
+      http.get<PublicUser[]>('/api/users'),
+      http.get<RoleRow[]>('/api/roles'),
+    ]);
   } catch (err) {
     error.value = errorText(err);
   }
@@ -36,7 +40,7 @@ async function add() {
   const a = adding.value;
   if (!a) return;
   try {
-    await http.post('/api/users', { username: a.username.trim(), password: a.password || undefined });
+    await http.post('/api/users', { username: a.username.trim(), password: a.password || undefined, roleId: a.roleId });
     adding.value = undefined;
     await load();
   } catch (err) {
@@ -58,8 +62,13 @@ async function reset() {
 <template>
   <div class="stack">
     <div class="row">
-      <p class="small muted grow">Every account is an administrator.</p>
-      <button class="btn btn-primary" type="button" @click="adding = { username: '', password: '' }">Add user</button>
+      <p class="small muted grow">
+        Each account has one role. Admins administer everything; other roles are set under
+        <RouterLink to="/settings/roles">Roles</RouterLink>.
+      </p>
+      <button class="btn btn-primary" type="button" @click="adding = { username: '', password: '', roleId: 'admin' }">
+        Add user
+      </button>
     </div>
     <p v-if="error" class="alert error" role="alert">{{ error }}</p>
     <div class="table-card">
@@ -67,6 +76,7 @@ async function reset() {
         <thead>
           <tr>
             <th>User</th>
+            <th>Role</th>
             <th>Sign-in</th>
             <th>Last sign-in</th>
             <th />
@@ -77,6 +87,18 @@ async function reset() {
             <td>
               {{ u.username }} <span v-if="u.id === session.user?.id" class="pill info">you</span>
               <span v-if="u.disabled" class="pill">disabled</span>
+            </td>
+            <td>
+              <select
+                class="select"
+                :value="u.role.id"
+                :aria-label="`Role of ${u.username}`"
+                @change="
+                  act(() => http.patch(`/api/users/${u.id}`, { roleId: ($event.target as HTMLSelectElement).value }))
+                "
+              >
+                <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option>
+              </select>
             </td>
             <td class="small">
               <span v-if="u.hasPassword" class="pill">password</span>
@@ -130,6 +152,12 @@ async function reset() {
         <label for="u-pass">Password</label>
         <input id="u-pass" v-model="adding.password" type="password" autocomplete="new-password" />
         <p class="help">At least 12 characters. Leave empty for a single-sign-on-only account.</p>
+      </div>
+      <div class="field">
+        <label for="u-role">Role</label>
+        <select id="u-role" v-model="adding.roleId">
+          <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option>
+        </select>
       </div>
       <p v-if="adding.note" class="alert error">{{ adding.note }}</p>
       <template #footer>

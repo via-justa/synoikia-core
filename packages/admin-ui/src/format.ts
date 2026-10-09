@@ -38,6 +38,7 @@ export const REASON_LABELS: Record<string, string> = {
   locked_not_opted_in: 'Locked — not enabled',
   level_write: 'Auto-approved at Write',
   group_missing: 'No group',
+  not_in_role: 'Not in your role',
   unknown_operation: 'Unknown',
 };
 

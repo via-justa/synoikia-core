@@ -3,9 +3,11 @@ import path from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import type { AppContext } from '../app.js';
-import { csrfGuard, registerAuthRoutes, registerProfileRoutes, requireUser } from './admin/auth.js';
+import { csrfGuard, registerAuthRoutes, registerProfileRoutes, requireAdmin, requireUser } from './admin/auth.js';
 import type { AdminEnv } from './admin/auth.js';
 import { registerInstanceRoutes } from './admin/instances.js';
+import { registerMeRoutes } from './admin/me.js';
+import { registerRoleRoutes } from './admin/roles.js';
 import { registerSystemRoutes } from './admin/system.js';
 import { errorResponse } from './common.js';
 
@@ -13,6 +15,9 @@ export interface AdminAppOptions {
   /** Built admin-ui assets. The SPA is optional so the API can run without a UI build (tests, dev). */
   uiDir?: string;
 }
+
+/** The only API paths a non-admin may use; every other route is admin-only by default. */
+const EVERY_USER = ['/api/session', '/api/setup', '/api/profile', '/api/me'];
 
 /** Paths the SPA fallback must never swallow, so API/auth typos surface as 404s. */
 const NON_SPA_PREFIXES = ['/api', '/auth', '/.well-known', '/healthz'];
@@ -41,12 +46,18 @@ export function createAdminApp(ctx: AppContext, { uiDir }: AdminAppOptions = {})
   app.use('/auth/*', csrfGuard(ctx));
   registerAuthRoutes(app, ctx); // public: session probe, setup, login, OIDC
 
-  // Everything else under /api needs a signed-in user.
+  // Everything else under /api needs a signed-in user, and is admin-only unless listed (design §8.4).
   app.use('/api/*', async (c, next) => {
     if (c.req.path === '/api/session' || c.req.path === '/api/setup') return next();
     return requireUser(ctx)(c, next);
   });
+  app.use('/api/*', async (c, next) => {
+    if (EVERY_USER.some((p) => c.req.path === p || c.req.path.startsWith(`${p}/`))) return next();
+    return requireAdmin(ctx)(c, next);
+  });
   registerProfileRoutes(app, ctx);
+  registerMeRoutes(app, ctx);
+  registerRoleRoutes(app, ctx);
   registerInstanceRoutes(app, ctx);
   registerSystemRoutes(app, ctx);
   app.all('/api/*', (c) => c.json({ error: 'not_found', message: 'No such API route' }, 404));

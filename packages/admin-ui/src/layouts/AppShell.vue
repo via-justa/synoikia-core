@@ -31,8 +31,11 @@ const adminNav = [
 ];
 
 onMounted(() => {
-  void app.refresh().catch(() => undefined);
-  app.connect();
+  // Overview and live events are admin-only; every role has its own endpoint list (design §6.4).
+  if (session.isAdmin) {
+    void app.refresh().catch(() => undefined);
+    app.connect();
+  } else void app.refreshMine().catch(() => undefined);
 });
 onBeforeUnmount(() => app.disconnect());
 
@@ -47,13 +50,32 @@ async function logout() {
   <div class="shell">
     <aside class="sidebar" :class="{ open: menuOpen }">
       <div class="brand">
-        <RouterLink to="/" class="home" aria-label="Synoikia, overview"><BrandLockup :size="32" /></RouterLink>
+        <RouterLink :to="session.isAdmin ? '/' : '/my'" class="home" aria-label="Synoikia, home"
+          ><BrandLockup :size="32"
+        /></RouterLink>
         <button class="menu mobile-only" type="button" :aria-expanded="menuOpen" @click="menuOpen = !menuOpen">
           {{ menuOpen ? 'Close' : 'Menu' }}
         </button>
       </div>
 
-      <nav>
+      <nav v-if="!session.isAdmin">
+        <RouterLink to="/my" class="nav-item" exact-active-class="active"><span>My endpoints</span></RouterLink>
+        <div class="nav-section">Endpoints</div>
+        <RouterLink
+          v-for="ep in app.mine"
+          :key="ep.id"
+          :to="`/my/${ep.id}`"
+          class="nav-item mono"
+          :class="{ active: $route.path === `/my/${ep.id}` }"
+        >
+          <span>/{{ ep.slug }}</span>
+          <span v-if="ep.status" class="dot" :class="ep.status.state" :title="ep.status.state" />
+        </RouterLink>
+        <div v-if="app.mine.length === 0" class="nav-empty">No endpoints for your role</div>
+        <div class="nav-section" />
+        <RouterLink to="/settings/profile" class="nav-item" active-class="active">My profile</RouterLink>
+      </nav>
+      <nav v-else>
         <RouterLink v-for="item in globalNav" :key="item.to" :to="item.to" class="nav-item" exact-active-class="active">
           <span>{{ item.label }}</span>
         </RouterLink>

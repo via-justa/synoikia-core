@@ -1,6 +1,7 @@
 import type { SensitiveResult } from '@synoikia/plugin-sdk';
 import { sql } from 'drizzle-orm';
 import { blob, index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { ADMIN_ROLE_ID } from '../gate/access.js';
 
 /** The SQLite schema (design §7.1): JSON as TEXT, timestamps as epoch ms, secrets as AES-256-GCM blobs. */
 
@@ -14,6 +15,17 @@ const flag = (name: string) => integer(name, { mode: 'boolean' });
 const json = (name: string) => text(name, { mode: 'json' });
 
 // ── identity & admin auth ────────────────────────────────────────────────────────────────────────
+
+export const roles = sqliteTable('roles', {
+  id: id(),
+  name: text('name').notNull().unique(),
+  builtIn: flag('built_in').notNull().default(false),
+  canSetOwnLevels: flag('can_set_own_levels').notNull().default(false),
+  canManageOwnRules: flag('can_manage_own_rules').notNull().default(false),
+  canSeeStatus: flag('can_see_status').notNull().default(false),
+  createdAt: createdAt(),
+  updatedAt: ts('updated_at'),
+});
 
 export const users = sqliteTable('users', {
   id: id(),
@@ -29,6 +41,10 @@ export const users = sqliteTable('users', {
   createdAt: createdAt(),
   lastLoginAt: ts('last_login_at'),
   disabled: flag('disabled').notNull().default(false),
+  /** References `roles`; SQLite can't add that constraint to an existing table, so RoleService keeps it. */
+  roleId: text('role_id').notNull().default(ADMIN_ROLE_ID),
+  /** How the user came to exist without an admin (design §6.5); null: an admin or setup made it. */
+  registeredVia: text('registered_via', { enum: ['oidc', 'external', 'signup'] }),
 });
 
 export const sessions = sqliteTable(
@@ -258,6 +274,8 @@ export const preApprovalRules = sqliteTable('pre_approval_rules', {
   reason: text('reason').notNull(),
   enabled: flag('enabled').notNull().default(true),
   createdBy: text('created_by').references(() => users.id),
+  /** Null: an admin rule for every caller. Set: applies only to this user's calls (design §6.4). */
+  ownerUserId: text('owner_user_id').references(() => users.id),
   createdAt: createdAt(),
   updatedAt: ts('updated_at'),
   lastTriggeredAt: ts('last_triggered_at'),
@@ -305,6 +323,8 @@ export const pendingApprovals = sqliteTable('pending_approvals', {
   /** `url`: decided by a signed-in human on the approval page; `elicitation`: by the MCP client (opt-in). */
   decidedVia: text('decided_via', { enum: ['elicitation', 'url'] }),
   decidedAt: ts('decided_at'),
+  /** The user who owns the calling credential: the only one who may decide on the page (design §5.3). */
+  ownerUserId: text('owner_user_id').references(() => users.id),
 });
 
 /** Append-only: no API updates or deletes rows (design §7.3). */
@@ -329,6 +349,67 @@ export const auditLog = sqliteTable(
     detail: json('detail'),
   },
   (t) => [index('audit_at_idx').on(t.at), index('audit_instance_at_idx').on(t.instanceId, t.at)],
+);
+
+// ── roles (design §6.4) ──────────────────────────────────────────────────────────────────────────
+
+/** The endpoints a role has; outside them its users reach nothing. */
+export const roleInstances = sqliteTable(
+  'role_instances',
+  {
+    roleId: text('role_id')
+      .notNull()
+      .references(() => roles.id, { onDelete: 'cascade' }),
+    instanceId: text('instance_id')
+      .notNull()
+      .references(() => pluginInstances.id, { onDelete: 'cascade' }),
+  },
+  (t) => [uniqueIndex('role_instances_idx').on(t.roleId, t.instanceId)],
+);
+
+/** A role's maximum level for one group or one operation (exactly one is set); no row means None. */
+export const roleLevels = sqliteTable(
+  'role_levels',
+  {
+    id: id(),
+    roleId: text('role_id')
+      .notNull()
+      .references(() => roles.id, { onDelete: 'cascade' }),
+    instanceId: text('instance_id')
+      .notNull()
+      .references(() => pluginInstances.id, { onDelete: 'cascade' }),
+    groupId: text('group_id').references(() => operationGroups.id, { onDelete: 'cascade' }),
+    operationId: text('operation_id').references(() => operations.id, { onDelete: 'cascade' }),
+    level: text('level', { enum: ['none', 'read', 'ask', 'write'] }).notNull(),
+    changedAt: ts('changed_at'),
+    changedBy: text('changed_by').references(() => users.id, { onDelete: 'set null' }),
+  },
+  (t) => [
+    uniqueIndex('role_levels_group_idx').on(t.roleId, t.groupId),
+    uniqueIndex('role_levels_op_idx').on(t.roleId, t.operationId),
+  ],
+);
+
+/** A user's own level for one group or one operation, capped by their role's maximum. */
+export const userLevels = sqliteTable(
+  'user_levels',
+  {
+    id: id(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    instanceId: text('instance_id')
+      .notNull()
+      .references(() => pluginInstances.id, { onDelete: 'cascade' }),
+    groupId: text('group_id').references(() => operationGroups.id, { onDelete: 'cascade' }),
+    operationId: text('operation_id').references(() => operations.id, { onDelete: 'cascade' }),
+    level: text('level', { enum: ['none', 'read', 'ask', 'write'] }).notNull(),
+    changedAt: ts('changed_at'),
+  },
+  (t) => [
+    uniqueIndex('user_levels_group_idx').on(t.userId, t.groupId),
+    uniqueIndex('user_levels_op_idx').on(t.userId, t.operationId),
+  ],
 );
 
 // ── MCP client auth ──────────────────────────────────────────────────────────────────────────────

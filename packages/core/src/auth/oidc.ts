@@ -238,13 +238,14 @@ export class OidcService {
     const linked = users.byOidc(identity.issuer, identity.subject);
     if (linked) return linked.disabled ? null : linked;
     const settings = this.getSettings();
-    if (!settings?.autoProvision || policyIsEmpty(settings.allowPolicy)) return null;
+    // Auto-provisioning is self-registration: it needs a default role too (design §6.5).
+    if (!settings?.autoProvision || policyIsEmpty(settings.allowPolicy) || !users.registrationOpen()) return null;
     const base =
       (identity.username ?? identity.email?.split('@')[0] ?? 'user').replace(/[^a-zA-Z0-9._@-]/g, '').slice(0, 48) ||
       'user';
     let username = base.length >= 2 ? base : `${base}-sso`;
     for (let i = 2; users.byUsername(username); i++) username = `${base}-${i}`;
-    const created = await users.create({ username });
+    const created = await users.register({ username }, 'oidc');
     users.linkOidc(created.id, identity.issuer, identity.subject);
     return users.get(created.id);
   }

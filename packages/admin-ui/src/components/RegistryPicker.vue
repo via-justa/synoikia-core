@@ -6,7 +6,8 @@ import ChipsInput from './ChipsInput.vue';
 
 /** `$targets` selector (design §8.3), from the plugin's targets and scopes; values are suggested
  * from the synced registry where the plugin names a kind, else free text. */
-const props = defineProps<{ instanceId: string; targets: TargetsDecl; options?: TargetFieldOptions }>();
+/** `base`: the API prefix, `/api/instances/:id` for an admin or `/api/me/endpoints/:id` for own rules. */
+const props = defineProps<{ base: string; targets: TargetsDecl; options?: TargetFieldOptions }>();
 const model = defineModel<{ ids: string[]; scopes: Record<string, string[]> }>({ required: true });
 
 const scopes = computed(() =>
@@ -18,7 +19,7 @@ const idQuery = ref('');
 
 const toOption = (e: RegistryEntry) => ({ value: e.id, label: e.name ? `${e.name} (${e.id})` : e.id });
 const registry = (params: Record<string, string | number | undefined>) =>
-  http.get<RegistryEntry[]>(`/api/instances/${props.instanceId}/registry${qs(params)}`).catch(() => []);
+  http.get<RegistryEntry[]>(`${props.base}/registry${qs(params)}`).catch(() => []);
 const filter = computed(() =>
   Object.fromEntries(Object.entries(props.options?.filter ?? {}).map(([k, v]) => [`scope.${k}`, v])),
 );

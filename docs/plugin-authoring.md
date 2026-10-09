@@ -34,6 +34,8 @@ Auth kinds are `bearer`, `api-key` (with a header name), `basic` and `none`. The
 
 `synoikia-plugin build` bundles everything, `plugin.yaml` included (validated and inlined at build time), into one self-contained `dist/index.js`. At runtime the plugin runs as a permission-confined child: it can read nothing outside its package directory, and can't write files or spawn processes. **Network access is not restricted.** `network.hosts` is a declaration the admin reviews before enabling the plugin (an update that changes it arrives disabled again), not something core enforces; container egress policy is the mitigation (design §4.4, §14). List exactly the hosts the plugin connects to.
 
+An `optionsSource` of a match field fills a rule picker, which core also serves to users who may write their own rules (design §6.4). `optionsFor` can't tell who asks, so the manifest is refused if a match field and a connection-form field share a source: give each its own.
+
 ## `plugin.yaml`
 
 Discovery lists operations; `plugin.yaml` decorates them by operation key. Editors validate it with the schema the SDK ships (`# yaml-language-server: $schema=./node_modules/@synoikia/plugin-sdk/plugin-settings.schema.json`).

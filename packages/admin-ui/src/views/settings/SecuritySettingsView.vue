@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { errorText, http } from '../../api';
 import ChipsInput from '../../components/ChipsInput.vue';
-import type { Settings } from '../../types';
+import type { RoleRow, Settings } from '../../types';
 
 type Oidc = NonNullable<Settings['oidc']>;
 
@@ -14,10 +14,12 @@ const oidcSecret = ref('');
 const forceLocal = ref(false);
 const adminUrl = ref<string | null>(null);
 const messages = ref<Record<string, { kind: 'ok' | 'error'; text: string }>>({});
+const roles = ref<RoleRow[]>([]);
 
 onMounted(async () => {
   try {
     const s = await http.get<Settings>('/api/settings');
+    roles.value = await http.get<RoleRow[]>('/api/roles');
     security.value = structuredClone(s.security);
     audit.value = structuredClone(s.audit);
     forceLocal.value = s.forceLocalLogin;
@@ -39,7 +41,15 @@ onMounted(async () => {
   }
 });
 
-async function saveSection(key: 'security' | 'audit') {
+async function saveSection(key: 'security' | 'audit' | 'registration') {
+  // Anyone who can reach the sign-in page, or whom the proxy or the IdP lets through, becomes an admin.
+  if (
+    key === 'registration' &&
+    security.value?.defaultRoleId === 'admin' &&
+    window.prompt('New accounts will be administrators. Type ADMIN to confirm.') !== 'ADMIN'
+  )
+    return;
+  if (key === 'registration') key = 'security';
   try {
     const body = key === 'security' ? security.value : audit.value;
     const res = await http.put<Record<string, unknown>>(`/api/settings/${key}`, body);
@@ -117,6 +127,30 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
       <button class="btn btn-primary" type="submit">Save</button>
     </form>
 
+    <form v-if="security" class="card" @submit.prevent="saveSection('registration')">
+      <h2>Self-registration</h2>
+      <div class="field">
+        <label for="s-role">Role of new accounts</label>
+        <select id="s-role" v-model="security.defaultRoleId">
+          <option :value="null">None: nobody can register</option>
+          <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option>
+        </select>
+        <p class="help">
+          With a role set, unknown users named by the MCP proxy (External sign-in) and, with auto-provisioning on, new
+          single sign-on users get an account with this role.
+        </p>
+        <p v-if="security.defaultRoleId === 'admin'" class="alert warn">Every new account will be an administrator.</p>
+      </div>
+      <div class="field check">
+        <label>
+          <input v-model="security.localSignup" type="checkbox" :disabled="!security.defaultRoleId" />
+          Show “Create account” on the sign-in page
+        </label>
+      </div>
+      <p v-if="messages.security" class="alert" :class="messages.security.kind">{{ messages.security.text }}</p>
+      <button class="btn btn-primary" type="submit">Save</button>
+    </form>
+
     <form v-if="oidc" class="card" @submit.prevent="saveOidc">
       <h2>Single sign-on (OIDC)</h2>
       <div class="field check">
@@ -177,7 +211,10 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
           ><input v-model="oidc.autoProvision" type="checkbox" /> Create an account on first sign-in for anyone the
           policy allows</label
         >
-        <p class="help">Otherwise each user must link single sign-on from their profile first.</p>
+        <p class="help">
+          Otherwise each user must link single sign-on from their profile first. New accounts get the self-registration
+          role, so this works only while one is set.
+        </p>
       </div>
       <p v-if="messages.oidc" class="alert" :class="messages.oidc.kind">{{ messages.oidc.text }}</p>
       <button class="btn btn-primary" type="submit">Save single sign-on</button>

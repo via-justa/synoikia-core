@@ -5,7 +5,7 @@ import ModalDialog from '../components/ModalDialog.vue';
 import PageHeader from '../components/PageHeader.vue';
 import { ago, formatDate } from '../format';
 import { useAppStore } from '../stores/app';
-import type { Ceiling, Grant, OAuthClient, Token } from '../types';
+import type { Ceiling, Grant, OAuthClient, PublicUser, Token } from '../types';
 
 const ACCESS_LABELS: Record<Ceiling, string> = { read: 'Read only', write: 'Read & write' };
 
@@ -13,16 +13,20 @@ const app = useAppStore();
 const tokens = ref<Token[]>([]);
 const clients = ref<OAuthClient[]>([]);
 const grants = ref<Grant[]>([]);
+const usernames = ref<Map<string, string>>(new Map());
 const showRevoked = ref(false);
 const error = ref<string>();
 
 async function load() {
   try {
-    [tokens.value, clients.value, grants.value] = await Promise.all([
+    let users: PublicUser[];
+    [tokens.value, clients.value, grants.value, users] = await Promise.all([
       http.get<Token[]>('/api/tokens'),
       http.get<OAuthClient[]>('/api/oauth/clients'),
       http.get<Grant[]>('/api/oauth/grants'),
+      http.get<PublicUser[]>('/api/users'),
     ]);
+    usernames.value = new Map(users.map((u) => [u.id, u.username]));
   } catch (err) {
     error.value = errorText(err);
   }
@@ -142,6 +146,7 @@ async function createClient() {
           <thead>
             <tr>
               <th>Name</th>
+              <th>Owner</th>
               <th>Endpoints</th>
               <th>Access</th>
               <th>Created</th>
@@ -153,6 +158,7 @@ async function createClient() {
           <tbody>
             <tr v-for="t in live(tokens)" :key="t.id" :class="{ off: t.revokedAt }">
               <td>{{ t.name }}</td>
+              <td class="small">{{ (t.createdBy && usernames.get(t.createdBy)) ?? '—' }}</td>
               <td class="mono small">{{ scopeText(t.scope) }}</td>
               <td class="small">{{ ACCESS_LABELS[t.access] }}</td>
               <td class="small">{{ formatDate(t.createdAt) }}</td>

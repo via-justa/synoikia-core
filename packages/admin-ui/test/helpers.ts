@@ -28,12 +28,29 @@ export function fakeApi(routes: Record<string, Handler | unknown>) {
   return { calls, fetchMock };
 }
 
+export const adminRole = {
+  id: 'admin',
+  name: 'Admin',
+  isAdmin: true,
+  canSetOwnLevels: true,
+  canManageOwnRules: true,
+  canSeeStatus: true,
+};
+
 export const signedIn = {
   authenticated: true,
   setupRequired: false,
   localLoginEnabled: true,
   oidc: { enabled: false, label: 'SSO' },
-  user: { id: 'u1', username: 'admin', totpEnabled: false, oidcLinked: false, hasPassword: true, disabled: false },
+  user: {
+    id: 'u1',
+    username: 'admin',
+    totpEnabled: false,
+    oidcLinked: false,
+    hasPassword: true,
+    disabled: false,
+    role: adminRole,
+  },
   mustEnrollTotp: false,
 };
 

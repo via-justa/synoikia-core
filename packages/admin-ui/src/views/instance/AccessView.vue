@@ -5,14 +5,28 @@ import ModalDialog from '../../components/ModalDialog.vue';
 import { LEVEL_HELP, LEVEL_LABELS, OP_LEVEL_HELP, REASON_LABELS, kindSource } from '../../format';
 import { useAppStore } from '../../stores/app';
 import { LEVELS } from '../../types';
-import type { GroupSummary, Instance, Level, Operation } from '../../types';
+import type { GroupSummary, Instance, Level, LevelView, Operation } from '../../types';
 
 /** Access page (design §5.2.1): a level per group, and per operation a level its kind allows that
- * overrides the group (↺ resets it). Locked operations need their own Ask and never take Write. */
-const props = defineProps<{ instance: Instance }>();
+ * overrides the group (↺ resets it). Locked operations need their own Ask and never take Write.
+ * With a `scope` it shows a role's maximums or the user's personal levels (design §6.4) instead. */
+type Scope = { kind: 'role'; roleId: string } | { kind: 'own' };
+const props = defineProps<{
+  instance: Pick<Instance, 'id' | 'slug'> & { plugin?: Pick<Instance['plugin'], 'labels' | 'attestation'> };
+  scope?: Scope;
+  readonly?: boolean;
+}>();
 const app = useAppStore();
-const base = computed(() => `/api/instances/${props.instance.id}`);
-const opLabel = computed(() => props.instance.plugin.labels?.operations ?? 'Operations');
+const base = computed(() =>
+  !props.scope
+    ? `/api/instances/${props.instance.id}`
+    : props.scope.kind === 'role'
+      ? `/api/roles/${props.scope.roleId}/endpoints/${props.instance.id}`
+      : `/api/me/endpoints/${props.instance.id}`,
+);
+const opLabel = computed(() => props.instance.plugin?.labels?.operations ?? 'Operations');
+/** The most a level can be in a scope: the endpoint's level for a role, the role's for a user. */
+const caps = ref<{ groups: Map<string, Level>; ops: Map<string, Level> }>({ groups: new Map(), ops: new Map() });
 
 const groups = ref<GroupSummary[]>([]);
 const ops = ref<Operation[]>([]);
@@ -21,8 +35,56 @@ const search = ref('');
 const attentionOnly = ref(false);
 const error = ref<string>();
 
+/** A scope's level view in the shapes the endpoint view uses. */
+function fromView(view: LevelView, scope: Scope) {
+  const role = scope.kind === 'role';
+  const opsOut = view.operations.map(
+    (o) =>
+      ({
+        ...o,
+        classification: o.classification === 'locked' ? 'write' : o.classification,
+        locked: o.classification === 'locked',
+        levelOverride: role ? o.roleLevel : o.ownLevel,
+        level: role ? o.roleMax : o.level,
+        attestationRequired: false,
+        pendingReview: false,
+        needsReview: false,
+        inferredReason: null,
+      }) as unknown as Operation,
+  );
+  const groupsOut: GroupSummary[] = view.groups.map((g) => {
+    const mine = opsOut.filter((o) => o.group === g.key);
+    return {
+      key: g.key,
+      label: g.label,
+      level: (role ? g.roleLevel : (g.ownLevel ?? g.roleLevel)) ?? 'none',
+      stale: false,
+      counts: {
+        read: mine.filter((o) => !o.locked && o.classification === 'read').length,
+        write: mine.filter((o) => !o.locked && o.classification === 'write').length,
+        locked: mine.filter((o) => o.locked).length,
+        pendingReview: 0,
+        overridden: mine.filter((o) => o.levelOverride !== null).length,
+      },
+    };
+  });
+  caps.value = {
+    groups: new Map(view.groups.map((g) => [g.key, role ? g.endpointLevel : (g.roleLevel ?? 'none')])),
+    ops: new Map(view.operations.map((o) => [o.id, role ? o.endpointLevel : o.roleMax])),
+  };
+  /** Whether the scope has its own entry for the group (↺ clears it). */
+  groupEntries.value = new Set(view.groups.filter((g) => (role ? g.roleLevel : g.ownLevel) !== null).map((g) => g.key));
+  return { groupsOut, opsOut };
+}
+const groupEntries = ref<Set<string>>(new Set());
+
 async function load() {
   try {
+    if (props.scope) {
+      const { groupsOut, opsOut } = fromView(await http.get<LevelView>(`${base.value}/access`), props.scope);
+      [groups.value, ops.value] = [groupsOut, opsOut];
+      return;
+    }
     [groups.value, ops.value] = await Promise.all([
       http.get<GroupSummary[]>(`${base.value}/groups`),
       http.get<Operation[]>(`${base.value}/operations`),
@@ -69,7 +131,7 @@ async function act(fn: () => Promise<unknown>) {
   try {
     await fn();
     await load();
-    void app.refresh();
+    if (!props.scope) void app.refresh();
   } catch (err) {
     error.value = errorText(err);
   }
@@ -77,10 +139,30 @@ async function act(fn: () => Promise<unknown>) {
 
 // ── single-group level ──
 
+// Levels in this order open more for one group (and, below, for one operation).
+const GROUP_RANK: Record<Level, number> = { none: 0, read: 1, ask: 2, write: 3 };
+const OP_RANK: Record<Level, number> = { none: 0, ask: 1, read: 2, write: 3 };
+const capTitle = computed(() =>
+  props.scope?.kind === 'role' ? "Above the endpoint's level" : "Above your role's maximum",
+);
+const groupLevelDisabled = (g: GroupSummary, l: Level) => {
+  const cap = caps.value.groups.get(g.key);
+  return !!props.scope && cap !== undefined && GROUP_RANK[l] > GROUP_RANK[cap];
+};
+
+/** A scope writes its own entries with PUT; the endpoint's levels are PATCHed. */
+const writeGroup = (key: string, level: Level | null) =>
+  act(() =>
+    props.scope
+      ? http.put(`${base.value}/groups/${encodeURIComponent(key)}`, { level })
+      : http.patch(`${base.value}/groups/${encodeURIComponent(key)}`, { level }),
+  );
+
 function setLevel(group: GroupSummary, level: Level) {
+  if (groupLevelDisabled(group, level)) return;
   // Clicking the current level still resets operations that have their own.
-  if (level === group.level && !group.counts.overridden) return;
-  void act(() => http.patch(`${base.value}/groups/${encodeURIComponent(group.key)}`, { level }));
+  if (level === group.level && !group.counts.overridden && (!props.scope || groupEntries.value.has(group.key))) return;
+  void writeGroup(group.key, level);
 }
 
 // ── bulk ──
@@ -129,13 +211,21 @@ function rename(g: GroupSummary) {
 // ── per-operation ──
 
 const patchOp = (op: Operation, body: Record<string, unknown>) =>
-  act(() => http.patch(`${base.value}/operations/${op.id}`, body));
+  act(() =>
+    props.scope
+      ? http.put(`${base.value}/operations/${op.id}`, { level: body.level ?? null })
+      : http.patch(`${base.value}/operations/${op.id}`, body),
+  );
 
 type Kind = 'read' | 'write' | 'locked';
 const kindOf = (op: Operation): Kind => (op.locked ? 'locked' : op.classification);
 /** Levels shown on an operation's control: what its kind allows, plus a disabled Write on locked ones. */
 const levelsShown = (op: Operation): Level[] => (op.locked ? ['none', 'ask', 'write'] : op.allowedLevels);
-const levelDisabled = (op: Operation, l: Level) => !op.allowedLevels.includes(l);
+const levelDisabled = (op: Operation, l: Level) => {
+  if (!op.allowedLevels.includes(l)) return true;
+  const cap = caps.value.ops.get(op.id);
+  return !!props.scope && cap !== undefined && OP_RANK[l] > OP_RANK[cap];
+};
 
 /** What the group's level means for this operation if it followed it (same rule as the server). */
 function fromGroup(op: Operation, group: GroupSummary): Level {
@@ -178,9 +268,12 @@ function status(op: Operation): { text: string; tone: string } {
         :placeholder="`Search groups and ${opLabel.toLowerCase()}`"
         aria-label="Search"
       />
-      <label class="row small check"><input v-model="attentionOnly" type="checkbox" /> Needs attention only</label>
+      <label v-if="!scope" class="row small check"
+        ><input v-model="attentionOnly" type="checkbox" /> Needs attention only</label
+      >
       <span class="grow" />
       <select
+        v-if="!readonly && scope?.kind !== 'own'"
         v-model="bulkChoice"
         class="select bulk"
         aria-label="Set every group to one level"
@@ -190,18 +283,26 @@ function status(op: Operation): { text: string; tone: string } {
         <option value="" disabled>Set all groups…</option>
         <option v-for="l in LEVELS" :key="l" :value="l">{{ LEVEL_LABELS[l] }}</option>
       </select>
-      <button class="btn btn-sm" type="button" @click="merging = { from: [], into: '', label: '' }">Regroup…</button>
+      <button v-if="!scope" class="btn btn-sm" type="button" @click="merging = { from: [], into: '', label: '' }">
+        Regroup…
+      </button>
     </div>
     <ul class="legend small muted">
       <li v-for="l in LEVELS" :key="l">
         <strong>{{ LEVEL_LABELS[l] }}</strong
         >: {{ LEVEL_HELP[l] }}.
       </li>
-      <li class="note">
-        Setting a group's level resets every {{ instance.plugin.labels?.operation?.toLowerCase() ?? 'operation' }} in it
-        to follow; ↺ puts one with its own level back.
+      <li v-if="!readonly" class="note">
+        Setting a group's level resets every {{ instance.plugin?.labels?.operation?.toLowerCase() ?? 'operation' }} in
+        it to follow; ↺ puts one with its own level back.
       </li>
-      <li>New groups start at Ask.</li>
+      <li v-if="!scope">New groups start at Ask.</li>
+      <li v-else-if="scope.kind === 'role'">
+        A role never goes above the endpoint's own level. Groups it has no level for, and new ones, are None.
+      </li>
+      <li v-else-if="!readonly">
+        Your role sets the most each one can do; ↺ on a group goes back to your role's level.
+      </li>
     </ul>
     <p v-if="pendingTotal" class="alert warn">
       {{ pendingTotal }} new write {{ pendingTotal === 1 ? 'operation is' : 'operations are' }} at Write but still
@@ -234,21 +335,36 @@ function status(op: Operation): { text: string; tone: string } {
               <span v-if="g.counts.pendingReview" class="pill warn">{{ g.counts.pendingReview }} to acknowledge</span>
             </div>
           </div>
-          <button class="btn-link small" type="button" @click="rename(g)">Rename</button>
-          <div class="segmented" role="radiogroup" :aria-label="`Access for ${g.label}`">
+          <button v-if="!scope" class="btn-link small" type="button" @click="rename(g)">Rename</button>
+          <span v-if="readonly" class="pill">{{ LEVEL_LABELS[g.level] }}</span>
+          <div v-else class="segmented" role="radiogroup" :aria-label="`Access for ${g.label}`">
             <button
               v-for="l in LEVELS"
               :key="l"
               type="button"
               role="radio"
-              :title="LEVEL_HELP[l]"
+              :title="groupLevelDisabled(g, l) ? capTitle : LEVEL_HELP[l]"
               :aria-checked="g.level === l"
+              :disabled="groupLevelDisabled(g, l)"
               :class="{ on: g.level === l, write: l === 'write' }"
               @click="setLevel(g, l)"
             >
               {{ LEVEL_LABELS[l] }}
             </button>
           </div>
+          <template v-if="scope && !readonly">
+            <button
+              v-if="groupEntries.has(g.key)"
+              class="reset"
+              type="button"
+              :title="scope.kind === 'role' ? 'Clear: None for this role' : 'Back to your role\'s level'"
+              :aria-label="`Clear the level of ${g.label}`"
+              @click="writeGroup(g.key, null)"
+            >
+              ↺
+            </button>
+            <span v-else class="reset-slot" aria-hidden="true" />
+          </template>
         </div>
 
         <div v-if="expanded.has(g.key) && opsOf(g.key).length" class="ops">
@@ -280,7 +396,7 @@ function status(op: Operation): { text: string; tone: string } {
                 Acknowledge
               </button>
               <label
-                v-if="instance.plugin.attestation"
+                v-if="!scope && instance.plugin?.attestation"
                 class="row small"
                 title="Calls must present the key from this operation's best-practice guide"
               >
@@ -292,7 +408,7 @@ function status(op: Operation): { text: string; tone: string } {
                 />
                 Guide
               </label>
-              <div class="segmented sm" role="radiogroup" :aria-label="`Level of ${op.key}`">
+              <div v-if="!readonly" class="segmented sm" role="radiogroup" :aria-label="`Level of ${op.key}`">
                 <button
                   v-for="l in levelsShown(op)"
                   :key="l"
@@ -300,7 +416,11 @@ function status(op: Operation): { text: string; tone: string } {
                   role="radio"
                   :aria-checked="op.level === l"
                   :disabled="levelDisabled(op, l)"
-                  :title="OP_LEVEL_HELP[kindOf(op)][l]"
+                  :title="
+                    scope && op.allowedLevels.includes(l) && levelDisabled(op, l)
+                      ? capTitle
+                      : OP_LEVEL_HELP[kindOf(op)][l]
+                  "
                   :class="{ on: op.level === l, write: l === 'write' }"
                   @click="setOpLevel(op, g, l)"
                 >
@@ -308,7 +428,7 @@ function status(op: Operation): { text: string; tone: string } {
                 </button>
               </div>
               <button
-                v-if="op.levelOverride !== null"
+                v-if="!readonly && op.levelOverride !== null"
                 class="reset"
                 type="button"
                 :title="`Back to the group's level (${LEVEL_LABELS[fromGroup(op, g)]})`"
@@ -317,7 +437,7 @@ function status(op: Operation): { text: string; tone: string } {
               >
                 ↺
               </button>
-              <span v-else class="reset-slot" aria-hidden="true" />
+              <span v-else-if="!readonly" class="reset-slot" aria-hidden="true" />
             </div>
           </div>
         </div>
