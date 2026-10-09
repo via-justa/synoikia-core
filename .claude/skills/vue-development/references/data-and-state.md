@@ -39,6 +39,10 @@ Writes go through the shared mutation composable in `src/composables/`, not raw 
 
 The admin listener streams core events on `/api/events` (SSE). One place opens the `EventSource` for admins and maps each event name to the query keys it invalidates. Pages don't open their own stream. A page that must react beyond a refresh subscribes through the same place and unsubscribes on unmount.
 
+### Clear the cache when the user changes
+
+The cache holds what the signed-in user may see. Clear it (`queryClient.clear()`) whenever the session user changes: sign-out, a 401 that ends the session, or a different user signing in on the same tab. Do it in one place that watches the session store's user, not in each view. Otherwise one user's data can show to the next. Keep a test that fails without it.
+
 ## Client state: Pinia
 
 Pinia holds only app-wide state that the server doesn't own: the session (who is signed in, role, login flow) and the live-event connection. Use setup stores:

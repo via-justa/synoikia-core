@@ -7,6 +7,14 @@ description: Write and review Vue 3 + TypeScript code in the admin UI (packages/
 
 The admin UI is a Vue 3 + TypeScript + Vite SPA served by core's admin listener. New code must look like the code around it. The priorities are simplicity, reuse and efficiency: one shared way to do each thing, no new dependency for what a few lines already do.
 
+## Where the code is today
+
+The skill describes the target. Much of the admin UI predates it, and a refactor will move it over. Until then:
+
+- **Shared pieces:** when a task needs one that doesn't exist yet (the `src/composables/` folder, the confirm composable, a query composable for an area), create it in the shape this skill describes and use it. Don't fall back to the old per-view pattern because the shared piece is missing.
+- **vue-query:** a page moves to vue-query only in the migration work, or when the task is to migrate it. A small change to a page that still loads with `http` into refs keeps that pattern, so the page stays consistent and the lockfile is untouched. Once `@tanstack/vue-query` is installed and a page is migrated, every change to that page uses it.
+- **Other gaps** (a literal color, a native dialog, an untyped prop) in code you touch: fix them when they are in the lines you change; otherwise leave them and mention them in the PR.
+
 Load a reference only when the task touches its area:
 
 | Task touches                                                                     | Read                                   |
@@ -18,7 +26,7 @@ Load a reference only when the task touches its area:
 ## The stack
 
 - **Vue 3**, always `<script setup lang="ts">` and the Composition API.
-- **Server state:** `@tanstack/vue-query` over the `http` client in `src/api.ts`. Server data never lives in a `ref` or a store.
+- **Server state:** `@tanstack/vue-query` over the `http` client in `src/api.ts`. Server data never lives in a `ref` or a store. The cache is cleared when the signed-in user changes.
 - **Client state:** Pinia setup stores, only for what is app-wide and not server-owned (the session and the live-event stream).
 - **Forms:** plain `v-model`. Core validates; the UI shows its message with `errorText`.
 - **Styling:** the design tokens and global classes in `src/styles.css`, plus scoped `<style>`. No UI kit, no CSS framework.
