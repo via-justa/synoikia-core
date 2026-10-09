@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import { errorText, http } from '../api';
-import LevelTable from '../components/LevelTable.vue';
+import { errorText } from '../api';
 import { ago } from '../format';
 import { useAppStore } from '../stores/app';
 import { useSessionStore } from '../stores/session';
-import type { Level, LevelView } from '../types';
+import AccessView from './instance/AccessView.vue';
 import RulesView from './instance/RulesView.vue';
 
 /** One endpoint as a user sees it (design §6.4): their operations and levels, read-only unless the role
@@ -16,31 +15,16 @@ const app = useAppStore();
 const session = useSessionStore();
 const id = computed(() => String(route.params.id));
 const endpoint = computed(() => app.mine.find((e) => e.id === id.value));
-const base = computed(() => `/api/me/endpoints/${id.value}`);
-const view = ref<LevelView>();
 const tab = ref<'access' | 'rules'>('access');
 const error = ref<string>();
 
-async function load() {
-  error.value = undefined;
+onMounted(async () => {
   try {
     if (!app.mine.length) await app.refreshMine();
-    view.value = await http.get<LevelView>(`${base.value}/access`);
   } catch (err) {
     error.value = errorText(err);
   }
-}
-onMounted(load);
-watch(id, load);
-
-async function apply(path: string, level: Level | null) {
-  error.value = undefined;
-  try {
-    view.value = await http.put<LevelView>(`${base.value}/${path}`, { level });
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
+});
 </script>
 
 <template>
@@ -77,15 +61,21 @@ async function apply(path: string, level: Level | null) {
         </template>
         <template v-else>The levels your role gives you. An administrator sets them.</template>
       </p>
-      <LevelTable
-        v-if="view"
-        :view="view"
-        layer="own"
-        :editable="!!session.role?.canSetOwnLevels"
-        @set-group="(key, level) => apply(`groups/${encodeURIComponent(key)}`, level)"
-        @set-op="(opId, level) => apply(`operations/${opId}`, level)"
+      <AccessView
+        :key="id"
+        :instance="{ id, slug: endpoint?.slug ?? '' }"
+        :scope="{ kind: 'own' }"
+        :readonly="!session.role?.canSetOwnLevels"
       />
     </div>
     <RulesView v-else :key="id" :instance="{ id }" own />
   </div>
 </template>
+
+<style scoped>
+h1 {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+</style>

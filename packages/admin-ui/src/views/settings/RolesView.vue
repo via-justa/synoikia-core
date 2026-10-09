@@ -82,8 +82,10 @@ const slugOf = (id: string) => app.instances.find((i) => i.id === id)?.slug ?? i
       for every role.
     </p>
     <p v-if="error" class="alert error" role="alert">{{ error }}</p>
-    <form class="row" @submit.prevent="create">
-      <input v-model="newName" class="grow" placeholder="New role name" aria-label="New role name" maxlength="64" />
+    <form class="row add" @submit.prevent="create">
+      <div class="field grow">
+        <input v-model="newName" placeholder="New role name" aria-label="New role name" maxlength="64" />
+      </div>
       <button class="btn btn-primary" type="submit" :disabled="!newName.trim()">Add role</button>
     </form>
 
@@ -126,6 +128,12 @@ const slugOf = (id: string) => app.instances.find((i) => i.id === id)?.slug ?? i
 </template>
 
 <style scoped>
+.add {
+  align-items: center;
+}
+.add .field {
+  margin: 0;
+}
 .role {
   display: flex;
   flex-direction: column;

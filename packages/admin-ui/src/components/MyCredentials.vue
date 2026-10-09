@@ -134,7 +134,7 @@ async function revoke(path: string, what: string) {
       New token
     </button>
 
-    <h2>My OAuth connections</h2>
+    <h2 class="next">My OAuth connections</h2>
     <p v-if="!liveGrants.length" class="small muted">No client has connected with your consent.</p>
     <table v-else class="table">
       <tbody>
@@ -162,6 +162,9 @@ async function revoke(path: string, what: string) {
 </template>
 
 <style scoped>
+.next {
+  margin-top: 24px;
+}
 .right {
   text-align: right;
 }

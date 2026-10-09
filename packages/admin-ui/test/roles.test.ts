@@ -71,7 +71,7 @@ describe('a non-admin user', () => {
     const { wrapper } = await mountAt('/my/i1');
     await flushPromises();
     expect(wrapper.text()).toContain('Apps');
-    expect(wrapper.find('select').exists()).toBe(false);
+    expect(wrapper.find('[role="radiogroup"]').exists()).toBe(false);
     expect(wrapper.text()).not.toContain('My pre-approval rules');
   });
 
@@ -85,10 +85,10 @@ describe('a non-admin user', () => {
     const { wrapper } = await mountAt('/my/i1');
     await flushPromises();
     expect(wrapper.text()).toContain('My pre-approval rules');
-    const select = wrapper.get('select[aria-label="Level of Apps"]');
-    const write = select.findAll('option').find((o) => o.text() === 'Write')!;
-    expect((write.element as HTMLOptionElement).disabled).toBe(true);
-    await select.setValue('read');
+    const control = wrapper.get('[aria-label="Access for Apps"]');
+    const button = (label: string) => control.findAll('button').find((b) => b.text() === label)!;
+    expect(button('Write').attributes('disabled')).toBeDefined();
+    await button('Read').trigger('click');
     await flushPromises();
     expect(calls.find((c) => c.method === 'PUT')).toMatchObject({
       path: '/api/me/endpoints/i1/groups/app',
@@ -128,7 +128,11 @@ describe('roles for admins', () => {
     const { wrapper } = await mountAt('/endpoints/nas/access?role=r1');
     await flushPromises();
     expect(wrapper.get('select#access-role').text()).toContain('Operators');
-    await wrapper.get('select[aria-label="Level of Apps"]').setValue('none');
+    await wrapper
+      .get('[aria-label="Access for Apps"]')
+      .findAll('button')
+      .find((b) => b.text() === 'None')!
+      .trigger('click');
     await flushPromises();
     expect(calls.find((c) => c.method === 'PUT')).toMatchObject({
       path: '/api/roles/r1/endpoints/i1/groups/app',
