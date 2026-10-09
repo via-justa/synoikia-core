@@ -97,6 +97,13 @@ export function registerMeRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
       throw new ValidationError('operation_not_reachable', 'You can only write rules for operations you can call');
   };
 
+  // What the rule editor needs from the manifest: the match fields and target scopes.
+  app.get('/api/me/endpoints/:id/rule-form', (c) => {
+    need(c, 'canManageOwnRules');
+    const { manifest } = ctx.instances.runtime(myInstance(c).id);
+    return c.json({ matchProfiles: manifest.matchProfiles, targets: manifest.targets ?? null });
+  });
+
   app.get('/api/me/endpoints/:id/rules', (c) => {
     need(c, 'canManageOwnRules');
     return c.json(myRules(c, myInstance(c).id));

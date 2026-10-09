@@ -17,7 +17,7 @@ const OIDC_ERRORS: Record<string, string> = {
   wrong_flow: 'Single sign-on failed. Try again.',
 };
 
-const step = ref<'password' | 'totp'>('password');
+const step = ref<'password' | 'totp' | 'signup'>('password');
 const username = ref('');
 const password = ref('');
 const code = ref('');
@@ -32,9 +32,9 @@ const redirect = computed(() => {
 });
 const oidcHref = computed(() => `/auth/oidc/start?returnTo=${encodeURIComponent(redirect.value)}`);
 const canSubmit = computed(() =>
-  step.value === 'password'
-    ? username.value.trim() !== '' && password.value !== '' && !submitting.value
-    : code.value.trim() !== '' && !submitting.value,
+  step.value === 'totp'
+    ? code.value.trim() !== '' && !submitting.value
+    : username.value.trim() !== '' && password.value !== '' && !submitting.value,
 );
 
 async function done(result: LoginResult) {
@@ -43,6 +43,7 @@ async function done(result: LoginResult) {
 
 function message(err: unknown, fallback: string) {
   if (err instanceof ApiError) {
+    if (step.value === 'signup' && err.status !== 429) return err.message;
     if (err.status === 429) return 'Too many attempts. Wait a few minutes and try again.';
     if (err.code === 'local_login_disabled') return 'Password sign-in is disabled. Use single sign-on.';
     if (err.status === 401) return fallback;
@@ -55,7 +56,9 @@ async function submit() {
   submitting.value = true;
   error.value = undefined;
   try {
-    if (step.value === 'password') {
+    if (step.value === 'signup') {
+      await done(await session.register(username.value.trim(), password.value));
+    } else if (step.value === 'password') {
       const result = await session.login(username.value.trim(), password.value);
       if (result === 'totp_required') {
         step.value = 'totp';
@@ -86,7 +89,10 @@ async function submit() {
       <BrandLockup tag="h1" :size="40" class="brand" />
       <p class="muted small tagline">Sign in to manage your self-hosted MCP servers.</p>
 
-      <template v-if="step === 'password'">
+      <template v-if="step === 'password' || step === 'signup'">
+        <p v-if="step === 'signup'" class="muted small hint">
+          Create an account. An administrator decides what it can reach.
+        </p>
         <template v-if="session.localLoginEnabled">
           <div class="field">
             <label for="username">Username</label>
@@ -94,7 +100,14 @@ async function submit() {
           </div>
           <div class="field">
             <label for="password">Password</label>
-            <input id="password" v-model="password" name="password" type="password" autocomplete="current-password" />
+            <input
+              id="password"
+              v-model="password"
+              name="password"
+              type="password"
+              :autocomplete="step === 'signup' ? 'new-password' : 'current-password'"
+            />
+            <p v-if="step === 'signup'" class="help">At least 12 characters.</p>
           </div>
         </template>
       </template>
@@ -114,7 +127,18 @@ async function submit() {
         type="submit"
         :disabled="!canSubmit"
       >
-        {{ submitting ? 'Signing in…' : step === 'totp' ? 'Verify' : 'Sign in' }}
+        {{ submitting ? 'Signing in…' : step === 'totp' ? 'Verify' : step === 'signup' ? 'Create account' : 'Sign in' }}
+      </button>
+      <button
+        v-if="session.signupOpen && step !== 'totp'"
+        class="btn-link small"
+        type="button"
+        @click="
+          step = step === 'signup' ? 'password' : 'signup';
+          error = undefined;
+        "
+      >
+        {{ step === 'signup' ? 'Back to sign-in' : 'Create account' }}
       </button>
 
       <template v-if="session.oidcEnabled && step === 'password'">

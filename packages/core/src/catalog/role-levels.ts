@@ -107,6 +107,7 @@ export interface LevelView {
     description: string | null;
     group: string | null;
     classification: 'read' | 'write' | 'locked';
+    matchProfile: string | null;
     allowedLevels: AccessLevel[];
     endpointLevel: AccessLevel;
     /** The role's entry for this operation; null follows the role's group level. */
@@ -164,6 +165,7 @@ export function levelView(
       description: describeOf(op),
       group: group?.key ?? null,
       classification: op.locked ? ('locked' as const) : op.classification,
+      matchProfile: op.matchProfile,
       allowedLevels: allowedLevels(op),
       endpointLevel,
       roleLevel: cap?.role?.op ?? null,

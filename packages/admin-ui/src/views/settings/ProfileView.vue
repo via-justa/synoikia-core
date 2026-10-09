@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { errorText, http } from '../../api';
+import MyCredentials from '../../components/MyCredentials.vue';
 import TotpEnrollment from '../../components/TotpEnrollment.vue';
 import { useSessionStore } from '../../stores/session';
 import { THEME_PREFS, getTheme, setTheme } from '../../theme';
@@ -89,6 +90,10 @@ async function enrolled() {
 
 <template>
   <div v-if="me" class="stack">
+    <p class="small muted">
+      Signed in as <strong>{{ me.username }}</strong> · role <strong>{{ me.role.name }}</strong>
+    </p>
+    <MyCredentials />
     <section class="card">
       <h2>Appearance</h2>
       <p class="small muted">Auto follows your system setting. Saved in this browser.</p>
