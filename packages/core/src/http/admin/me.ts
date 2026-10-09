@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { AppContext } from '../../app.js';
 import type { PublicRole } from '../../auth/roles.js';
 import { levelView, roleHasInstance, roleInstanceIds, setOwnLevel } from '../../catalog/role-levels.js';
+import { findRegistryEntries, scopesFromQuery } from '../../catalog/registry.js';
 import { createRule, deleteRule, listRules, updateRule } from '../../catalog/rules.js';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../errors.js';
 import { ACCESS_LEVELS } from '../../gate/access.js';
@@ -102,6 +103,51 @@ export function registerMeRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     need(c, 'canManageOwnRules');
     const { manifest } = ctx.instances.runtime(myInstance(c).id);
     return c.json({ matchProfiles: manifest.matchProfiles, targets: manifest.targets ?? null });
+  });
+
+  /** The match fields of operations the caller may write rules for: reachable, plain writes. */
+  const ruleFields = (c: Context<AdminEnv>, instanceId: string) => {
+    const { manifest } = ctx.instances.runtime(instanceId);
+    const fields = view(c, instanceId)
+      .operations.filter((o) => o.classification === 'write' && o.matchProfile)
+      .flatMap((o) => manifest.matchProfiles[o.matchProfile!] ?? []);
+    return { manifest, fields };
+  };
+
+  // The editor's pickers, limited to what a rule the caller may write can name (design §6.4).
+  app.get('/api/me/endpoints/:id/options/:source', async (c) => {
+    need(c, 'canManageOwnRules');
+    const { id } = myInstance(c);
+    const source = c.req.param('source');
+    if (
+      !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(source) ||
+      !ruleFields(c, id).fields.some((f) => f.optionsSource === source)
+    )
+      throw new NotFoundError('options_not_found', 'No such options source');
+    // Each call reaches the upstream with the instance's credential: a budget per user.
+    if (!ctx.limiter.allows(`options:${me(c).id}`, 60, 60_000))
+      return c.json({ error: 'rate_limited', message: 'Too many requests; slow down' }, 429);
+    const rt = ctx.instances.runtime(id);
+    const options = await rt.plugin().call('optionsFor', { source, query: c.req.query('q')?.slice(0, 200) });
+    // Only what the picker shows, redacted: `meta` and secrets in labels never reach a non-admin.
+    return c.json(rt.redact(options.map(({ value, label }) => ({ value, label }))));
+  });
+
+  app.get('/api/me/endpoints/:id/registry', (c) => {
+    need(c, 'canManageOwnRules');
+    const { id } = myInstance(c);
+    const { manifest, fields } = ruleFields(c, id);
+    const kinds = new Set(
+      [manifest.targets?.registryKind, ...(manifest.targets?.scopes ?? []).map((s) => s.registryKind)].filter(Boolean),
+    );
+    const query = c.req.query();
+    if (!fields.some((f) => f.field === '$targets') || !query.kind || !kinds.has(query.kind))
+      throw new NotFoundError('registry_not_found', 'No such registry kind');
+    // Only what the picker shows: attributes stay out, they can hold upstream secrets.
+    const entries = findRegistryEntries(ctx.db, id, { ...query, scopes: scopesFromQuery(query) }).map(
+      ({ kind, id: extId, name, parentId, scopes }) => ({ kind, id: extId, name, parentId, scopes }),
+    );
+    return c.json(ctx.instances.runtime(id).redact(entries));
   });
 
   app.get('/api/me/endpoints/:id/rules', (c) => {

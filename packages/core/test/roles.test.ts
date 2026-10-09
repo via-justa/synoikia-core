@@ -2,6 +2,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
+import { applyRegistrySync } from '../src/catalog/registry.js';
+import { operations, plugins } from '../src/db/schema.js';
 import { evaluatePreApproval } from '../src/gate/preapproval.js';
 import { createAdminApp } from '../src/http/admin-app.js';
 import { updateSettings } from '../src/settings.js';
@@ -283,5 +286,70 @@ describe('sign-up names', () => {
     expect(await taken.json()).toMatchObject({ error: 'registration_failed' });
     const service = await visitor.post('/auth/register', { username: 'service:abc', password: PASSWORD });
     expect(await service.json()).toMatchObject({ error: 'invalid_username' });
+  });
+});
+
+describe('own-rule pickers', () => {
+  it('serve only the option sources and registry kinds of rules the user may write', async () => {
+    const t = await setup({ canManageOwnRules: true });
+    const base = `/api/me/endpoints/${t.instanceId}`;
+    // The echo fixture declares no pickers: give its match profile a targets field and an options source.
+    const pluginRow = t.ctx.db.select().from(plugins).get()!;
+    const manifest = structuredClone(pluginRow.manifest) as {
+      targets?: unknown;
+      matchProfiles: Record<string, unknown[]>;
+    };
+    manifest.targets = {
+      label: 'Volumes',
+      registryKind: 'volume',
+      scopes: [{ key: 'pool', label: 'Pool', registryKind: 'pool' }],
+    };
+    manifest.matchProfiles['name-prefix'] = [
+      { field: '/name', label: 'Name', op: 'prefix', widget: 'prefix', optionsSource: 'names' },
+      { field: '$targets', label: 'Volumes', widget: 'registry-picker' },
+    ];
+    // A read with its own profile: its source must stay closed, rules only fit writes.
+    manifest.matchProfiles['reads'] = [
+      { field: '/q', label: 'Query', op: 'eq', widget: 'select', optionsSource: 'readnames' },
+    ];
+    t.ctx.db.update(plugins).set({ manifest }).where(eq(plugins.id, pluginRow.id)).run();
+    t.ctx.db.update(operations).set({ matchProfile: 'reads' }).where(eq(operations.key, 'echo.query')).run();
+    applyRegistrySync(t.ctx.db, t.instanceId, [
+      { kind: 'volume', id: 'vol/a', name: 'A', attrs: { token: 'upstream-secret' } },
+      { kind: 'disk', id: 'sda', name: 'Disk' },
+    ]);
+
+    // echo.set is unreachable until the role opens it: no pickers yet.
+    expect((await t.user.get(`${base}/registry?kind=volume`)).status).toBe(404);
+    await t.admin.put(`/api/roles/${t.roleId}/endpoints/${t.instanceId}/groups/echo`, { level: 'ask' });
+
+    const res = await t.user.get(`${base}/registry?kind=volume`);
+    expect(res.status).toBe(200);
+    const body = JSON.stringify(await res.json());
+    expect(body).toContain('vol/a');
+    expect(body).not.toContain('upstream-secret');
+    expect((await t.user.get(`${base}/registry?kind=disk`)).status).toBe(404);
+    expect((await t.user.get(`${base}/options/other`)).status).toBe(404);
+    expect((await t.user.get(`${base}/options/readnames`)).status).toBe(404);
+    // Options reach the user as value and label only, redacted.
+    await t.admin.put(`/api/instances/${t.instanceId}/connection`, {
+      secrets: { token: 'connection-secret-4321' },
+    });
+    const options = await t.user.get(`${base}/options/names?q=x`);
+    expect(options.status).toBe(200);
+    const text = JSON.stringify(await options.json());
+    expect(text).toContain('"value":"a"');
+    expect(text).not.toContain('connection-secret-4321');
+    expect(text).not.toContain('meta-secret');
+    expect((await t.user.get(`/api/me/endpoints/${t.otherId}/registry?kind=volume`)).status).toBe(404);
+
+    // Declared targets alone open nothing: a rule field must select them.
+    manifest.matchProfiles['name-prefix'] = manifest.matchProfiles['name-prefix']!.slice(0, 1);
+    t.ctx.db.update(plugins).set({ manifest }).where(eq(plugins.id, pluginRow.id)).run();
+    expect((await t.user.get(`${base}/registry?kind=volume`)).status).toBe(404);
+
+    await t.admin.patch(`/api/roles/${t.roleId}`, { canManageOwnRules: false });
+    expect((await t.user.get(`${base}/registry?kind=volume`)).status).toBe(403);
+    expect((await t.user.get(`${base}/options/names`)).status).toBe(403);
   });
 });

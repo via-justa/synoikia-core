@@ -421,7 +421,7 @@ const TIPS = {
           <RegistryPicker
             v-if="f.field === '$targets' && targets"
             v-model="valueOf(f).targets"
-            :instance-id="instance.id"
+            :base="base"
             :targets="targets"
             :options="targetOptions(f)"
           />

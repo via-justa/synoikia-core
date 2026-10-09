@@ -168,3 +168,47 @@ describe('sign-up', () => {
     });
   });
 });
+
+describe('own pre-approval rules', () => {
+  it('fill the editor’s pickers from the user’s own endpoint routes', async () => {
+    const own = {
+      ...view,
+      operations: [{ ...view.operations[0]!, matchProfile: 'vol' }],
+    };
+    const { calls } = fakeApi({
+      'GET /api/session': asUser({ canManageOwnRules: true }),
+      'GET /api/me/endpoints': mine,
+      'GET /api/me/endpoints/i1/access': own,
+      'GET /api/me/endpoints/i1/rules': [],
+      'GET /api/me/endpoints/i1/rule-form': {
+        matchProfiles: {
+          vol: [
+            { field: '/name', label: 'Name', op: 'in', widget: 'select', optionsSource: 'names' },
+            { field: '$targets', label: 'Volumes', widget: 'registry-picker' },
+          ],
+        },
+        targets: { label: 'Volume', registryKind: 'volume', scopes: [] },
+      },
+      'GET /api/me/endpoints/i1/options/names': [{ value: 'a', label: 'A' }],
+      'GET /api/me/endpoints/i1/registry': [{ kind: 'volume', id: 'vol/a', name: 'A', parentId: null, scopes: null }],
+    });
+    const { wrapper } = await mountAt('/my/i1');
+    await flushPromises();
+    await wrapper
+      .findAll('a')
+      .find((a) => a.text() === 'My pre-approval rules')!
+      .trigger('click');
+    await flushPromises();
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'New rule')!
+      .trigger('click');
+    await flushPromises();
+    await wrapper.get('select#r-op').setValue('op1');
+    await flushPromises();
+    const paths = calls.map((c) => c.path);
+    expect(paths.some((p) => p.startsWith('/api/me/endpoints/i1/registry?'))).toBe(true);
+    expect(paths).toContain('/api/me/endpoints/i1/options/names');
+    expect(paths.some((p) => p.startsWith('/api/instances') || p === '/api/plugins')).toBe(false);
+  });
+});
