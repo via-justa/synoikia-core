@@ -5,7 +5,9 @@ import { parseManifest, SDK_VERSION } from '@synoikia/plugin-sdk';
 import type { Manifest } from '@synoikia/plugin-sdk';
 import { asc, count, eq } from 'drizzle-orm';
 import { writeAudit } from '../audit.js';
+import type { PublicRole } from '../auth/roles.js';
 import { applyRegistrySync } from '../catalog/registry.js';
+import { roleInstanceIds } from '../catalog/role-levels.js';
 import { applyCatalogSync } from '../catalog/sync.js';
 import type { SyncSummary } from '../catalog/sync.js';
 import { aad } from '../crypto/index.js';
@@ -18,6 +20,7 @@ import type { CoreEvents } from '../events.js';
 import { createInstanceRedactor, GLOBAL_SENSITIVE_KEYS } from '../gate/redact.js';
 import type { InstanceRuntime } from '../gate/pipeline.js';
 import { PluginProcess, PluginUnavailableError } from '../plugins/process.js';
+import { getSettings } from '../settings.js';
 import { PluginSupervisor } from '../plugins/supervisor.js';
 import type { InstanceStatus } from '../plugins/supervisor.js';
 import { mergeSecrets, storedSecretsFor, summarizeSecrets, validateConnection } from './connection.js';
@@ -147,6 +150,34 @@ export class InstanceManager {
       .orderBy(asc(pluginInstances.slug))
       .all()
       .map(({ instance, plugin }) => this.describe(instance, plugin));
+  }
+
+  /** The role's endpoints at `mcpBase`, with live status only where the role shows it (design §6.4). */
+  listForRole(role: PublicRole, mcpBase: string) {
+    const mine = role.isAdmin ? null : new Set(roleInstanceIds(this.db, role.id));
+    const mode = getSettings(this.db, 'mcp').defaultAuthMode;
+    return this.list()
+      .filter((i) => !mine || mine.has(i.id))
+      .map((i) => ({
+        id: i.id,
+        slug: i.slug,
+        displayName: i.displayName,
+        endpointUrl: `${mcpBase}/${i.slug}`,
+        authMode: i.authMode ?? mode,
+        ...(role.isAdmin || role.canSeeStatus
+          ? {
+              status: {
+                enabled: i.enabled,
+                state: i.status,
+                error: i.statusError,
+                plugin: i.plugin.name,
+                upstreamVersion: i.upstreamVersion,
+                lastSyncedAt: i.lastSyncedAt,
+                lastSyncStatus: i.lastSyncStatus,
+              },
+            }
+          : {}),
+      }));
   }
 
   get(id: string) {
