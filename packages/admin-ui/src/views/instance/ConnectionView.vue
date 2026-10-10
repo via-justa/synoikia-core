@@ -1,36 +1,57 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import { errorText, http } from '../../api';
+import { computed, ref, watch } from 'vue';
+import { errorText } from '../../api';
 import ConnectClient from '../../components/ConnectClient.vue';
 import MarkdownLite from '../../components/MarkdownLite';
 import SchemaForm from '../../components/SchemaForm.vue';
-import { useRefreshOverview } from '../../composables/useOverview';
+import {
+  useConnectionQuery,
+  useSaveConnection,
+  useSyncInstance,
+  useTestConnection,
+} from '../../composables/useInstance';
+import { useSettingsQuery } from '../../composables/useSettings';
 import { ago } from '../../format';
-import type { Connection, Instance, Settings } from '../../types';
+import type { Instance } from '../../types';
 
 const props = defineProps<{ instance: Instance }>();
-const refreshOverview = useRefreshOverview();
-const conn = ref<Connection>();
+const id = () => props.instance.id;
+const connQuery = useConnectionQuery(id);
+const saveConnection = useSaveConnection(id);
+const testConnection = useTestConnection(id);
+const syncInstance = useSyncInstance(id);
+const conn = computed(() => connQuery.data.value);
 const config = ref<Record<string, unknown>>({});
 const secretPatch = ref<Record<string, string | null>>({});
-const message = ref<{ kind: 'ok' | 'error' | 'warn'; text: string }>();
-const busy = ref<'save' | 'test' | 'sync'>();
+const result = ref<{ kind: 'ok' | 'error' | 'warn'; text: string }>();
+const message = computed(
+  () =>
+    result.value ??
+    (!conn.value && connQuery.error.value
+      ? { kind: 'error' as const, text: errorText(connQuery.error.value) }
+      : undefined),
+);
+const busy = computed(() =>
+  saveConnection.isPending.value
+    ? 'save'
+    : testConnection.isPending.value
+      ? 'test'
+      : syncInstance.isPending.value
+        ? 'sync'
+        : undefined,
+);
 
-async function load() {
-  conn.value = await http.get<Connection>(`/api/instances/${props.instance.id}/connection`);
+// The form is a draft: it takes the stored values once, and again only after a save.
+function resetDraft() {
+  if (!conn.value) return;
   config.value = { ...conn.value.config };
   secretPatch.value = {};
 }
-onMounted(() => load().catch((err) => (message.value = { kind: 'error', text: errorText(err) })));
+watch(conn, (c, old) => !old && c && resetDraft(), { immediate: true });
 
 // For the "Connect a client" card: whether clients may self-register (a Cloudflare portal needs it).
-const dynamicRegistration = ref<boolean | null>(null);
-onMounted(() =>
-  http
-    .get<Settings>('/api/settings')
-    .then((s) => (dynamicRegistration.value = s.mcp.allowDynamicRegistration))
-    .catch(() => undefined),
-);
+const settingsQuery = useSettingsQuery();
+const dynamicRegistration = computed(() => settingsQuery.data.value?.mcp.allowDynamicRegistration ?? null);
 
 const body = () => ({
   config: config.value,
@@ -38,55 +59,48 @@ const body = () => ({
   secrets: Object.fromEntries(Object.entries(secretPatch.value).filter(([, v]) => v !== '')),
 });
 
-async function run(kind: 'save' | 'test' | 'sync', fn: () => Promise<void>) {
-  busy.value = kind;
-  message.value = undefined;
-  try {
-    await fn();
-  } catch (err) {
-    message.value = { kind: 'error', text: errorText(err) };
-  } finally {
-    busy.value = undefined;
-  }
+const failed = (err: unknown) => (result.value = { kind: 'error', text: errorText(err) });
+
+function save() {
+  result.value = undefined;
+  saveConnection.mutate(body(), {
+    onSuccess: () => {
+      resetDraft();
+      result.value = { kind: 'ok', text: 'Saved. The endpoint restarted with the new connection.' };
+    },
+    onError: failed,
+  });
 }
 
-const save = () =>
-  run('save', async () => {
-    await http.put(`/api/instances/${props.instance.id}/connection`, body());
-    await load();
-    await refreshOverview();
-    message.value = { kind: 'ok', text: 'Saved. The endpoint restarted with the new connection.' };
+function test() {
+  result.value = undefined;
+  testConnection.mutate(body(), {
+    onSuccess: (res) =>
+      (result.value = res.ok
+        ? {
+            kind: 'ok',
+            text: `Connection works${res.version ? ` (upstream ${res.version})` : ''}.${res.message ? ` ${res.message}` : ''}`,
+          }
+        : { kind: 'error', text: `Connection failed: ${res.message ?? 'unknown error'}` }),
+    onError: failed,
   });
+}
 
-const test = () =>
-  run('test', async () => {
-    const res = await http.post<{ ok: boolean; message?: string; version?: string }>(
-      `/api/instances/${props.instance.id}/connection/test`,
-      body(),
-    );
-    message.value = res.ok
-      ? {
-          kind: 'ok',
-          text: `Connection works${res.version ? ` (upstream ${res.version})` : ''}.${res.message ? ` ${res.message}` : ''}`,
-        }
-      : { kind: 'error', text: `Connection failed: ${res.message ?? 'unknown error'}` };
+function sync() {
+  result.value = undefined;
+  syncInstance.mutate(undefined, {
+    onSuccess: (res) =>
+      (result.value = {
+        kind: res.pendingReview.length ? 'warn' : 'ok',
+        text:
+          `Synced: ${res.added} new, ${res.updated} updated, ${res.staled} removed.` +
+          (res.pendingReview.length
+            ? ` ${res.pendingReview.length} new write(s) wait for review on the Access page.`
+            : ''),
+      }),
+    onError: failed,
   });
-
-const sync = () =>
-  run('sync', async () => {
-    const res = await http.post<{ added: number; updated: number; staled: number; pendingReview: string[] }>(
-      `/api/instances/${props.instance.id}/sync`,
-    );
-    await refreshOverview();
-    message.value = {
-      kind: res.pendingReview.length ? 'warn' : 'ok',
-      text:
-        `Synced: ${res.added} new, ${res.updated} updated, ${res.staled} removed.` +
-        (res.pendingReview.length
-          ? ` ${res.pendingReview.length} new write(s) wait for review on the Access page.`
-          : ''),
-    };
-  });
+}
 </script>
 
 <template>

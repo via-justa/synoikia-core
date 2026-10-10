@@ -1,46 +1,33 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { errorText, http } from '../../api';
-import type { Instance, RoleRow } from '../../types';
+import { errorText } from '../../api';
+import { useRolesQuery, useSetRoleInstances } from '../../composables/useRoles';
+import type { Instance } from '../../types';
 import AccessView from './AccessView.vue';
 
 /** The Access tab (design §8.2): the endpoint's own levels (the Admin role's), or another role's maximums. */
 const props = defineProps<{ instance: Instance }>();
 const route = useRoute();
 const router = useRouter();
-const roles = ref<RoleRow[]>([]);
+const rolesQuery = useRolesQuery();
+const setInstances = useSetRoleInstances();
+const roles = computed(() => rolesQuery.data.value ?? []);
 const roleId = computed(() => (typeof route.query.role === 'string' ? route.query.role : 'admin'));
 const role = computed(() => roles.value.find((r) => r.id === roleId.value));
 const inRole = computed(() => role.value?.instanceIds.includes(props.instance.id) ?? false);
-const error = ref<string>();
-
-async function load() {
-  error.value = undefined;
-  try {
-    roles.value = await http.get<RoleRow[]>('/api/roles');
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
-onMounted(load);
-watch(roleId, load);
+const error = computed(
+  () => setInstances.errorText.value ?? (rolesQuery.error.value ? errorText(rolesQuery.error.value) : undefined),
+);
 
 function pick(e: Event) {
   const id = (e.target as HTMLSelectElement).value;
   void router.replace({ query: id === 'admin' ? {} : { role: id } });
 }
 
-async function addToRole() {
+function addToRole() {
   if (!role.value) return;
-  try {
-    await http.put(`/api/roles/${role.value.id}/instances`, {
-      instanceIds: [...role.value.instanceIds, props.instance.id],
-    });
-    await load();
-  } catch (err) {
-    error.value = errorText(err);
-  }
+  setInstances.mutate({ id: role.value.id, instanceIds: [...role.value.instanceIds, props.instance.id] });
 }
 </script>
 

@@ -1,18 +1,28 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { errorText, http } from '../../api';
+import { errorText } from '../../api';
 import ChipsInput from '../../components/ChipsInput.vue';
 import ModalDialog from '../../components/ModalDialog.vue';
-import { useRefreshOverview } from '../../composables/useOverview';
+import {
+  useDeleteInstance,
+  useRevokeSessionGrant,
+  useSessionGrantsQuery,
+  useUpdateInstance,
+} from '../../composables/useInstance';
 import { AUTH_MODE_LABELS } from '../../format';
 import { AUTH_MODES } from '../../types';
-import type { AuthMode, Instance, SessionGrant } from '../../types';
+import type { AuthMode, Instance } from '../../types';
 
 const props = defineProps<{ instance: Instance }>();
-const refreshOverview = useRefreshOverview();
 const router = useRouter();
+const id = () => props.instance.id;
+const update = useUpdateInstance(id);
+const del = useDeleteInstance(id);
+const grantsQuery = useSessionGrantsQuery(id);
+const revoke = useRevokeSessionGrant(id);
 
+// The form is a draft taken from the instance once; a refetch of the overview leaves the edits alone.
 const s = props.instance.settings;
 const form = ref({
   displayName: props.instance.displayName,
@@ -33,31 +43,19 @@ const form = ref({
 });
 const message = ref<{ kind: 'ok' | 'error'; text: string }>();
 
-const grants = ref<SessionGrant[]>([]);
-const grantError = ref<string>();
-async function loadGrants() {
-  try {
-    grants.value = await http.get<SessionGrant[]>(`/api/instances/${props.instance.id}/session-grants`);
-  } catch (err) {
-    grantError.value = errorText(err);
-  }
-}
-async function revokeGrant(id: string) {
-  try {
-    await http.del(`/api/instances/${props.instance.id}/session-grants/${id}`);
-    await loadGrants();
-  } catch (err) {
-    grantError.value = errorText(err);
-  }
-}
-onMounted(loadGrants);
+const grants = computed(() => grantsQuery.data.value ?? []);
+const grantError = computed(
+  () => revoke.errorText.value ?? (grantsQuery.error.value ? errorText(grantsQuery.error.value) : undefined),
+);
+const revokeGrant = (grantId: string) => revoke.mutate(grantId);
 const deleting = ref<{ confirm: string; note?: string }>();
 
+// Async, not callbacks: a new slug or a delete drops this page from the refreshed overview before the navigation.
 async function save() {
   message.value = undefined;
   const f = form.value;
   try {
-    const updated = await http.patch<Instance>(`/api/instances/${props.instance.id}`, {
+    const updated = await update.mutateAsync({
       displayName: f.displayName,
       slug: f.slug !== props.instance.slug ? f.slug : undefined,
       enabled: f.enabled,
@@ -78,7 +76,6 @@ async function save() {
         memoryMb: f.memoryMb,
       },
     });
-    await refreshOverview();
     if (updated.slug !== props.instance.slug) await router.replace(`/endpoints/${updated.slug}/settings`);
     message.value = { kind: 'ok', text: 'Saved.' };
   } catch (err) {
@@ -90,8 +87,7 @@ async function remove() {
   const d = deleting.value;
   if (!d) return;
   try {
-    await http.del(`/api/instances/${props.instance.id}`, { confirm: d.confirm });
-    await refreshOverview();
+    await del.mutateAsync(d.confirm);
     await router.replace('/');
   } catch (err) {
     deleting.value = { ...d, note: errorText(err) };

@@ -1,7 +1,8 @@
 import { flushPromises, mount } from '@vue/test-utils';
+import type { DOMWrapper } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import SchemaForm from '../src/components/SchemaForm.vue';
-import { fakeApi, mountAt, signedIn } from './helpers';
+import { fakeApi, json, mountAt, signedIn } from './helpers';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -60,6 +61,16 @@ const op = (key: string, extra: Record<string, unknown> = {}) => ({
 });
 
 const WRITE = ['none', 'ask', 'write'];
+
+/** Clicks a button in the open dialog. */
+async function clickIn(body: DOMWrapper<Element>, label: string) {
+  await body
+    .get('[role="dialog"]')
+    .findAll('button')
+    .find((b) => b.text() === label)!
+    .trigger('click');
+  await flushPromises();
+}
 
 describe('Access page', () => {
   function api(extra: Record<string, unknown> = {}) {
@@ -152,12 +163,12 @@ describe('Access page', () => {
 
   it('sets every group from the dropdown after one confirm, Write included', async () => {
     const { calls } = api({ 'POST /api/instances/i1/groups/bulk-level': [] });
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const { wrapper, body } = await mountAt('/endpoints/nas/access');
     const bulk = wrapper.get('select.bulk');
     expect(bulk.findAll('option').map((o) => o.text())).toEqual(['Set all groups…', 'None', 'Read', 'Ask', 'Write']);
     await bulk.setValue('write');
     await flushPromises();
+    await clickIn(body, 'Set all groups');
     expect(body.find('[role="dialog"]').exists()).toBe(false);
     expect((bulk.element as HTMLSelectElement).value).toBe('');
     expect(calls.find((c) => c.path === '/api/instances/i1/groups/bulk-level')?.body).toEqual({ level: 'write' });
@@ -170,8 +181,7 @@ describe('Access page', () => {
       'PATCH /api/instances/i1/operations/op-app.query': {},
       'PATCH /api/instances/i1/operations/op-app.start': {},
     });
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
-    const { wrapper } = await mountAt('/endpoints/nas/access');
+    const { wrapper, body } = await mountAt('/endpoints/nas/access');
     await wrapper.get('[data-group="app"] .caret').trigger('click');
     const radios = (key: string) => wrapper.get(`[data-op="${key}"]`).findAll('[role="radio"]');
     const patched = (key: string) => calls.filter((c) => c.path === `/api/instances/i1/operations/op-${key}`);
@@ -198,7 +208,8 @@ describe('Access page', () => {
       .find((b) => b.text() === 'Ask')!
       .trigger('click');
     await flushPromises();
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('fresh authenticator code'));
+    expect(body.get('[role="dialog"]').text()).toContain('fresh authenticator code');
+    await clickIn(body, 'Continue');
     expect(patched('app.delete')[0]?.body).toEqual({ level: 'ask' });
 
     // A read at its own Ask.
@@ -225,12 +236,11 @@ describe('Access page', () => {
     expect(wrapper.get('[data-op="app.redeploy"]').text()).not.toContain('own level');
 
     // Write on a plain write needs no confirmation.
-    vi.mocked(window.confirm).mockClear();
     await radios('app.start')
       .find((b) => b.text() === 'Write')!
       .trigger('click');
     await flushPromises();
-    expect(window.confirm).not.toHaveBeenCalled();
+    expect(body.find('[role="dialog"]').exists()).toBe(false);
     expect(patched('app.start')[0]?.body).toEqual({ level: 'write' });
   });
 
@@ -703,5 +713,234 @@ describe('Shell and settings', () => {
     expect(steps).toContain('https://claude.ai/api/mcp/auth_callback');
     expect(steps).toContain('https://<portal-hostname>/servers-callback');
     expect(steps).toContain('Optional');
+  });
+});
+
+describe('Endpoint pages on the query cache', () => {
+  const groups = [
+    {
+      key: 'app',
+      label: 'Apps',
+      level: 'ask',
+      stale: false,
+      counts: { read: 0, write: 1, locked: 1, pendingReview: 0, overridden: 0 },
+    },
+  ];
+  const lockedOp = op('app.delete', {
+    classification: 'write',
+    locked: true,
+    level: 'none',
+    allowedLevels: ['none', 'ask'],
+    reachable: false,
+    mode: null,
+    reason: 'locked_not_opted_in',
+  });
+  const accessApi = (extra: Record<string, unknown> = {}) =>
+    fakeApi({
+      'GET /api/session': signedIn,
+      'GET /api/overview': overview,
+      'GET /api/instances/i1/groups': groups,
+      'GET /api/instances/i1/operations': [lockedOp],
+      ...extra,
+    });
+  const writes = (calls: { method: string }[]) => calls.filter((c) => c.method !== 'GET');
+
+  it('sends nothing when the bulk-level or locked-operation dialog is cancelled', async () => {
+    const { calls } = accessApi();
+    const { wrapper, body } = await mountAt('/endpoints/nas/access');
+    await wrapper.get('select.bulk').setValue('none');
+    await flushPromises();
+    expect(body.get('[role="dialog"]').text()).toContain('Set every group on /nas to None?');
+    expect(body.get('[role="dialog"]').text()).toContain('Operations with their own level go back');
+    await clickIn(body, 'Cancel');
+    expect(body.find('[role="dialog"]').exists()).toBe(false);
+
+    await wrapper.get('[data-group="app"] .caret').trigger('click');
+    await wrapper
+      .get('[data-op="app.delete"]')
+      .findAll('[role="radio"]')
+      .find((b) => b.text() === 'Ask')!
+      .trigger('click');
+    await flushPromises();
+    expect(body.get('[role="dialog"]').text()).toContain('app.delete is locked (destructive or irreversible).');
+    await clickIn(body, 'Cancel');
+    expect(writes(calls)).toEqual([]);
+  });
+
+  it('renames a group from the prompt dialog, and sends nothing on cancel or an unchanged label', async () => {
+    const { calls } = accessApi({ 'PATCH /api/instances/i1/groups/app': {} });
+    const { wrapper, body } = await mountAt('/endpoints/nas/access');
+    const rename = () =>
+      wrapper
+        .get('[data-group="app"]')
+        .findAll('button')
+        .find((b) => b.text() === 'Rename')!
+        .trigger('click');
+    await rename();
+    expect(body.get('[role="dialog"]').text()).toContain('Label for app');
+    expect(body.get<HTMLInputElement>('[role="dialog"] input').element.value).toBe('Apps');
+    await clickIn(body, 'Cancel');
+    await rename();
+    await clickIn(body, 'Rename');
+    expect(writes(calls)).toEqual([]);
+
+    await rename();
+    await body.get('[role="dialog"] input').setValue('  Applications ');
+    await clickIn(body, 'Rename');
+    expect(writes(calls)).toEqual([
+      { method: 'PATCH', path: '/api/instances/i1/groups/app', body: { label: 'Applications' } },
+    ]);
+  });
+
+  const rule = {
+    id: 'r1',
+    operationId: 'op-app.start',
+    match: [],
+    rateLimit: null,
+    windowSeconds: null,
+    expiresAt: null,
+    reason: 'nightly restarts',
+    enabled: true,
+    createdAt: '2026-01-01T00:00:00Z',
+    operation: { id: 'op-app.start', key: 'app.start', locked: false, matchProfile: null },
+    inert: null,
+    strictMissAt: null,
+    owner: null,
+  };
+  const rulesApi = (extra: Record<string, unknown> = {}) =>
+    fakeApi({
+      'GET /api/session': signedIn,
+      'GET /api/overview': overview,
+      'GET /api/instances/i1/rules': [rule],
+      'GET /api/instances/i1/operations': [op('app.start', { classification: 'write', mode: 'approve' })],
+      'GET /api/plugins': [{ id: 'p1', manifest: {} }],
+      ...extra,
+    });
+
+  it('deletes a rule only after the dialog confirms it', async () => {
+    const { calls } = rulesApi({ 'DELETE /api/instances/i1/rules/r1': {} });
+    const { wrapper, body } = await mountAt('/endpoints/nas/rules');
+    const del = () =>
+      wrapper
+        .findAll('button')
+        .find((b) => b.text() === 'Delete')!
+        .trigger('click');
+    await del();
+    expect(body.get('[role="dialog"]').text()).toContain('Delete the rule for app.start?');
+    await clickIn(body, 'Cancel');
+    expect(writes(calls)).toEqual([]);
+    await del();
+    await clickIn(body, 'Delete');
+    expect(writes(calls)).toEqual([{ method: 'DELETE', path: '/api/instances/i1/rules/r1', body: undefined }]);
+  });
+
+  it('keeps the rule editor draft when the rules refetch in the background', async () => {
+    const { calls } = rulesApi();
+    const { wrapper, body, queryClient } = await mountAt('/endpoints/nas/rules');
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Edit')!
+      .trigger('click');
+    await body.get('#r-reason').setValue('changed reason');
+    await queryClient.invalidateQueries();
+    await flushPromises();
+    expect(calls.filter((c) => c.path === '/api/instances/i1/rules')).toHaveLength(2);
+    expect(body.get<HTMLInputElement>('#r-reason').element.value).toBe('changed reason');
+  });
+
+  it('keeps connection edits through a sync, and takes the stored values again after a save', async () => {
+    let stored = 'https://nas';
+    const { calls } = fakeApi({
+      'GET /api/session': signedIn,
+      'GET /api/overview': overview,
+      'GET /api/instances/i1/connection': () => ({
+        config: { url: stored },
+        schema: { type: 'object', properties: { url: { type: 'string', title: 'URL' } } },
+        ui: {},
+        secrets: {},
+      }),
+      'POST /api/instances/i1/sync': () => {
+        stored = 'https://changed-elsewhere';
+        return { added: 0, updated: 0, staled: 0, pendingReview: [] };
+      },
+      'PUT /api/instances/i1/connection': (b: { config: { url: string } }) => {
+        stored = `${b.config.url}/saved`;
+        return {};
+      },
+      'GET /api/settings': { mcp: { allowDynamicRegistration: true } },
+    });
+    const { wrapper } = await mountAt('/endpoints/nas/connection');
+    const url = () => wrapper.get<HTMLInputElement>('[data-field="url"] input');
+    await url().setValue('https://edited');
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Sync now')!
+      .trigger('click');
+    await flushPromises();
+    expect(calls.filter((c) => c.path === '/api/instances/i1/connection' && c.method === 'GET')).toHaveLength(2);
+    expect(wrapper.get('[role="status"]').text()).toBe('Synced: 0 new, 0 updated, 0 removed.');
+    expect(url().element.value).toBe('https://edited');
+
+    await wrapper.get('form').trigger('submit');
+    await flushPromises();
+    expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ config: { url: 'https://edited' }, secrets: {} });
+    expect(url().element.value).toBe('https://edited/saved');
+    expect(wrapper.get('[role="status"]').text()).toBe('Saved. The endpoint restarted with the new connection.');
+  });
+
+  it('shows a failed connection load in the form card', async () => {
+    fakeApi({
+      'GET /api/session': signedIn,
+      'GET /api/overview': overview,
+      'GET /api/instances/i1/connection': json(500, { error: 'internal', message: 'Plugin unreachable' }),
+    });
+    const { wrapper } = await mountAt('/endpoints/nas/connection');
+    expect(wrapper.get('form.card .alert.error').text()).toBe('Plugin unreachable');
+  });
+
+  it('fetches the overview again for a slug it does not know before saying there is none', async () => {
+    let instances: unknown[] = [];
+    const { calls } = fakeApi({
+      'GET /api/session': signedIn,
+      'GET /api/overview': () => ({ ...overview, instances }),
+    });
+    const { wrapper, router } = await mountAt('/');
+    instances = [instance];
+    await router.push('/endpoints/nas/access');
+    await flushPromises();
+    expect(calls.filter((c) => c.path === '/api/overview')).toHaveLength(2);
+    expect(wrapper.get('h1').text()).toContain('/nas');
+
+    await router.push('/endpoints/gone/access');
+    await flushPromises();
+    expect(calls.filter((c) => c.path === '/api/overview')).toHaveLength(3);
+    expect(wrapper.text()).toContain('No endpoint at /gone.');
+  });
+
+  it('keeps endpoint settings edits when the overview refetches', async () => {
+    const settings = {
+      approvalTimeoutMs: 900_000,
+      formElicitationApprovals: 'off',
+      executePerMinute: 30,
+      writesPerMinute: 10,
+      sandbox: { timeoutMs: 10_000, memoryMb: 64, maxResultBytes: 65_536 },
+      extraRedactKeys: [],
+      syncMaxAgeMs: 3_600_000,
+      memoryMb: 256,
+    };
+    let displayName = 'Acme';
+    const { calls } = fakeApi({
+      'GET /api/session': signedIn,
+      'GET /api/overview': () => ({ ...overview, instances: [{ ...instance, displayName, settings }] }),
+      'GET /api/instances/i1/session-grants': [],
+    });
+    const { wrapper, queryClient } = await mountAt('/endpoints/nas/settings');
+    await wrapper.get('#s-name').setValue('Edited');
+    displayName = 'Renamed elsewhere';
+    await queryClient.invalidateQueries();
+    await flushPromises();
+    expect(calls.filter((c) => c.path === '/api/overview').length).toBeGreaterThanOrEqual(2);
+    expect(wrapper.get('.page-header .sub').text()).toContain('Renamed elsewhere');
+    expect(wrapper.get<HTMLInputElement>('#s-name').element.value).toBe('Edited');
   });
 });

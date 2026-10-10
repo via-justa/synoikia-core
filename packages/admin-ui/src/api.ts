@@ -72,6 +72,9 @@ export const qs = (params: Record<string, string | number | undefined | null>) =
   return s ? `?${s}` : '';
 };
 
+/** A query key mirroring an API path: `/api/instances/i1/rules` → `['instances', 'i1', 'rules']`. */
+export const pathKey = (path: string) => path.replace(/^\/api\//, '').split('/');
+
 /** The portal's query defaults; the app and each test mount create their own client. */
 export function createQueryClient(): QueryClient {
   return new QueryClient({
