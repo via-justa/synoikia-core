@@ -65,6 +65,11 @@ export function useUpdateInstance(id: Id) {
   );
 }
 
+// The new endpoint must be in the overview before its pages open.
+export function useCreateInstance() {
+  return useApiMutation((body: unknown) => http.post<Instance>('/api/instances', body), [overviewKeys.all]);
+}
+
 export function useDeleteInstance(id: Id) {
   return useApiMutation((confirm: string) => http.del(path(id), { confirm }), [overviewKeys.all]);
 }

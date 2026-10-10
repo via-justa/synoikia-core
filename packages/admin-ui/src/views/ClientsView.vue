@@ -1,38 +1,49 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { errorText, http } from '../api';
+import { computed, ref } from 'vue';
+import { errorText } from '../api';
 import ModalDialog from '../components/ModalDialog.vue';
 import PageHeader from '../components/PageHeader.vue';
+import { latestError } from '../composables/useApiMutation';
+import {
+  useCreateToken,
+  useOAuthClientsQuery,
+  useOAuthGrantsQuery,
+  useRegisterOAuthClient,
+  useRevokeClientAccess,
+  useTokensQuery,
+} from '../composables/useClients';
+import type { RevocableKind } from '../composables/useClients';
+import { useConfirm } from '../composables/useConfirm';
 import { useInstances } from '../composables/useOverview';
+import { useUsersQuery } from '../composables/useUsers';
 import { ago, formatDate } from '../format';
-import type { Ceiling, Grant, OAuthClient, PublicUser, Token } from '../types';
+import type { Ceiling } from '../types';
 
 const ACCESS_LABELS: Record<Ceiling, string> = { read: 'Read only', write: 'Read & write' };
 
 const instances = useInstances();
-const tokens = ref<Token[]>([]);
-const clients = ref<OAuthClient[]>([]);
-const grants = ref<Grant[]>([]);
-const usernames = ref<Map<string, string>>(new Map());
+const tokensQuery = useTokensQuery();
+const clientsQuery = useOAuthClientsQuery();
+const grantsQuery = useOAuthGrantsQuery();
+const usersQuery = useUsersQuery();
+const revokeAccess = useRevokeClientAccess();
+const createTokenMutation = useCreateToken();
+const registerClient = useRegisterOAuthClient();
+const { confirm } = useConfirm();
+const tokenError = createTokenMutation.errorText;
+const clientError = registerClient.errorText;
 const showRevoked = ref(false);
-const error = ref<string>();
 
-async function load() {
-  try {
-    let users: PublicUser[];
-    [tokens.value, clients.value, grants.value, users] = await Promise.all([
-      http.get<Token[]>('/api/tokens'),
-      http.get<OAuthClient[]>('/api/oauth/clients'),
-      http.get<Grant[]>('/api/oauth/grants'),
-      http.get<PublicUser[]>('/api/users'),
-    ]);
-    usernames.value = new Map(users.map((u) => [u.id, u.username]));
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
-onMounted(() => {
-  void load();
+// The tables show together, once every list has loaded.
+const loaded = [tokensQuery, clientsQuery, grantsQuery, usersQuery];
+const ready = computed(() => loaded.every((q) => !!q.data.value));
+const tokens = computed(() => (ready.value ? (tokensQuery.data.value ?? []) : []));
+const clients = computed(() => (ready.value ? (clientsQuery.data.value ?? []) : []));
+const grants = computed(() => (ready.value ? (grantsQuery.data.value ?? []) : []));
+const usernames = computed(() => new Map(ready.value ? usersQuery.data.value?.map((u) => [u.id, u.username]) : []));
+const error = computed(() => {
+  const loadError = loaded.find((q) => q.error.value)?.error.value;
+  return latestError([revokeAccess]) ?? (loadError ? errorText(loadError) : undefined);
 });
 
 const live = <T extends { revokedAt: string | null }>(rows: T[]) =>
@@ -49,76 +60,76 @@ const resourcePath = (r: string) => {
   }
 };
 
-async function revoke(kind: 'tokens' | 'oauth/clients' | 'oauth/grants', id: string, what: string) {
-  if (!window.confirm(`Revoke ${what}? Clients using it lose access immediately.`)) return;
-  try {
-    await http.del(`/api/${kind}/${id}`);
-    await load();
-  } catch (err) {
-    error.value = errorText(err);
-  }
+async function revoke(kind: RevocableKind, id: string, what: string) {
+  const ok = await confirm({
+    title: `Revoke ${what}?`,
+    message: 'Clients using it lose access immediately.',
+    action: 'Revoke',
+    danger: true,
+  });
+  if (ok) revokeAccess.mutate({ kind, id });
 }
 
 // ── new token ──
-const newToken = ref<{
-  name: string;
-  all: boolean;
-  scope: string[];
-  access: Ceiling;
-  expiresAt: string;
-  note?: string;
-}>();
+const newToken = ref<{ name: string; all: boolean; scope: string[]; access: Ceiling; expiresAt: string }>();
 const createdSecret = ref<{ title: string; lines: [string, string][] }>();
 const canCreateToken = computed(
   () => !!newToken.value?.name.trim() && (newToken.value.all || newToken.value.scope.length > 0),
 );
-async function createToken() {
+function openToken() {
+  createTokenMutation.reset();
+  newToken.value = { name: '', all: false, scope: [], access: 'read', expiresAt: '' };
+}
+function createToken() {
   const t = newToken.value;
   if (!t) return;
-  try {
-    const res = await http.post<Token & { token: string }>('/api/tokens', {
+  createTokenMutation.mutate(
+    {
       name: t.name.trim(),
       scope: t.all ? ['*'] : t.scope,
       access: t.access,
       expiresAt: t.expiresAt ? new Date(t.expiresAt).toISOString() : null,
-    });
-    newToken.value = undefined;
-    createdSecret.value = { title: `Token "${res.name}"`, lines: [['Bearer token', res.token]] };
-    await load();
-  } catch (err) {
-    newToken.value = { ...t, note: errorText(err) };
-  }
+    },
+    {
+      onSuccess: (res) => {
+        newToken.value = undefined;
+        createdSecret.value = { title: `Token "${res.name}"`, lines: [['Bearer token', res.token]] };
+      },
+    },
+  );
 }
 
 // ── new OAuth client ──
-const newClient = ref<{ name: string; redirects: string; confidential: boolean; note?: string }>();
-async function createClient() {
+const newClient = ref<{ name: string; redirects: string; confidential: boolean }>();
+function openClient() {
+  registerClient.reset();
+  newClient.value = { name: '', redirects: '', confidential: false };
+}
+function createClient() {
   const c = newClient.value;
   if (!c) return;
-  try {
-    const res = await http.post<{ client_id: string; client_secret?: string; client_name: string }>(
-      '/api/oauth/clients',
-      {
-        name: c.name.trim(),
-        redirectUris: c.redirects
-          .split(/\s+/)
-          .map((s) => s.trim())
-          .filter(Boolean),
-        confidential: c.confidential,
+  registerClient.mutate(
+    {
+      name: c.name.trim(),
+      redirectUris: c.redirects
+        .split(/\s+/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+      confidential: c.confidential,
+    },
+    {
+      onSuccess: (res) => {
+        newClient.value = undefined;
+        createdSecret.value = {
+          title: `OAuth client "${res.client_name}"`,
+          lines: [
+            ['Client ID', res.client_id],
+            ...(res.client_secret ? ([['Client secret', res.client_secret]] as [string, string][]) : []),
+          ],
+        };
       },
-    );
-    newClient.value = undefined;
-    createdSecret.value = {
-      title: `OAuth client "${res.client_name}"`,
-      lines: [
-        ['Client ID', res.client_id],
-        ...(res.client_secret ? ([['Client secret', res.client_secret]] as [string, string][]) : []),
-      ],
-    };
-    await load();
-  } catch (err) {
-    newClient.value = { ...c, note: errorText(err) };
-  }
+    },
+  );
 }
 </script>
 
@@ -132,13 +143,7 @@ async function createClient() {
     <section class="stack">
       <div class="row">
         <h2 class="grow">Bearer tokens</h2>
-        <button
-          class="btn btn-primary btn-sm"
-          type="button"
-          @click="newToken = { name: '', all: false, scope: [], access: 'read', expiresAt: '' }"
-        >
-          New token
-        </button>
+        <button class="btn btn-primary btn-sm" type="button" @click="openToken">New token</button>
       </div>
       <div class="table-card">
         <table class="table">
@@ -182,9 +187,7 @@ async function createClient() {
 
       <div class="row">
         <h2 class="grow">OAuth clients</h2>
-        <button class="btn btn-sm" type="button" @click="newClient = { name: '', redirects: '', confidential: false }">
-          Register client
-        </button>
+        <button class="btn btn-sm" type="button" @click="openClient">Register client</button>
       </div>
       <div class="table-card">
         <table class="table">
@@ -293,7 +296,7 @@ async function createClient() {
         <input id="t-exp" v-model="newToken.expiresAt" type="datetime-local" />
         <p class="help">Leave empty for no expiry.</p>
       </div>
-      <p v-if="newToken.note" class="alert error">{{ newToken.note }}</p>
+      <p v-if="tokenError" class="alert error">{{ tokenError }}</p>
       <template #footer>
         <button class="btn" type="button" @click="newToken = undefined">Cancel</button>
         <button class="btn btn-primary" type="button" :disabled="!canCreateToken" @click="createToken">
@@ -321,7 +324,7 @@ async function createClient() {
           ><input v-model="newClient.confidential" type="checkbox" /> Confidential client (gets a client secret)</label
         >
       </div>
-      <p v-if="newClient.note" class="alert error">{{ newClient.note }}</p>
+      <p v-if="clientError" class="alert error">{{ clientError }}</p>
       <template #footer>
         <button class="btn" type="button" @click="newClient = undefined">Cancel</button>
         <button
