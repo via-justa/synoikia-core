@@ -47,15 +47,15 @@ withDefaults(defineProps<{ size?: number; frame?: boolean }>(), { size: 32, fram
   flex: none;
 }
 .frame {
-  stroke: var(--ink-muted, #5c5044);
+  stroke: var(--ink-muted);
 }
 .paths {
-  stroke: var(--brand-strong, #8f3d22);
+  stroke: var(--brand-strong);
 }
 .dwellings {
-  fill: var(--accent, #4f6b52);
+  fill: var(--accent);
 }
 .hearth {
-  fill: var(--brand, #b5502f);
+  fill: var(--brand);
 }
 </style>

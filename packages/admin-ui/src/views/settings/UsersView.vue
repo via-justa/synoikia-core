@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import { errorText } from '../../api';
 import ModalDialog from '../../components/ModalDialog.vue';
+import { latestError } from '../../composables/useApiMutation';
 import { useConfirm } from '../../composables/useConfirm';
 import { useRolesQuery } from '../../composables/useRoles';
 import { useCreateUser, useResetTotp, useUpdateUser, useUsersQuery } from '../../composables/useUsers';
@@ -29,9 +30,8 @@ const resetting = ref<{ user: PublicUser; password: string }>();
 
 // One page alert: the latest row action's failure, else a failed load.
 const error = computed(() => {
-  const latest = update.submittedAt.value >= resetTotp.submittedAt.value ? update : resetTotp;
   const loadError = usersQuery.error.value ?? rolesQuery.error.value;
-  return latest.errorText.value ?? (loadError ? errorText(loadError) : undefined);
+  return latestError([update, resetTotp]) ?? (loadError ? errorText(loadError) : undefined);
 });
 
 function changeRole(u: PublicUser, event: Event) {

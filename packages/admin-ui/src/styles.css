@@ -53,6 +53,7 @@
   --shadow-sm: 0 1px 2px rgb(36 27 18 / 8%);
   --shadow-md: 0 4px 12px rgb(36 27 18 / 12%);
   --shadow-lg: 0 12px 32px rgb(36 27 18 / 18%);
+  --backdrop: rgb(36 27 18 / 45%);
 
   font-family: var(--font-sans);
   font-size: 15px;
@@ -94,6 +95,7 @@
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
     --shadow-md: 0 4px 12px rgb(0 0 0 / 40%);
     --shadow-lg: 0 12px 32px rgb(0 0 0 / 50%);
+    --backdrop: rgb(36 27 18 / 45%);
   }
 }
 
@@ -129,6 +131,7 @@
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
   --shadow-md: 0 4px 12px rgb(0 0 0 / 40%);
   --shadow-lg: 0 12px 32px rgb(0 0 0 / 50%);
+  --backdrop: rgb(36 27 18 / 45%);
 }
 
 body {
