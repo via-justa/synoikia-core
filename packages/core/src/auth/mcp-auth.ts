@@ -55,6 +55,17 @@ export function effectiveAuthMode(ctx: AppContext, instanceAuthMode: string | nu
   return (instanceAuthMode as AuthMode | null) ?? getSettings(ctx.db, 'mcp').defaultAuthMode;
 }
 
+/** The endpoints that accept OAuth (design §6.2), with their resource URLs under `base`. */
+export function oauthEndpoints(ctx: AppContext, base: string) {
+  return ctx.instances
+    .list()
+    .filter((i) => {
+      const mode = effectiveAuthMode(ctx, i.authMode);
+      return mode === 'oauth' || mode === 'bearer+oauth';
+    })
+    .map((i) => ({ resource: resourceUrl(base, i.slug), slug: i.slug, name: i.displayName, id: i.id }));
+}
+
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 const MAX_CLAIM = 120;

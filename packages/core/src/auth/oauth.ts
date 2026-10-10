@@ -232,6 +232,17 @@ export class OAuthService {
     });
   }
 
+  /** The user refused the consent page; nothing is granted. */
+  denyConsent(client: ClientRow, userId: string) {
+    writeAudit(this.db, {
+      kind: 'auth',
+      decision: 'oauth_consent_denied',
+      actorKind: 'user',
+      actorId: userId,
+      detail: { clientId: client.clientId },
+    });
+  }
+
   /** After consent: records the grant and returns a single-use code bound to PKCE, redirect and resources. */
   issueCode(input: {
     client: ClientRow;

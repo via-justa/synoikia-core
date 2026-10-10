@@ -2,8 +2,7 @@ import type { Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppContext } from '../../app.js';
 import { writeAudit } from '../../audit.js';
-import { roleHasInstance } from '../../catalog/role-levels.js';
-import { effectiveAuthMode, publicMcpBase, resourceUrl } from '../../auth/mcp-auth.js';
+import { effectiveAuthMode, oauthEndpoints, publicMcpBase, resourceUrl } from '../../auth/mcp-auth.js';
 import { canonicalResource, OAuthError } from '../../auth/oauth.js';
 import type { OAuthService } from '../../auth/oauth.js';
 import type { SessionLimits, ValidSession } from '../../auth/sessions.js';
@@ -70,21 +69,9 @@ export const checkUiCsrf = (c: Context, submitted: unknown) => {
   return !!cookie && typeof submitted === 'string' && safeEqual(cookie, submitted);
 };
 
-/** When each MCP-port session last proved TOTP (design §5.3); in memory, so a restart asks again. */
-const totpProofs = new Map<string, number>();
-
-export function recordTotpProof(ctx: AppContext, idHash: string) {
-  const now = ctx.now().getTime();
-  const maxAge = uiLimits(ctx, 'approval').absoluteMs;
-  for (const [k, at] of totpProofs) if (now - at > maxAge) totpProofs.delete(k);
-  totpProofs.set(idHash, now);
-}
-
-/** Milliseconds since this session last proved TOTP, or Infinity if it never did. */
-export function sinceTotpProof(ctx: AppContext, session: ValidSession): number {
-  const at = totpProofs.get(session.idHash);
-  return at === undefined ? Infinity : ctx.now().getTime() - at;
-}
+/** Proofs live no longer than the longest approval-browser session. */
+export const recordTotpProof = (ctx: AppContext, idHash: string) =>
+  ctx.sessions.recordTotpProof(idHash, uiLimits(ctx, 'approval').absoluteMs);
 
 function startUiSession(ctx: AppContext, c: Context, userId: string, method: string, continueTo: string) {
   const purpose = purposeOf(continueTo);
@@ -163,14 +150,6 @@ export function registerOAuthRoutes(app: Hono, ctx: AppContext, oauth: OAuthServ
     app.use(path, async (c, next) => (ctx.config.PUBLIC_MCP_URL ? next() : asOff(c)));
   }
   const issuer = (c: Context) => publicMcpBase(ctx, c);
-  const oauthEndpoints = (c: Context) =>
-    ctx.instances
-      .list()
-      .filter((i) => {
-        const mode = effectiveAuthMode(ctx, i.authMode);
-        return mode === 'oauth' || mode === 'bearer+oauth';
-      })
-      .map((i) => ({ resource: resourceUrl(issuer(c), i.slug), slug: i.slug, name: i.displayName, id: i.id }));
 
   // ── metadata ──
 
@@ -259,7 +238,7 @@ export function registerOAuthRoutes(app: Hono, ctx: AppContext, oauth: OAuthServ
     if (!challenge || q.get('code_challenge_method') !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(challenge)) {
       return back({ error: 'invalid_request', error_description: 'PKCE with S256 is required' });
     }
-    const available = oauthEndpoints(c);
+    const available = oauthEndpoints(ctx, issuer(c));
     const requested = q.getAll('resource').map(canonicalResource);
     const unknown = requested.filter((r) => !available.some((e) => e.resource === r));
     if (unknown.length)
@@ -274,7 +253,7 @@ export function registerOAuthRoutes(app: Hono, ctx: AppContext, oauth: OAuthServ
     const continueTo = `/oauth/authorize?${q.toString()}`;
     if (!session) return renderLogin(ctx, c, continueTo, `Sign in to let ${client.name} use your MCP endpoints.`);
     // A user can only hand out endpoints their role has (design §6.4).
-    const mine = offered.filter((e) => roleHasInstance(ctx.db, session.user.roleId, e.id));
+    const mine = offered.filter((e) => ctx.users.hasEndpoint(session.user, e.id));
     if (mine.length === 0)
       return errorPage(c, 'No endpoints', 'None of the requested endpoints is available to your account.', 403);
 
@@ -315,28 +294,21 @@ export function registerOAuthRoutes(app: Hono, ctx: AppContext, oauth: OAuthServ
       return c.redirect(url.toString(), 302);
     };
     if (body.decision !== 'approve') {
-      writeAudit(ctx.db, {
-        kind: 'auth',
-        decision: 'oauth_consent_denied',
-        actorKind: 'user',
-        actorId: session.user.id,
-        detail: { clientId: client.clientId },
-      });
+      oauth.denyConsent(client, session.user.id);
       return back({ error: 'access_denied' });
     }
     const chosen = ([] as unknown[]).concat(body.resource ?? []).filter((r): r is string => typeof r === 'string');
     // Bind each resource to the instance it names right now; one renamed since the form was shown drops out.
-    const current = new Map(oauthEndpoints(c).map((e) => [e.resource, e.id]));
+    const current = new Map(oauthEndpoints(ctx, issuer(c)).map((e) => [e.resource, e.id]));
     const resources = [...new Set(chosen.map(canonicalResource))].filter(
-      (r) =>
-        form.offered.includes(r) && current.has(r) && roleHasInstance(ctx.db, session.user.roleId, current.get(r)!),
+      (r) => form.offered.includes(r) && current.has(r) && ctx.users.hasEndpoint(session.user, current.get(r)!),
     );
     if (resources.length === 0) {
       return consentPage(c, {
         clientName: client.name,
         redirectHost: new URL(form.redirectUri).host || form.redirectUri,
         username: session.user.username,
-        endpoints: oauthEndpoints(c)
+        endpoints: oauthEndpoints(ctx, issuer(c))
           .filter((e) => form.offered.includes(e.resource))
           .map((e) => ({ ...e, checked: false })),
         formToken: signPayload(ctx.keys.state, form, FORM_TTL_MS),
