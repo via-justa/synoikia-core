@@ -52,22 +52,6 @@ export function localLoginEnabled(ctx: AppContext): boolean {
   return ctx.config.ADMIN_FORCE_LOCAL_LOGIN || !getSettings(ctx.db, 'security').disableLocalLogin;
 }
 
-/** While local login is off, refuse any change that would leave no enabled user linked to SSO (§6.1). */
-export function assertSsoRemains(ctx: AppContext, change: { oidcOff?: boolean; losingUser?: string }) {
-  if (!getSettings(ctx.db, 'security').disableLocalLogin) return;
-  if (change.oidcOff || !ctx.users.hasOidcLinkedUser(change.losingUser)) {
-    throw new ConflictError(
-      'local_login_disabled',
-      'Local login is disabled, so this would lock everyone out. Re-enable local login first.',
-    );
-  }
-}
-
-/** Local-password users must have TOTP when the admin requires it (OIDC-only users rely on the IdP). */
-export function mustEnrollTotp(ctx: AppContext, user: UserRow): boolean {
-  return getSettings(ctx.db, 'security').requireTotp && !!user.passwordHash && !user.totpEnabled;
-}
-
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /** CSRF: double-submit token + Origin check for every state-changing request under /api and /auth. */
@@ -97,7 +81,7 @@ export function requireUser(ctx: AppContext): MiddlewareHandler<AdminEnv> {
     const raw = readSessionCookie(c);
     const session = ctx.sessions.validate(raw, 'admin', sessionLimits(ctx));
     if (!session || !raw) return c.json({ error: 'unauthenticated', message: 'Sign in first' }, 401);
-    if (mustEnrollTotp(ctx, session.user) && !TOTP_ENROLL_PATHS.includes(c.req.path)) {
+    if (ctx.users.mustEnrollTotp(session.user) && !TOTP_ENROLL_PATHS.includes(c.req.path)) {
       return c.json({ error: 'totp_enrollment_required', message: 'Set up two-factor authentication first' }, 403);
     }
     c.set('user', session.user);
@@ -125,14 +109,7 @@ function startSession(c: Context, ctx: AppContext, user: UserRow, method: string
     userAgent: c.req.header('user-agent'),
   });
   setSessionCookie(c, ctx, raw);
-  ctx.users.markLogin(user.id);
-  writeAudit(ctx.db, {
-    kind: 'auth',
-    decision: 'login',
-    actorKind: 'user',
-    actorId: user.id,
-    detail: { username: user.username, method, ip: clientIp(c, ctx.config.TRUST_PROXY) },
-  });
+  ctx.users.recordLogin(user.id, { username: user.username, method, ip: clientIp(c, ctx.config.TRUST_PROXY) });
 }
 
 function adminCallbackUrl(c: Context, ctx: AppContext): string {
@@ -168,7 +145,7 @@ export function registerAuthRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
       authenticated: true,
       ...base,
       user: ctx.users.toPublic(session.user),
-      mustEnrollTotp: mustEnrollTotp(ctx, session.user),
+      mustEnrollTotp: ctx.users.mustEnrollTotp(session.user),
     });
   });
 
@@ -197,7 +174,7 @@ export function registerAuthRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     }
     const user = ctx.users.get(created.id);
     startSession(c, ctx, user, 'signup');
-    return c.json({ status: 'ok', mustEnrollTotp: mustEnrollTotp(ctx, user) }, 201);
+    return c.json({ status: 'ok', mustEnrollTotp: ctx.users.mustEnrollTotp(user) }, 201);
   });
 
   app.post('/auth/login', async (c) => {
@@ -237,7 +214,7 @@ export function registerAuthRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     }
     ctx.throttle.succeed(body.username);
     startSession(c, ctx, user, 'password');
-    return c.json({ status: 'ok', mustEnrollTotp: mustEnrollTotp(ctx, user) });
+    return c.json({ status: 'ok', mustEnrollTotp: ctx.users.mustEnrollTotp(user) });
   });
 
   app.post('/auth/totp', async (c) => {
@@ -369,16 +346,7 @@ export function registerProfileRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
   app.get('/api/profile/approval-sessions', (c) => c.json(ctx.sessions.listKind(c.get('user').id, 'approval_ui')));
 
   app.post('/api/profile/approval-sessions/revoke', (c) => {
-    const user = c.get('user');
-    const count = ctx.sessions.revokeKind(user.id, 'approval_ui');
-    writeAudit(ctx.db, {
-      kind: 'auth',
-      decision: 'approval_sessions_revoked',
-      actorKind: 'user',
-      actorId: user.id,
-      detail: { count },
-    });
-    return c.json({ revoked: count });
+    return c.json({ revoked: ctx.sessions.revokeApprovalBrowsers(c.get('user').id) });
   });
 
   app.post('/api/profile/totp/begin', (c) => c.json(ctx.users.beginTotp(c.get('user').id)));
@@ -391,26 +359,16 @@ export function registerProfileRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     return c.json({ recoveryCodes });
   });
 
-  // Turning TOTP off needs a current code, so a hijacked session alone can't remove the second factor.
   app.post('/api/profile/totp/disable', async (c) => {
     const { code } = await readJson(c, z.object({ code: z.string() }));
     const user = c.get('user');
-    if (getSettings(ctx.db, 'security').requireTotp && user.passwordHash) {
-      throw new ConflictError('totp_required', 'Two-factor authentication is required on this server');
-    }
-    if (!ctx.users.verifySecondFactor(user.id, code))
-      return c.json({ error: 'invalid_code', message: 'Invalid code' }, 401);
-    ctx.users.resetTotp(user.id);
+    if (!ctx.users.disableOwnTotp(user, code)) return c.json({ error: 'invalid_code', message: 'Invalid code' }, 401);
     ctx.sessions.revokeKind(user.id, 'approval_ui');
     return c.json({ status: 'ok' });
   });
 
   app.post('/api/profile/oidc/unlink', (c) => {
-    const user = c.get('user');
-    if (!user.passwordHash)
-      throw new ConflictError('last_login_method', 'Set a password before unlinking single sign-on');
-    assertSsoRemains(ctx, { losingUser: user.id });
-    ctx.users.unlinkOidc(user.id);
+    ctx.users.unlinkOwnOidc(c.get('user'));
     return c.json({ status: 'ok' });
   });
 }

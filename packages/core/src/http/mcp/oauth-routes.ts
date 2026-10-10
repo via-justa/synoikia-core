@@ -10,7 +10,7 @@ import type { SessionLimits, ValidSession } from '../../auth/sessions.js';
 import { randomToken, safeEqual, sha256, signPayload, verifyPayload } from '../../auth/tokens.js';
 import { ServiceError } from '../../errors.js';
 import { getSettings } from '../../settings.js';
-import { localLoginEnabled, mustEnrollTotp } from '../admin/auth.js';
+import { localLoginEnabled } from '../admin/auth.js';
 import { clientIp, isSecure } from '../common.js';
 import { consentPage, errorPage, loginPage, totpPage } from './pages.js';
 
@@ -103,14 +103,7 @@ function startUiSession(ctx: AppContext, c: Context, userId: string, method: str
     path,
     maxAge: limits.absoluteMs / 1000,
   });
-  ctx.users.markLogin(userId);
-  writeAudit(ctx.db, {
-    kind: 'auth',
-    decision: 'login',
-    actorKind: 'user',
-    actorId: userId,
-    detail: { method, surface: 'mcp', purpose },
-  });
+  ctx.users.recordLogin(userId, { method, surface: 'mcp', purpose });
 }
 
 export function renderLogin(
@@ -388,7 +381,7 @@ export function registerOAuthRoutes(app: Hono, ctx: AppContext, oauth: OAuthServ
       });
       return renderLogin(ctx, c, continueTo, 'Sign in', 'Invalid username or password.', 401);
     }
-    if (mustEnrollTotp(ctx, user)) {
+    if (ctx.users.mustEnrollTotp(user)) {
       // The portal would force enrollment first; the internet-facing sign-in must not skip it.
       return renderLogin(ctx, c, continueTo, 'Sign in', NEEDS_TOTP, 403);
     }
@@ -450,7 +443,7 @@ export function registerOAuthRoutes(app: Hono, ctx: AppContext, oauth: OAuthServ
       if (state.purpose !== 'mcp_login') return errorPage(c, 'Sign-in failed', 'Unexpected sign-in flow.');
       const user = await ctx.oidc.resolveUser(ctx.users, identity);
       if (!user) return errorPage(c, 'Not allowed', 'Your account is not allowed to sign in here.', 403);
-      if (mustEnrollTotp(ctx, user)) return errorPage(c, 'Two-factor authentication required', NEEDS_TOTP, 403);
+      if (ctx.users.mustEnrollTotp(user)) return errorPage(c, 'Two-factor authentication required', NEEDS_TOTP, 403);
       const continueTo = safeContinue(state.returnTo);
       startUiSession(ctx, c, user.id, 'oidc', continueTo);
       return c.redirect(continueTo);
