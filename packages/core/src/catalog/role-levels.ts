@@ -16,7 +16,7 @@ import {
   tighterLevel,
 } from '../gate/access.js';
 import type { AccessCaps, AccessLevel, AccessPrincipal, LevelLayer } from '../gate/access.js';
-import { accessInput } from './groups.js';
+import { accessInput, describeOf } from './groups.js';
 import type { Actor } from './groups.js';
 
 /** Role maximum levels and users' own levels (design §5.2.1, §6.4), on top of the endpoint's levels. */
@@ -121,12 +121,6 @@ export interface LevelView {
     reason: string | null;
   }[];
 }
-
-const describeOf = (op: OperationRow) => {
-  const docs = op.docs as { summary?: unknown; description?: unknown } | null;
-  if (typeof docs?.summary === 'string') return docs.summary;
-  return typeof docs?.description === 'string' ? docs.description : null;
-};
 
 /** The levels one role (and, with `userId`, one user) has on an endpoint. `reachableOnly` leaves out
  * what the user can't call: a non-admin sees only that. */

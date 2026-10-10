@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseManifest, SDK_VERSION } from '@synoikia/plugin-sdk';
 import type { Manifest } from '@synoikia/plugin-sdk';
-import { asc, eq } from 'drizzle-orm';
+import { asc, count, eq } from 'drizzle-orm';
 import { writeAudit } from '../audit.js';
 import { applyRegistrySync } from '../catalog/registry.js';
 import { applyCatalogSync } from '../catalog/sync.js';
@@ -114,6 +114,29 @@ export class InstanceManager {
       this.db.select().from(plugins).where(eq(plugins.pluginId, id)).get();
     if (!p) throw new NotFoundError('plugin_not_found', `No plugin "${id}"`);
     return p;
+  }
+
+  /** Installed plugins with their instance counts. */
+  listPlugins() {
+    const counts = new Map(
+      this.db
+        .select({ pluginId: pluginInstances.pluginId, n: count() })
+        .from(pluginInstances)
+        .groupBy(pluginInstances.pluginId)
+        .all()
+        .map((r) => [r.pluginId, r.n]),
+    );
+    return this.db
+      .select()
+      .from(plugins)
+      .orderBy(asc(plugins.pluginId))
+      .all()
+      .map((p) => ({ ...p, instances: counts.get(p.id) ?? 0 }));
+  }
+
+  /** A plugin by row id only, or null. */
+  findPlugin(pluginRowId: string): PluginRow | null {
+    return this.db.select().from(plugins).where(eq(plugins.id, pluginRowId)).get() ?? null;
   }
 
   list() {

@@ -3,10 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   applyBulkLevel,
   listGroups,
+  listOperations,
   mergeGroups,
   renameGroup,
   resolveAccess,
   setGroupLevel,
+  updateGroup,
   updateOperation,
 } from '../src/catalog/groups.js';
 import { applyCatalogSync } from '../src/catalog/sync.js';
@@ -116,6 +118,37 @@ describe('bulk levels', () => {
       expect(listGroups(db, instanceId).every((g) => g.level === level)).toBe(true);
     }
     expect(resolveAccess(db, instanceId, 'app.upgrade')).toEqual({ reachable: true, mode: 'approve', level: 'ask' });
+  });
+});
+
+describe('listOperations and updateGroup', () => {
+  it('filters operations by group, reason, text and staleness', () => {
+    const { db, instanceId, id } = setup();
+    const keys = (filter: Parameters<typeof listOperations>[2]) =>
+      listOperations(db, instanceId, filter).map((o) => o.key);
+    expect(keys({ group: 'store' })).toEqual(['store.query']);
+    expect(keys({ q: 'VOLUME' })).toEqual(['store.volume.create']);
+    setGroupLevel(db, instanceId, 'store', 'none');
+    expect(keys({ reason: 'level_none' })).toEqual(['store.query']);
+    expect(listOperations(db, instanceId).find((o) => o.id === id('app.query'))).toMatchObject({
+      group: 'app',
+      reachable: true,
+      reason: null,
+    });
+    applyCatalogSync(db, instanceId, catalog(op('app.query')));
+    expect(keys({})).toEqual(['app.query']);
+    expect(keys({ stale: '1' })).toHaveLength(6);
+  });
+
+  it('renames and sets the level of a group, and returns it', () => {
+    const { db, instanceId } = setup();
+    expect(updateGroup(db, instanceId, 'app', { label: 'Apps', level: 'read' })).toMatchObject({
+      key: 'app',
+      label: 'Apps',
+      level: 'read',
+    });
+    expect(updateGroup(db, instanceId, 'app', {})).toMatchObject({ label: 'Apps' });
+    expect(() => updateGroup(db, instanceId, 'nope', { label: 'X' })).toThrow(NotFoundError);
   });
 });
 

@@ -2,10 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, count, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { writeAudit } from '../audit.js';
+import { levelView, setRoleBulkLevel, setRoleLevel } from '../catalog/role-levels.js';
+import type { LevelTarget, LevelView } from '../catalog/role-levels.js';
 import type { Db, DbLike } from '../db/index.js';
 import { pluginInstances, roleInstances, roleLevels, roles, users } from '../db/schema.js';
 import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
 import { ADMIN_ROLE_ID } from '../gate/access.js';
+import type { AccessLevel } from '../gate/access.js';
 import { getSettings } from '../settings.js';
 
 /** Roles (design §6.4): the built-in Admin role plus admin-defined ones, each with its endpoints, its
@@ -178,5 +181,26 @@ export class RoleService {
       });
     });
     return wanted;
+  }
+
+  /** The role's maximum levels on an endpoint. */
+  levels(id: string, instanceId: string): LevelView {
+    return levelView(this.db, instanceId, { roleId: id });
+  }
+
+  setLevel(
+    id: string,
+    instanceId: string,
+    target: LevelTarget,
+    level: AccessLevel | null,
+    actor: { userId?: string } = {},
+  ): LevelView {
+    setRoleLevel(this.db, id, instanceId, target, level, { actor });
+    return this.levels(id, instanceId);
+  }
+
+  setBulkLevel(id: string, instanceId: string, level: AccessLevel, actor: { userId?: string } = {}): LevelView {
+    setRoleBulkLevel(this.db, id, instanceId, level, { actor });
+    return this.levels(id, instanceId);
   }
 }

@@ -1,21 +1,18 @@
 import type { Hono } from 'hono';
-import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { AppContext } from '../../app.js';
 import {
   applyBulkLevel,
   listGroups,
+  listOperations,
   mergeGroups,
-  renameGroup,
-  setGroupLevel,
+  updateGroup,
   updateOperation,
-  accessInput,
 } from '../../catalog/groups.js';
 import { findRegistryEntries, scopesFromQuery } from '../../catalog/registry.js';
 import { createRule, deleteRule, listRules, updateRule } from '../../catalog/rules.js';
-import { operationGroups, operations } from '../../db/schema.js';
 import { NotFoundError, ValidationError } from '../../errors.js';
-import { ACCESS_LEVELS, allowedLevels, effectiveAccess, levelInForce } from '../../gate/access.js';
+import { ACCESS_LEVELS } from '../../gate/access.js';
 import { AUTH_MODES } from '../../instances/manager.js';
 import { clientIp, readJson, readOptionalJson } from '../common.js';
 import type { AdminEnv } from './auth.js';
@@ -110,11 +107,7 @@ export function registerInstanceRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
         label: z.string().optional(),
       }),
     );
-    if (body.label !== undefined) renameGroup(ctx.db, id, c.req.param('key'), body.label, { actor: actor(c) });
-    if (body.level !== undefined) {
-      setGroupLevel(ctx.db, id, c.req.param('key'), body.level, { actor: actor(c) });
-    }
-    return c.json(listGroups(ctx.db, id).find((g) => g.key === c.req.param('key')) ?? null);
+    return c.json(updateGroup(ctx.db, id, c.req.param('key'), body, { actor: actor(c) }));
   });
 
   app.post('/api/instances/:id/groups/merge', async (c) => {
@@ -136,59 +129,7 @@ export function registerInstanceRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
   app.get('/api/instances/:id/operations', (c) => {
     const id = c.req.param('id');
     exists(id);
-    const q = c.req.query();
-    const groups = new Map(
-      ctx.db
-        .select()
-        .from(operationGroups)
-        .where(eq(operationGroups.instanceId, id))
-        .all()
-        .map((g) => [g.id, g]),
-    );
-    const conditions = [eq(operations.instanceId, id)];
-    if (q.stale !== '1') conditions.push(eq(operations.stale, false));
-    const text = q.q?.toLowerCase();
-    const rows = ctx.db
-      .select()
-      .from(operations)
-      .where(and(...conditions))
-      .orderBy(asc(operations.key))
-      .all()
-      .map((op) => {
-        const group = groups.get(op.groupId);
-        const access = effectiveAccess(accessInput(op), group);
-        const docs = op.docs as { summary?: unknown; description?: unknown } | null;
-        const description =
-          typeof docs?.summary === 'string'
-            ? docs.summary
-            : typeof docs?.description === 'string'
-              ? docs.description
-              : null;
-        return {
-          ...op,
-          group: group?.key ?? null,
-          /** The level in force: the operation's own, else what its group's level means for its kind. */
-          level: levelInForce(accessInput(op), group),
-          /** The levels this operation can be given on its own. */
-          allowedLevels: allowedLevels(op),
-          /** What the upstream API says the operation does, when it says. */
-          description,
-          reachable: access.reachable,
-          mode: access.reachable ? access.mode : null,
-          pendingReview: access.reachable && access.pendingReview === true,
-          reason: access.reachable ? null : access.reason,
-        };
-      })
-      .filter((op) => (!q.group || op.group === q.group) && (!q.reason || op.reason === q.reason))
-      .filter((op) => (q.needsReview === '1' ? op.needsReview || op.pendingReview : true))
-      .filter(
-        (op) =>
-          !text ||
-          op.key.toLowerCase().includes(text) ||
-          (op.displayName ?? '').toLowerCase().includes(text) ||
-          (op.description ?? '').toLowerCase().includes(text),
-      );
-    return c.json(rows);
+    return c.json(listOperations(ctx.db, id, c.req.query()));
   });
 
   app.patch('/api/instances/:id/operations/:opId', async (c) => {
@@ -200,14 +141,7 @@ export function registerInstanceRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
         attestationRequired: z.boolean().optional(),
       }),
     );
-    updateOperation(ctx.db, c.req.param('id'), c.req.param('opId'), body, { actor: actor(c) });
-    return c.json(
-      ctx.db
-        .select()
-        .from(operations)
-        .where(eq(operations.id, c.req.param('opId')))
-        .get(),
-    );
+    return c.json(updateOperation(ctx.db, c.req.param('id'), c.req.param('opId'), body, { actor: actor(c) }));
   });
 
   // ── pickers ──
