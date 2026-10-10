@@ -2,12 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { hash, verify } from '@node-rs/argon2';
 import { and, asc, count, eq, ne, sql } from 'drizzle-orm';
 import { writeAudit } from '../audit.js';
+import { levelView, roleHasInstance, setOwnLevel } from '../catalog/role-levels.js';
+import type { LevelTarget, LevelView } from '../catalog/role-levels.js';
 import { aad } from '../crypto/index.js';
 import type { SecretBox } from '../crypto/index.js';
 import type { Db } from '../db/index.js';
 import { roles, users } from '../db/schema.js';
-import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors.js';
 import { ADMIN_ROLE_ID } from '../gate/access.js';
+import type { AccessLevel } from '../gate/access.js';
 import { getSettings } from '../settings.js';
 import { toPublicRole } from './roles.js';
 import type { PublicRole } from './roles.js';
@@ -438,5 +441,29 @@ export class UserService {
       .from(users)
       .all()
       .some((u) => !!u.oidcSubject && !u.disabled && u.id !== except);
+  }
+
+  // ── the user's own endpoints (design §6.4) ──
+
+  /** An endpoint of the user's role; any other answers 404, as if it didn't exist. */
+  ownEndpoint(u: UserRow, instanceId: string): string {
+    if (!roleHasInstance(this.db, u.roleId, instanceId))
+      throw new NotFoundError('instance_not_found', 'No such endpoint');
+    return instanceId;
+  }
+
+  assertAllowed(u: UserRow, cap: 'canSetOwnLevels' | 'canManageOwnRules') {
+    if (!this.roleOf(u)[cap]) throw new ForbiddenError('forbidden', 'Your role does not allow this');
+  }
+
+  /** The user's levels on an endpoint; a non-admin sees only what they can call. */
+  levels(u: UserRow, instanceId: string): LevelView {
+    const who = { roleId: u.roleId, userId: u.id };
+    return levelView(this.db, instanceId, who, { reachableOnly: !this.roleOf(u).isAdmin });
+  }
+
+  setOwnLevel(u: UserRow, instanceId: string, target: LevelTarget, level: AccessLevel | null): LevelView {
+    setOwnLevel(this.db, u.id, instanceId, target, level);
+    return this.levels(u, instanceId);
   }
 }

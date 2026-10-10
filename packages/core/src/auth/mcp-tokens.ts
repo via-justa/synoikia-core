@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { writeAudit } from '../audit.js';
+import { roleInstanceIds } from '../catalog/role-levels.js';
 import type { Db } from '../db/index.js';
 import { mcpTokens, pluginInstances } from '../db/schema.js';
 import { NotFoundError, ValidationError } from '../errors.js';
-import { ACCESS_CEILINGS } from '../gate/access.js';
+import { ACCESS_CEILINGS, ADMIN_ROLE_ID } from '../gate/access.js';
 import { randomToken, sha256 } from './tokens.js';
 
 /** Static MCP bearer tokens (design §6.2): `syn_…`, shown once, stored as SHA-256, scoped to instances
@@ -49,10 +50,6 @@ export class McpTokenService {
       .orderBy(asc(mcpTokens.createdAt))
       .all()
       .map(publicToken);
-  }
-
-  ownerOf(id: string): string | null | undefined {
-    return this.db.select({ by: mcpTokens.createdBy }).from(mcpTokens).where(eq(mcpTokens.id, id)).get()?.by;
   }
 
   /** Every token has an owner: their role decides what it reaches (design §6.4). */
@@ -99,6 +96,18 @@ export class McpTokenService {
     return { ...publicToken(this.db.select().from(mcpTokens).where(eq(mcpTokens.id, id)).get()!), token };
   }
 
+  /** A user's own token: a non-admin names only their role's endpoints, and `*` follows the role's
+   * endpoints as they change. */
+  createOwn(raw: { scope: string[] }, user: { id: string; roleId: string }) {
+    if (user.roleId !== ADMIN_ROLE_ID) {
+      const mine = new Set(roleInstanceIds(this.db, user.roleId));
+      const outside = raw.scope.filter((s) => s !== '*' && !mine.has(s));
+      if (outside.length)
+        throw new ValidationError('unknown_instance', `Unknown endpoint(s) in scope: ${outside.join(', ')}`);
+    }
+    return this.create(raw, { userId: user.id });
+  }
+
   revoke(id: string, actor: { userId?: string } = {}) {
     const row = this.db.select().from(mcpTokens).where(eq(mcpTokens.id, id)).get();
     if (!row) throw new NotFoundError('token_not_found', 'No such token');
@@ -112,6 +121,13 @@ export class McpTokenService {
         detail: { id, name: row.name },
       });
     });
+  }
+
+  /** Revokes a token the user created; any other answers 404, as if it didn't exist. */
+  revokeOwn(id: string, userId: string) {
+    const by = this.db.select({ by: mcpTokens.createdBy }).from(mcpTokens).where(eq(mcpTokens.id, id)).get()?.by;
+    if (by !== userId) throw new NotFoundError('token_not_found', 'No such token');
+    this.revoke(id, { userId });
   }
 
   /** Their creator was disabled: bearer tokens they made are revoked (re-enabling revives none). */

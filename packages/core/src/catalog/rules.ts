@@ -10,6 +10,7 @@ import { FULL_ACCESS } from '../gate/access.js';
 import type { AccessPrincipal } from '../gate/access.js';
 import { MatchSchema } from '../gate/match.js';
 import { resolveAccess } from './groups.js';
+import type { LevelView } from './role-levels.js';
 
 /** Pre-approval rules (design §5.2): from the catalog, with a required reason, structured match and
  * optional rate limit and expiry. Locked operations are refused here (409), whatever the UI offers. */
@@ -239,4 +240,74 @@ export function deleteRule(
       detail: { rule: before },
     });
   });
+}
+
+// ── own rules (design §6.4) ──
+
+/** A user writing their own rules, with the operations they can reach. */
+export interface RuleOwner {
+  userId: string;
+  operations: LevelView['operations'];
+}
+
+/** The owner's rules, plus admin rules on operations they can reach (read-only to them). */
+export function listOwnRules(db: Db, instanceId: string, owner: RuleOwner) {
+  const reachable = new Set(owner.operations.map((o) => o.id));
+  return listRules(db, instanceId)
+    .filter((r) => r.ownerUserId === owner.userId || (r.ownerUserId === null && reachable.has(r.operationId)))
+    .map((r) => ({ ...r, editable: r.ownerUserId === owner.userId }));
+}
+
+function checkReachable(owner: RuleOwner, raw: unknown) {
+  const opId = (raw as { operationId?: unknown } | null)?.operationId;
+  if (opId === undefined) return;
+  if (!owner.operations.some((o) => o.id === opId))
+    throw new ValidationError('operation_not_reachable', 'You can only write rules for operations you can call');
+}
+
+// `manifest` is read after the owner checks, so an unusable plugin doesn't hide their answer.
+export function createOwnRule(db: Db, manifest: () => Manifest, instanceId: string, raw: unknown, owner: RuleOwner) {
+  if ((raw as { operationId?: unknown } | null)?.operationId === undefined)
+    throw new ValidationError('invalid_rule', 'operationId is required');
+  checkReachable(owner, raw);
+  const rule = createRule(db, manifest(), instanceId, raw, { userId: owner.userId }, { owner: owner.userId });
+  return { ...rule, editable: true };
+}
+
+export function updateOwnRule(
+  db: Db,
+  manifest: () => Manifest,
+  instanceId: string,
+  ruleId: string,
+  raw: unknown,
+  owner: RuleOwner,
+) {
+  checkReachable(owner, raw);
+  const rule = updateRule(db, manifest(), instanceId, ruleId, raw, { userId: owner.userId }, { owner: owner.userId });
+  return { ...rule, editable: true };
+}
+
+export function deleteOwnRule(db: Db, instanceId: string, ruleId: string, userId: string) {
+  deleteRule(db, instanceId, ruleId, { userId }, { owner: userId });
+}
+
+/** The match fields of operations the owner may write rules for: reachable, plain writes. */
+function ownRuleFields(manifest: Manifest, owner: RuleOwner) {
+  return owner.operations
+    .filter((o) => o.classification === 'write' && o.matchProfile)
+    .flatMap((o) => manifest.matchProfiles[o.matchProfile!] ?? []);
+}
+
+/** The rule editor's pickers offer only what a rule the owner may write can name. */
+export function checkOwnOptionsSource(manifest: Manifest, owner: RuleOwner, source: string) {
+  if (!ownRuleFields(manifest, owner).some((f) => f.optionsSource === source))
+    throw new NotFoundError('options_not_found', 'No such options source');
+}
+
+export function checkOwnRegistryKind(manifest: Manifest, owner: RuleOwner, kind: string | undefined) {
+  const kinds = new Set(
+    [manifest.targets?.registryKind, ...(manifest.targets?.scopes ?? []).map((s) => s.registryKind)].filter(Boolean),
+  );
+  if (!ownRuleFields(manifest, owner).some((f) => f.field === '$targets') || !kind || !kinds.has(kind))
+    throw new NotFoundError('registry_not_found', 'No such registry kind');
 }
