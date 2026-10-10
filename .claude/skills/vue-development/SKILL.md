@@ -1,6 +1,15 @@
 ---
 name: vue-development
-description: Write and review Vue 3 + TypeScript code in the admin UI (packages/admin-ui). Use whenever a change touches a .vue file or anything under packages/admin-ui/src or packages/admin-ui/test (views, components, composables, stores, router, api.ts, styles.css), when fetching data or submitting forms in the portal, styling it, writing its tests, or reviewing whether portal code is idiomatic. Not for core, the SDK or create-plugin.
+description: >-
+  How to write and review the Synoikia admin portal (packages/admin-ui): Vue 3, TypeScript, Pinia, vue-query,
+  Vite. Use it for any task that changes or reviews portal code or its tests, even when the request names only a
+  page, a button, a form or a bug and never says "Vue" or "frontend". Examples: add or change a page, dialog or
+  form in the admin portal or settings; show new data from the Admin API; fix a page that loads, saves or
+  refreshes wrongly; replace a browser confirm or prompt; restyle, theme or fix dark mode or mobile layout; fix
+  keyboard or screen-reader access; move a page to vue-query or add a shared composable; write or fix admin-ui
+  tests; review a portal diff. Use it alongside core-development when the change also needs a new or changed
+  Admin API endpoint. Not for core, the plugin SDK or create-plugin code, the MCP approval pages rendered by
+  core, docs-only edits, or CI and Dockerfile changes.
 ---
 
 # Vue development (admin UI)
