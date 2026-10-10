@@ -1,15 +1,26 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import { errorText, http } from '../../api';
+import { computed, ref } from 'vue';
+import { errorText } from '../../api';
 import ModalDialog from '../../components/ModalDialog.vue';
+import { useConfirm } from '../../composables/useConfirm';
+import { useDeleteNotifier, useNotifiersQuery, useSaveNotifier, useTestNotifier } from '../../composables/useNotifiers';
 import { useInstances } from '../../composables/useOverview';
 import { ago } from '../../format';
 import { NOTIFY_EVENTS } from '../../types';
 import type { Notifier, NotifyEvent } from '../../types';
 
 const instances = useInstances();
-const channels = ref<Notifier[]>([]);
-const error = ref<string>();
+const notifiersQuery = useNotifiersQuery();
+const saveNotifier = useSaveNotifier();
+const testNotifier = useTestNotifier();
+const deleteNotifier = useDeleteNotifier();
+const { confirm } = useConfirm();
+const channels = computed(() => notifiersQuery.data.value ?? []);
+const actionError = ref<string>();
+const error = computed(() => {
+  const loadError = notifiersQuery.error.value;
+  return actionError.value ?? (loadError ? errorText(loadError) : undefined);
+});
 const notice = ref<string>();
 
 const EVENT_LABELS: Record<NotifyEvent, string> = {
@@ -20,17 +31,6 @@ const EVENT_LABELS: Record<NotifyEvent, string> = {
   'sync.pending_review': 'New write operations found (they ask until acknowledged)',
   'auth.lockout': 'Sign-in lockout',
 };
-
-async function load() {
-  try {
-    channels.value = await http.get<Notifier[]>('/api/notifiers');
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
-onMounted(() => {
-  void load();
-});
 
 interface Draft {
   id?: string;
@@ -70,7 +70,7 @@ function edit(ch?: Notifier) {
   };
 }
 
-async function save() {
+function save() {
   const d = draft.value;
   if (!d) return;
   const secret = (key: 'token' | 'hmacSecret') => (d.clear[key] ? null : d[key] ? d[key] : undefined);
@@ -83,36 +83,29 @@ async function save() {
     instanceFilter: d.allInstances ? null : d.instanceFilter,
     enabled: d.enabled,
   };
-  try {
-    if (d.id) await http.patch(`/api/notifiers/${d.id}`, body);
-    else await http.post('/api/notifiers', body);
-    draft.value = undefined;
-    await load();
-  } catch (err) {
-    draft.value = { ...d, note: errorText(err) };
-  }
+  saveNotifier.mutate(
+    { id: d.id, body },
+    {
+      onSuccess: () => (draft.value = undefined),
+      onError: (err) => (draft.value = { ...d, note: errorText(err) }),
+    },
+  );
 }
 
-async function test(ch: Notifier) {
+function test(ch: Notifier) {
   notice.value = undefined;
-  error.value = undefined;
-  try {
-    const res = await http.post<{ ok: boolean; error?: string }>(`/api/notifiers/${ch.id}/test`);
-    if (res.ok) notice.value = `Test sent to ${ch.name}.`;
-    else error.value = `Test to ${ch.name} failed: ${res.error}`;
-    await load();
-  } catch (err) {
-    error.value = errorText(err);
-  }
+  actionError.value = undefined;
+  testNotifier.mutate(ch.id, {
+    onSuccess: (res) => {
+      if (res.ok) notice.value = `Test sent to ${ch.name}.`;
+      else actionError.value = `Test to ${ch.name} failed: ${res.error}`;
+    },
+    onError: (err) => (actionError.value = errorText(err)),
+  });
 }
 async function remove(ch: Notifier) {
-  if (!window.confirm(`Delete ${ch.name}?`)) return;
-  try {
-    await http.del(`/api/notifiers/${ch.id}`);
-    await load();
-  } catch (err) {
-    error.value = errorText(err);
-  }
+  if (!(await confirm({ title: `Delete ${ch.name}?`, action: 'Delete', danger: true }))) return;
+  deleteNotifier.mutate(ch.id, { onError: (err) => (actionError.value = errorText(err)) });
 }
 </script>
 

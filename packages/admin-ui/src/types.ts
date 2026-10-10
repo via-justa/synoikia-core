@@ -400,6 +400,13 @@ export interface Settings {
   publicAdminUrl: string | null;
 }
 
+/** A browser signed in to the approval page (`/api/profile/approval-sessions`). */
+export interface ApprovalBrowser {
+  createdAt: string;
+  lastSeenAt: string;
+  userAgent: string | null;
+}
+
 /** A live "Approve for this session" grant on one endpoint (design §5.8). */
 export interface SessionGrant {
   id: string;

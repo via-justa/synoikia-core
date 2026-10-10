@@ -1,78 +1,101 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import { errorText, http } from '../../api';
+import { computed, ref, toRaw, watch } from 'vue';
+import { errorText } from '../../api';
 import ChipsInput from '../../components/ChipsInput.vue';
-import type { RoleRow, Settings } from '../../types';
+import { useConfirm } from '../../composables/useConfirm';
+import { useRolesQuery } from '../../composables/useRoles';
+import { useSaveSettings, useSettingsQuery } from '../../composables/useSettings';
+import type { Settings } from '../../types';
 
 type Oidc = NonNullable<Settings['oidc']>;
+type Message = { kind: 'ok' | 'error'; text: string };
 
+const DEFAULT_OIDC: Oidc = {
+  enabled: false,
+  issuer: '',
+  clientId: '',
+  scopes: 'openid email profile',
+  label: 'SSO',
+  allowPolicy: { emails: [], subjects: [], group: '', groupsClaim: 'groups' },
+  autoProvision: false,
+  clientSecretSet: false,
+};
+
+const settingsQuery = useSettingsQuery();
+const rolesQuery = useRolesQuery();
+const saves = { security: useSaveSettings('security'), audit: useSaveSettings('audit') };
+const saveOidcSettings = useSaveSettings('oidc');
+const { prompt } = useConfirm();
+// The page shows once both have loaded.
+const loaded = computed(() => (rolesQuery.data.value ? settingsQuery.data.value : undefined));
+const roles = computed(() => rolesQuery.data.value ?? []);
 const security = ref<Settings['security']>();
 const audit = ref<Settings['audit']>();
 const oidc = ref<Omit<Oidc, 'clientSecretSet'>>();
-const oidcSecretSet = ref(false);
+const oidcSecretSet = computed(() => loaded.value?.oidc?.clientSecretSet ?? false);
 const oidcSecret = ref('');
-const forceLocal = ref(false);
-const adminUrl = ref<string | null>(null);
-const messages = ref<Record<string, { kind: 'ok' | 'error'; text: string }>>({});
-const roles = ref<RoleRow[]>([]);
-
-onMounted(async () => {
-  try {
-    const s = await http.get<Settings>('/api/settings');
-    roles.value = await http.get<RoleRow[]>('/api/roles');
-    security.value = structuredClone(s.security);
-    audit.value = structuredClone(s.audit);
-    forceLocal.value = s.forceLocalLogin;
-    adminUrl.value = s.publicAdminUrl;
-    const { clientSecretSet, ...rest } = s.oidc ?? {
-      enabled: false,
-      issuer: '',
-      clientId: '',
-      scopes: 'openid email profile',
-      label: 'SSO',
-      allowPolicy: { emails: [], subjects: [], group: '', groupsClaim: 'groups' },
-      autoProvision: false,
-      clientSecretSet: false,
-    };
-    oidc.value = structuredClone(rest);
-    oidcSecretSet.value = clientSecretSet;
-  } catch (err) {
-    messages.value = { load: { kind: 'error', text: errorText(err) } };
-  }
+const forceLocal = computed(() => loaded.value?.forceLocalLogin ?? false);
+const adminUrl = computed(() => loaded.value?.publicAdminUrl ?? null);
+const saved = ref<Record<string, Message>>({});
+const messages = computed<Record<string, Message>>(() => {
+  const loadError = loaded.value ? undefined : (settingsQuery.error.value ?? rolesQuery.error.value);
+  return loadError ? { load: { kind: 'error', text: errorText(loadError) }, ...saved.value } : saved.value;
 });
+
+// Each form is a draft of its section; a save replaces only that section in the cache with core's answer.
+watch(
+  () => loaded.value?.security,
+  (s) => s && (security.value = structuredClone(toRaw(s))),
+  { immediate: true },
+);
+watch(
+  () => loaded.value?.audit,
+  (s) => s && (audit.value = structuredClone(toRaw(s))),
+  { immediate: true },
+);
+watch(
+  () => loaded.value && (loaded.value.oidc ?? DEFAULT_OIDC),
+  (s) => {
+    if (!s) return;
+    const { clientSecretSet: _set, ...rest } = structuredClone(toRaw(s));
+    oidc.value = rest;
+  },
+  { immediate: true },
+);
+
+const setMsg = (key: string, message: Message) => (saved.value = { ...saved.value, [key]: message });
 
 async function saveSection(key: 'security' | 'audit' | 'registration') {
   // Anyone who can reach the sign-in page, or whom the proxy or the IdP lets through, becomes an admin.
   if (
     key === 'registration' &&
     security.value?.defaultRoleId === 'admin' &&
-    window.prompt('New accounts will be administrators. Type ADMIN to confirm.') !== 'ADMIN'
+    (await prompt({
+      title: 'New accounts will be administrators.',
+      label: 'Type ADMIN to confirm.',
+      action: 'Save',
+      danger: true,
+    })) !== 'ADMIN'
   )
     return;
-  if (key === 'registration') key = 'security';
-  try {
-    const body = key === 'security' ? security.value : audit.value;
-    const res = await http.put<Record<string, unknown>>(`/api/settings/${key}`, body);
-    if (key === 'security') security.value = res as Settings['security'];
-    else audit.value = res as Settings['audit'];
-    messages.value = { ...messages.value, [key]: { kind: 'ok', text: 'Saved.' } };
-  } catch (err) {
-    messages.value = { ...messages.value, [key]: { kind: 'error', text: errorText(err) } };
-  }
+  const section = key === 'registration' ? 'security' : key;
+  saves[section].mutate(section === 'security' ? security.value : audit.value, {
+    onSuccess: () => setMsg(section, { kind: 'ok', text: 'Saved.' }),
+    onError: (err) => setMsg(section, { kind: 'error', text: errorText(err) }),
+  });
 }
 
-async function saveOidc() {
-  try {
-    const res = await http.put<Oidc>('/api/settings/oidc', {
-      ...oidc.value,
-      ...(oidcSecret.value ? { clientSecret: oidcSecret.value } : {}),
-    });
-    oidcSecretSet.value = res.clientSecretSet;
-    oidcSecret.value = '';
-    messages.value = { ...messages.value, oidc: { kind: 'ok', text: 'Saved.' } };
-  } catch (err) {
-    messages.value = { ...messages.value, oidc: { kind: 'error', text: errorText(err) } };
-  }
+function saveOidc() {
+  saveOidcSettings.mutate(
+    { ...oidc.value, ...(oidcSecret.value ? { clientSecret: oidcSecret.value } : {}) },
+    {
+      onSuccess: () => {
+        oidcSecret.value = '';
+        setMsg('oidc', { kind: 'ok', text: 'Saved.' });
+      },
+      onError: (err) => setMsg('oidc', { kind: 'error', text: errorText(err) }),
+    },
+  );
 }
 const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc/callback`;
 </script>

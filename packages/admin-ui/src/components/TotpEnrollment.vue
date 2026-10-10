@@ -1,35 +1,21 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import { errorText, http } from '../api';
+import { computed, ref } from 'vue';
+import { useBeginTotp, useConfirmTotp } from '../composables/useProfile';
 
 /** TOTP enrollment: show the secret/otpauth URI, confirm with a code, show recovery codes once. */
 const emit = defineEmits<{ enrolled: [] }>();
 
-const secret = ref<{ secret: string; uri: string }>();
+const beginTotp = useBeginTotp();
+const confirmTotp = useConfirmTotp();
 const code = ref('');
-const recovery = ref<string[]>();
-const error = ref<string>();
+const secret = computed(() => beginTotp.data.value);
+const recovery = computed(() => confirmTotp.data.value?.recoveryCodes);
+const error = computed(() =>
+  confirmTotp.submittedAt.value > beginTotp.submittedAt.value ? confirmTotp.errorText.value : beginTotp.errorText.value,
+);
 
-async function begin() {
-  error.value = undefined;
-  try {
-    secret.value = await http.post('/api/profile/totp/begin');
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
-
-async function confirm() {
-  error.value = undefined;
-  try {
-    const res = await http.post<{ recoveryCodes: string[] }>('/api/profile/totp/confirm', { code: code.value.trim() });
-    recovery.value = res.recoveryCodes;
-  } catch (err) {
-    error.value = errorText(err);
-  } finally {
-    code.value = '';
-  }
-}
+const begin = () => beginTotp.mutate();
+const confirm = () => confirmTotp.mutate(code.value.trim(), { onSettled: () => (code.value = '') });
 </script>
 
 <template>
