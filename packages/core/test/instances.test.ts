@@ -33,7 +33,7 @@ const waitFor = async (pred: () => boolean, ms = 3000) => {
   }
 };
 
-function setup(opts: { versionCheckIntervalMs?: number; pluginsDir?: string } = {}) {
+function setup(opts: { versionCheckIntervalMs?: number; pluginsDir?: string; now?: () => Date } = {}) {
   const db = openDatabase(':memory:');
   syncPluginRegistry(db, discoverPlugins(opts.pluginsDir ?? PLUGINS));
   db.update(plugins).set({ enabled: true }).run();
@@ -49,6 +49,7 @@ function setup(opts: { versionCheckIntervalMs?: number; pluginsDir?: string } = 
     events,
     supervisor: { backoff: { initialMs: 20, maxMs: 100 }, initTimeoutMs: 2000, rpcTimeoutMs: 5000 },
     versionCheckIntervalMs: opts.versionCheckIntervalMs ?? 0,
+    now: opts.now,
   });
   cleanup.push(() => manager.stopAll());
   return { db, manager, events, seen, secrets };
@@ -162,6 +163,36 @@ describe('InstanceManager', () => {
     await expect(t.manager.syncNow(inst.id)).rejects.toThrow(/Invalid syncCatalog result/);
     expect(t.manager.get(inst.id).lastSyncStatus).toMatch(/^error:/);
     expect(t.seen.map((e) => e.name)).toContain('sync.failed');
+  });
+
+  it('times sync freshness and version checks by the injected clock', async () => {
+    let clock = new Date('2026-01-01T00:00:00Z');
+    const advance = (ms: number) => (clock = new Date(clock.getTime() + ms));
+    const t = setup({ versionCheckIntervalMs: 30 * 60_000, now: () => clock });
+    const syncs = () => t.seen.filter((e) => e.name === 'sync.completed').length;
+    const inst = await create(t.manager, { version: '1.0' });
+    await t.manager.ensureFresh(inst.id);
+    expect(syncs()).toBe(1);
+
+    // The upstream version changes, but the next check is not due yet.
+    await t.manager.updateConnection(inst.id, { config: { version: '2.0' } });
+    await t.manager.ensureFresh(inst.id);
+    expect(syncs()).toBe(1);
+    advance(31 * 60_000);
+    await t.manager.ensureFresh(inst.id);
+    expect(syncs()).toBe(2);
+    expect(t.manager.get(inst.id).upstreamVersion).toBe('2.0');
+
+    // Older than syncMaxAgeMs (1 h by default): synced again with no version change.
+    advance(61 * 60_000);
+    await t.manager.ensureFresh(inst.id);
+    expect(syncs()).toBe(3);
+
+    await t.manager.syncStale();
+    expect(syncs()).toBe(3);
+    advance(25 * 60 * 60_000);
+    await t.manager.syncStale();
+    expect(syncs()).toBe(4);
   });
 
   it("resyncs before serving when the running child's bundle differs from the catalog's, and refuses if that fails", async () => {

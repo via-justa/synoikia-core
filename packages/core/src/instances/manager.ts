@@ -612,7 +612,7 @@ export class InstanceManager {
         if (manifest.capabilities.registry) {
           applyRegistrySync(this.db, instanceId, await client.call('syncRegistry'), this.now());
         }
-        live.lastVersionCheck = Date.now();
+        live.lastVersionCheck = this.now().getTime();
         if (this.row(instanceId).status === 'error' && live.supervisor.status === 'ready')
           this.setStatus(instanceId, 'ready');
         this.opts.events.emit('sync.completed', {
@@ -662,13 +662,14 @@ export class InstanceManager {
       return;
     }
     const settings = this.settingsOf(row);
-    if (Date.now() - row.lastSyncedAt.getTime() > settings.syncMaxAgeMs) {
+    const nowMs = this.now().getTime();
+    if (nowMs - row.lastSyncedAt.getTime() > settings.syncMaxAgeMs) {
       await this.syncNow(instanceId).catch(() => undefined);
       return;
     }
     const interval = opts.forceVersionCheck ? 60_000 : (this.opts.versionCheckIntervalMs ?? 30 * 60_000);
-    if (Date.now() - live.lastVersionCheck < interval) return;
-    live.lastVersionCheck = Date.now();
+    if (nowMs - live.lastVersionCheck < interval) return;
+    live.lastVersionCheck = nowMs;
     try {
       const version = await live.supervisor.client.call('getUpstreamVersion');
       if (version !== row.upstreamVersion) await this.syncNow(instanceId).catch(() => undefined);
@@ -682,7 +683,7 @@ export class InstanceManager {
     for (const [id, live] of this.live) {
       if (live.supervisor.status !== 'ready') continue;
       const row = this.db.select().from(pluginInstances).where(eq(pluginInstances.id, id)).get();
-      if (!row?.lastSyncedAt || Date.now() - row.lastSyncedAt.getTime() > maxAgeMs) {
+      if (!row?.lastSyncedAt || this.now().getTime() - row.lastSyncedAt.getTime() > maxAgeMs) {
         await this.syncNow(id).catch(() => undefined);
       }
     }
