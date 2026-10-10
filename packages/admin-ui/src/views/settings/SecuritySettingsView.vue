@@ -115,10 +115,10 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
       </div>
       <div class="field check">
         <label>
-          <input v-model="security.disableLocalLogin" type="checkbox" />
+          <input v-model="security.disableLocalLogin" type="checkbox" aria-describedby="s-local-help" />
           Disable password sign-in (single sign-on only)
         </label>
-        <p class="help">
+        <p id="s-local-help" class="help">
           Needs working OIDC and at least one linked user.
           <template v-if="forceLocal">
             <strong>ADMIN_FORCE_LOCAL_LOGIN</strong> is set, so password sign-in stays on.</template
@@ -136,14 +136,28 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
         </div>
         <div class="field">
           <label for="s-aidle">Approval page sign-in idle timeout (hours)</label>
-          <input id="s-aidle" v-model.number="security.approvalSessionIdleHours" type="number" min="1" max="168" />
+          <input
+            id="s-aidle"
+            v-model.number="security.approvalSessionIdleHours"
+            type="number"
+            min="1"
+            max="168"
+            aria-describedby="s-approval-help"
+          />
         </div>
         <div class="field">
           <label for="s-aabs">Approval page sign-in maximum (days)</label>
-          <input id="s-aabs" v-model.number="security.approvalSessionAbsoluteDays" type="number" min="1" max="30" />
+          <input
+            id="s-aabs"
+            v-model.number="security.approvalSessionAbsoluteDays"
+            type="number"
+            min="1"
+            max="30"
+            aria-describedby="s-approval-help"
+          />
         </div>
       </div>
-      <p class="help">
+      <p id="s-approval-help" class="help">
         The approval page asks for an authenticator code once per browser sign-in. Locked operations always ask for a
         fresh one.
       </p>
@@ -162,15 +176,19 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
       <h2>Self-registration</h2>
       <div class="field">
         <label for="s-role">Role of new accounts</label>
-        <select id="s-role" v-model="security.defaultRoleId">
+        <select
+          id="s-role"
+          v-model="security.defaultRoleId"
+          :aria-describedby="security.defaultRoleId === 'admin' ? 's-role-help s-role-warn' : 's-role-help'"
+        >
           <option :value="null">None: nobody can register</option>
           <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option>
         </select>
-        <p class="help">
+        <p id="s-role-help" class="help">
           With a role set, unknown users named by the MCP proxy (External sign-in) and, with auto-provisioning on, new
           single sign-on users get an account with this role.
         </p>
-        <p v-if="security.defaultRoleId === 'admin'" class="alert warn" role="status">
+        <p v-if="security.defaultRoleId === 'admin'" id="s-role-warn" class="alert warn" role="status">
           Every new account will be an administrator.
         </p>
       </div>
@@ -248,10 +266,10 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
       </div>
       <div class="field check">
         <label
-          ><input v-model="oidc.autoProvision" type="checkbox" /> Create an account on first sign-in for anyone the
-          policy allows</label
+          ><input v-model="oidc.autoProvision" type="checkbox" aria-describedby="o-auto-help" /> Create an account on
+          first sign-in for anyone the policy allows</label
         >
-        <p class="help">
+        <p id="o-auto-help" class="help">
           Otherwise each user must link single sign-on from their profile first. New accounts get the self-registration
           role, so this works only while one is set.
         </p>
@@ -272,13 +290,14 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
           type="number"
           min="7"
           placeholder="Keep forever"
+          aria-describedby="a-ret-help"
           @input="
             audit.retentionDays = ($event.target as HTMLInputElement).value
               ? Number(($event.target as HTMLInputElement).value)
               : null
           "
         />
-        <p class="help">Empty keeps everything (the default). Purges are themselves audited.</p>
+        <p id="a-ret-help" class="help">Empty keeps everything (the default). Purges are themselves audited.</p>
       </div>
       <p v-if="messages.audit" class="alert" :class="messages.audit.kind" :role="messageRole(messages.audit.kind)">
         {{ messages.audit.text }}

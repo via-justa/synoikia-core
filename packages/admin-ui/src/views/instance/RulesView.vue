@@ -399,12 +399,12 @@ const TIPS = {
           placeholder="Filter operations…"
           aria-label="Filter operations"
         />
-        <select id="r-op" v-model="draft.operationId" :disabled="!!draft.id" size="6">
+        <select id="r-op" v-model="draft.operationId" :disabled="!!draft.id" size="6" aria-describedby="r-op-help">
           <option v-for="o in pickable" :key="o.id" :value="o.id">
             {{ o.key }}{{ o.reachable ? '' : ` — ${reasonText(o.reason ?? '')}` }}
           </option>
         </select>
-        <p class="help">Only non-locked writes can be pre-approved.</p>
+        <p id="r-op-help" class="help">Only non-locked writes can be pre-approved.</p>
       </div>
 
       <template v-if="draftOp">
@@ -413,9 +413,9 @@ const TIPS = {
           Strict: a call matches only if every parameter it sends is covered here. Leave a field empty to require that
           the parameter is absent, or tick “any value”.
         </p>
-        <div v-for="f in fields" :key="f.field" class="field">
+        <div v-for="(f, i) in fields" :key="f.field" class="field">
           <div class="field-head">
-            <label
+            <label :id="`${uid}-f${i}`"
               >{{ f.label }} <span class="mono muted small">{{ f.field }}{{ f.op ? ` · ${f.op}` : '' }}</span></label
             >
             <label v-if="f.field !== '$targets'" class="row small any"
@@ -429,6 +429,7 @@ const TIPS = {
             :base="base"
             :targets="targets"
             :options="targetOptions(f)"
+            :aria-labelledby="`${uid}-f${i}`"
           />
           <template v-else-if="valueOf(f).any" />
           <ChipsInput
@@ -436,13 +437,31 @@ const TIPS = {
             v-model="valueOf(f).list"
             :suggestions="f.optionsSource ? options[f.optionsSource] : undefined"
             placeholder="Add a value"
+            :aria-labelledby="`${uid}-f${i}`"
           />
           <div v-else-if="f.op === 'range'" class="row">
-            <input v-model="valueOf(f).min" type="number" placeholder="min" aria-label="Minimum" class="grow" />
-            <input v-model="valueOf(f).max" type="number" placeholder="max" aria-label="Maximum" class="grow" />
+            <input
+              :id="`${uid}-f${i}-min`"
+              v-model="valueOf(f).min"
+              type="number"
+              placeholder="min"
+              aria-label="Minimum"
+              :aria-labelledby="`${uid}-f${i} ${uid}-f${i}-min`"
+              class="grow"
+            />
+            <input
+              :id="`${uid}-f${i}-max`"
+              v-model="valueOf(f).max"
+              type="number"
+              placeholder="max"
+              aria-label="Maximum"
+              :aria-labelledby="`${uid}-f${i} ${uid}-f${i}-max`"
+              class="grow"
+            />
           </div>
           <select
             v-else-if="f.op === 'bool'"
+            :aria-labelledby="`${uid}-f${i}`"
             :value="valueOf(f).bool === null ? '' : String(valueOf(f).bool)"
             @change="
               valueOf(f).bool =
@@ -455,13 +474,18 @@ const TIPS = {
             <option value="true">true</option>
             <option value="false">false</option>
           </select>
-          <select v-else-if="f.optionsSource && options[f.optionsSource]?.length" v-model="valueOf(f).text">
+          <select
+            v-else-if="f.optionsSource && options[f.optionsSource]?.length"
+            v-model="valueOf(f).text"
+            :aria-labelledby="`${uid}-f${i}`"
+          >
             <option value="">—</option>
             <option v-for="o in options[f.optionsSource]" :key="o.value" :value="o.value">{{ o.label }}</option>
           </select>
           <input
             v-else
             v-model="valueOf(f).text"
+            :aria-labelledby="`${uid}-f${i}`"
             :type="f.widget === 'number' ? 'number' : 'text'"
             :placeholder="f.op === 'prefix' ? 'vol/media/' : ''"
           />
@@ -469,10 +493,10 @@ const TIPS = {
       </template>
 
       <div v-if="draftOp" class="field">
-        <label
+        <label :id="`${uid}-extra`"
           >Other parameters accepted with any value <InfoTip :text="TIPS.extraAny" label="About other parameters"
         /></label>
-        <ChipsInput v-model="draft.extraAny" placeholder="e.g. /quota" />
+        <ChipsInput v-model="draft.extraAny" placeholder="e.g. /quota" :aria-labelledby="`${uid}-extra`" />
         <label class="row small"
           ><input v-model="draft.anyParams" type="checkbox" /> Accept any other parameters (not recommended)
           <InfoTip :text="TIPS.anyParams" label="About accepting any parameters"

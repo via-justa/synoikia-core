@@ -92,10 +92,10 @@ const MODE_HELP: Record<string, string> = {
       <h2>Default client authentication</h2>
       <p class="small muted">Endpoints use this unless they override it in their own settings.</p>
       <div class="field">
-        <select v-model="form.defaultAuthMode" aria-label="Default authentication mode">
+        <select v-model="form.defaultAuthMode" aria-label="Default authentication mode" aria-describedby="m-mode-help">
           <option v-for="m in AUTH_MODES" :key="m" :value="m">{{ AUTH_MODE_LABELS[m] }}</option>
         </select>
-        <p class="help">{{ MODE_HELP[form.defaultAuthMode] }}</p>
+        <p id="m-mode-help" class="help">{{ MODE_HELP[form.defaultAuthMode] }}</p>
       </div>
       <p class="small">
         Public MCP URL: <span class="mono">{{ publicMcpUrl ?? 'not set — derived from each request' }}</span>
@@ -134,10 +134,10 @@ const MODE_HELP: Record<string, string> = {
       </ul>
       <div class="field check">
         <label
-          ><input v-model="form.allowDynamicRegistration" type="checkbox" /> Let MCP clients register themselves
-          (dynamic client registration)</label
+          ><input v-model="form.allowDynamicRegistration" type="checkbox" aria-describedby="m-dcr-help" /> Let MCP
+          clients register themselves (dynamic client registration)</label
         >
-        <p class="help">When off, register each client by hand under Clients &amp; Tokens.</p>
+        <p id="m-dcr-help" class="help">When off, register each client by hand under Clients &amp; Tokens.</p>
       </div>
       <div class="form-grid">
         <div class="field">
@@ -161,13 +161,18 @@ const MODE_HELP: Record<string, string> = {
       <div class="form-grid">
         <div class="field">
           <label for="m-cft">Cloudflare team domain</label>
-          <input id="m-cft" v-model="form.cfAccess.teamDomain" placeholder="myteam.cloudflareaccess.com" />
-          <p class="help">Zero Trust → Settings → Team name and domain.</p>
+          <input
+            id="m-cft"
+            v-model="form.cfAccess.teamDomain"
+            placeholder="myteam.cloudflareaccess.com"
+            aria-describedby="m-cft-help"
+          />
+          <p id="m-cft-help" class="help">Zero Trust → Settings → Team name and domain.</p>
         </div>
         <div class="field">
           <label for="m-cfa">Application audience (AUD)</label>
-          <input id="m-cfa" v-model="form.cfAccess.aud" />
-          <p class="help">The Access application's Application Audience (AUD) Tag, on its Overview.</p>
+          <input id="m-cfa" v-model="form.cfAccess.aud" aria-describedby="m-cfa-help" />
+          <p id="m-cfa-help" class="help">The Access application's Application Audience (AUD) Tag, on its Overview.</p>
         </div>
       </div>
       <h3>Set up Cloudflare</h3>
@@ -226,8 +231,13 @@ const MODE_HELP: Record<string, string> = {
       </p>
       <div class="field">
         <label for="m-hdr">Trusted identity header</label>
-        <input id="m-hdr" v-model="form.trustedIdentityHeader" placeholder="Remote-User" />
-        <p class="help">Used only to attribute calls in the audit log.</p>
+        <input
+          id="m-hdr"
+          v-model="form.trustedIdentityHeader"
+          placeholder="Remote-User"
+          aria-describedby="m-hdr-help"
+        />
+        <p id="m-hdr-help" class="help">Used only to attribute calls in the audit log.</p>
       </div>
     </section>
 

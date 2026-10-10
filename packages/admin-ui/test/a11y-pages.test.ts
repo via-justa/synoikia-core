@@ -1,5 +1,6 @@
-import { flushPromises } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import SchemaForm from '../src/components/SchemaForm.vue';
 import { fakeApi, json, mountAt, signedIn } from './helpers';
 
 afterEach(() => {
@@ -340,5 +341,160 @@ describe('Alerts and notices', () => {
     form.requestSubmit();
     await flushPromises();
     expect(form.querySelector('[role="alert"]')!.textContent).toBe('Bad value');
+  });
+});
+
+/** The accessible name of a control from aria-labelledby, aria-label or its `<label for>`. */
+function nameOf(el: Element) {
+  if (el.hasAttribute('aria-labelledby')) {
+    return el
+      .getAttribute('aria-labelledby')!
+      .split(' ')
+      .map((id) => {
+        const target = document.getElementById(id)!;
+        expect(target, `#${id}`).not.toBeNull();
+        return target === el ? el.getAttribute('aria-label') : target.textContent!.trim();
+      })
+      .join(' ');
+  }
+  if (el.hasAttribute('aria-label')) return el.getAttribute('aria-label');
+  return el.id ? document.querySelector(`label[for="${el.id}"]`)?.textContent?.trim() : undefined;
+}
+
+describe('Form labels and hints', () => {
+  const op = (key: string, extra: Record<string, unknown> = {}) => ({
+    id: `op-${key}`,
+    key,
+    displayName: null,
+    classification: 'write',
+    locked: false,
+    levelOverride: null,
+    level: 'ask',
+    allowedLevels: ['none', 'ask', 'write'],
+    group: 'app',
+    reachable: true,
+    mode: 'approve',
+    pendingReview: false,
+    needsReview: false,
+    ...extra,
+  });
+
+  it('name every control in the rule editor, the target picker included', async () => {
+    fakeApi({
+      'GET /api/session': signedIn,
+      'GET /api/overview': overview,
+      'GET /api/instances/i1/rules': [],
+      'GET /api/instances/i1/operations': [op('widget.set', { matchProfile: 'w' })],
+      'GET /api/instances/i1/registry': [],
+      'GET /api/plugins': [
+        {
+          id: 'p1',
+          manifest: {
+            targets: { label: 'Widget', registryKind: 'item', scopes: [{ key: 'zone', label: 'Zone' }] },
+            matchProfiles: {
+              w: [
+                { field: '$targets', label: 'Targets', widget: 'registry-picker' },
+                { field: '/size', label: 'Size', op: 'range' },
+                { field: '/tags', label: 'Tags', op: 'in' },
+                { field: '/mode', label: 'Mode', op: 'bool' },
+                { field: '/name', label: 'Name', op: 'eq' },
+              ],
+            },
+          },
+        },
+      ],
+    });
+    await mountAt('/endpoints/nas/rules');
+    expect(document.querySelector('table')!.getAttribute('aria-label')).toBe('Pre-approval rules');
+    [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New rule')!.click();
+    await flushPromises();
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const select = dialog.querySelector<HTMLSelectElement>('#r-op')!;
+    expect(refText(select, 'aria-describedby')).toBe('Only non-locked writes can be pre-approved.');
+    select.value = 'op-widget.set';
+    select.dispatchEvent(new Event('change'));
+    await flushPromises();
+
+    const unnamed = [...dialog.querySelectorAll('input:not([type="checkbox"]), select')].filter(
+      (el) => !nameOf(el) && !el.closest('label'),
+    );
+    expect(unnamed).toEqual([]);
+    const picker = dialog.querySelector('.picker')!;
+    expect(picker.getAttribute('role')).toBe('group');
+    expect(refText(picker, 'aria-labelledby')).toContain('Targets');
+    expect(refText(picker, 'aria-describedby')).toContain('Every resolved target');
+    const chipInputs = [...dialog.querySelectorAll('.chips input')].map((el) => nameOf(el));
+    expect(chipInputs).toEqual([
+      'Zone',
+      'Widget',
+      expect.stringContaining('Tags'),
+      expect.stringMatching(/^Other parameters accepted with any value/),
+    ]);
+    const range = [...dialog.querySelectorAll('input[type="number"][placeholder]')].slice(0, 2).map((el) => nameOf(el));
+    expect(range).toEqual([expect.stringMatching(/^Size.* Minimum$/), expect.stringMatching(/^Size.* Maximum$/)]);
+  });
+
+  it('ties SchemaForm help to its control and labels secret and multi-choice groups', () => {
+    mount(SchemaForm, {
+      attachTo: document.body,
+      props: {
+        schema: {
+          type: 'object',
+          properties: {
+            url: { type: 'string', title: 'URL', description: 'Where the service runs.' },
+            apiKey: { type: 'string', writeOnly: true, title: 'API key' },
+            kinds: { type: 'array', title: 'Kinds', items: { enum: ['a', 'b'] } },
+          },
+        },
+        ui: {},
+        config: {},
+        secrets: { apiKey: { set: true } },
+        secretPatch: {},
+      },
+    });
+    const url = document.querySelector('#f-url')!;
+    expect(nameOf(url)).toBe('URL');
+    expect(refText(url, 'aria-describedby')).toBe('Where the service runs.');
+    const groups = byRole('group').map((g) => refText(g, 'aria-labelledby'));
+    expect(groups).toEqual(['API key', 'Kinds']);
+  });
+});
+
+describe('First admin setup', () => {
+  it('shows the live check without an alert, and says it once a field is left', async () => {
+    fakeApi({ 'GET /api/session': { ...signedIn, authenticated: false, user: null, setupRequired: true } });
+    await mountAt('/setup');
+    const password = document.querySelector<HTMLInputElement>('#sp')!;
+    password.value = 'short';
+    password.dispatchEvent(new Event('input'));
+    await flushPromises();
+    const problem = document.getElementById('setup-problem')!;
+    expect(problem.textContent?.trim()).toBe('Use at least 12 characters.');
+    expect(problem.hasAttribute('role')).toBe(false);
+    expect(refText(password, 'aria-describedby')).toBe('Use at least 12 characters.');
+    const live = document.querySelector('[aria-live="polite"]')!;
+    expect(live.textContent).toBe('');
+
+    password.dispatchEvent(new Event('blur'));
+    await flushPromises();
+    expect(live.textContent).toBe('Use at least 12 characters.');
+  });
+
+  it('announces a failed submit as an alert', async () => {
+    fakeApi({
+      'GET /api/session': { ...signedIn, authenticated: false, user: null, setupRequired: true },
+      'POST /api/setup': json(409, { error: 'conflict', message: 'Already set up' }),
+    });
+    await mountAt('/setup');
+    for (const id of ['sp', 'sc']) {
+      const input = document.querySelector<HTMLInputElement>(`#${id}`)!;
+      input.value = 'a-long-password';
+      input.dispatchEvent(new Event('input'));
+    }
+    await flushPromises();
+    document.querySelector('form')!.requestSubmit();
+    await flushPromises();
+    const alert = document.querySelector('[role="alert"]')!;
+    expect(alert.textContent?.trim()).toBe('Already set up');
   });
 });

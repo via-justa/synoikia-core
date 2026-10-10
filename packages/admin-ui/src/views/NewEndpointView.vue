@@ -65,17 +65,21 @@ function create() {
       </div>
       <div class="field">
         <label for="n-plugin">Plugin</label>
-        <select id="n-plugin" v-model="pluginId">
+        <select
+          id="n-plugin"
+          v-model="pluginId"
+          :aria-describedby="plugin?.manifest.description ? 'n-plugin-help' : undefined"
+        >
           <option value="" disabled>Choose a plugin</option>
           <option v-for="p in usable" :key="p.id" :value="p.pluginId">{{ p.manifest.name ?? p.pluginId }}</option>
         </select>
-        <p v-if="plugin?.manifest.description" class="help">{{ plugin.manifest.description }}</p>
+        <p v-if="plugin?.manifest.description" id="n-plugin-help" class="help">{{ plugin.manifest.description }}</p>
       </div>
       <div class="form-grid">
         <div class="field">
           <label for="n-slug">Path</label>
-          <input id="n-slug" v-model.trim="slug" placeholder="nas" />
-          <p class="help" :class="{ bad: slug && !slugOk }">
+          <input id="n-slug" v-model.trim="slug" placeholder="nas" aria-describedby="n-slug-help" />
+          <p id="n-slug-help" class="help" :class="{ bad: slug && !slugOk }">
             {{ slug && !slugOk ? 'Lowercase letters, digits and dashes.' : `Served at /${slug || '…'}` }}
           </p>
         </div>

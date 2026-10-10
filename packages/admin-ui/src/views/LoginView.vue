@@ -106,8 +106,9 @@ async function submit() {
               name="password"
               type="password"
               :autocomplete="step === 'signup' ? 'new-password' : 'current-password'"
+              :aria-describedby="step === 'signup' ? 'password-help' : undefined"
             />
-            <p v-if="step === 'signup'" class="help">At least 12 characters.</p>
+            <p v-if="step === 'signup'" id="password-help" class="help">At least 12 characters.</p>
           </div>
         </template>
       </template>

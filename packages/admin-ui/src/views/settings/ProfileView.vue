@@ -212,8 +212,16 @@ async function enrolled() {
       <h2>Single sign-on</h2>
       <template v-if="me.oidcLinked">
         <p class="small"><span class="pill info">Linked</span> You can sign in with {{ session.oidcLabel }}.</p>
-        <button class="btn" type="button" :disabled="!me.hasPassword" @click="unlink">Unlink</button>
-        <p v-if="!me.hasPassword" class="help small muted">Set a password before unlinking.</p>
+        <button
+          class="btn"
+          type="button"
+          :disabled="!me.hasPassword"
+          :aria-describedby="me.hasPassword ? undefined : 'unlink-help'"
+          @click="unlink"
+        >
+          Unlink
+        </button>
+        <p v-if="!me.hasPassword" id="unlink-help" class="help small muted">Set a password before unlinking.</p>
       </template>
       <a v-else class="btn" href="/auth/oidc/link">Link {{ session.oidcLabel }}</a>
       <p v-if="messages.oidc" class="alert" :class="messages.oidc.kind" :role="messageRole(messages.oidc.kind)">
