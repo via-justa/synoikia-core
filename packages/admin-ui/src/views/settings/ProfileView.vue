@@ -1,18 +1,40 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import { errorText, http } from '../../api';
+import { errorText } from '../../api';
 import MyCredentials from '../../components/MyCredentials.vue';
 import TotpEnrollment from '../../components/TotpEnrollment.vue';
+import {
+  useApprovalBrowsersQuery,
+  useChangePassword,
+  useDisableTotp,
+  useProfileQuery,
+  useRefreshProfile,
+  useSignOutApprovalBrowsers,
+  useUnlinkOidc,
+} from '../../composables/useProfile';
 import { useSessionStore } from '../../stores/session';
 import { THEME_PREFS, getTheme, setTheme } from '../../theme';
 import type { ThemePref } from '../../theme';
-import type { PublicUser } from '../../types';
+
+type Message = { kind: 'ok' | 'error'; text: string };
 
 const session = useSessionStore();
 const route = useRoute();
-const me = ref<PublicUser>();
-const messages = ref<Record<string, { kind: 'ok' | 'error'; text: string }>>({});
+const profileQuery = useProfileQuery();
+const browsersQuery = useApprovalBrowsersQuery();
+const refreshProfile = useRefreshProfile();
+const changePw = useChangePassword();
+const disable = useDisableTotp();
+const unlinkOidc = useUnlinkOidc();
+const signOutBrowsers = useSignOutApprovalBrowsers();
+const me = computed(() => profileQuery.data.value);
+const approvalBrowsers = computed(() => browsersQuery.data.value ?? []);
+const notes = ref<Record<string, Message>>({});
+const messages = computed<Record<string, Message>>(() => {
+  const loadError = profileQuery.error.value ?? browsersQuery.error.value;
+  return loadError ? { load: { kind: 'error', text: errorText(loadError) }, ...notes.value } : notes.value;
+});
 const pw = ref({ current: '', next: '', confirm: '' });
 const disableCode = ref('');
 const theme = ref<ThemePref>(getTheme());
@@ -22,68 +44,58 @@ function pickTheme(pref: ThemePref) {
   setTheme(pref);
 }
 
-const OIDC_RESULT: Record<string, { kind: 'ok' | 'error'; text: string }> = {
+const OIDC_RESULT: Record<string, Message> = {
   linked: { kind: 'ok', text: 'Single sign-on linked.' },
   oidc_not_allowed: { kind: 'error', text: 'That single sign-on account is not allowed by the policy.' },
   oidc_taken: { kind: 'error', text: 'That single sign-on account is already linked to another user.' },
 };
 
-const approvalBrowsers = ref<{ createdAt: string; lastSeenAt: string; userAgent: string | null }[]>([]);
-
-async function load() {
-  me.value = await http.get<PublicUser>('/api/profile');
-  approvalBrowsers.value = await http.get('/api/profile/approval-sessions');
-}
-async function signOutApprovalBrowsers() {
-  try {
-    await http.post('/api/profile/approval-sessions/revoke');
-    setMsg('approval', 'ok', 'Approval browsers signed out. The next approval asks you to sign in again.');
-    await load();
-  } catch (err) {
-    setMsg('approval', 'error', errorText(err));
-  }
-}
-onMounted(async () => {
-  await load().catch((err) => (messages.value = { load: { kind: 'error', text: errorText(err) } }));
+onMounted(() => {
   const q = route.query.linked ? 'linked' : typeof route.query.error === 'string' ? route.query.error : undefined;
-  if (q && OIDC_RESULT[q]) messages.value = { ...messages.value, oidc: OIDC_RESULT[q]! };
+  if (q && OIDC_RESULT[q]) notes.value = { ...notes.value, oidc: OIDC_RESULT[q]! };
 });
 
 const setMsg = (key: string, kind: 'ok' | 'error', text: string) =>
-  (messages.value = { ...messages.value, [key]: { kind, text } });
+  (notes.value = { ...notes.value, [key]: { kind, text } });
+const failed = (key: string) => (err: unknown) => setMsg(key, 'error', errorText(err));
 
-async function changePassword() {
+function signOutApprovalBrowsers() {
+  signOutBrowsers.mutate(undefined, {
+    onSuccess: () =>
+      setMsg('approval', 'ok', 'Approval browsers signed out. The next approval asks you to sign in again.'),
+    onError: failed('approval'),
+  });
+}
+function changePassword() {
   if (pw.value.next !== pw.value.confirm) return setMsg('pw', 'error', 'The new passwords do not match.');
-  try {
-    await http.post('/api/profile/password', { currentPassword: pw.value.current, newPassword: pw.value.next });
-    pw.value = { current: '', next: '', confirm: '' };
-    setMsg('pw', 'ok', 'Password changed. Other sessions were signed out.');
-    await load();
-  } catch (err) {
-    setMsg('pw', 'error', errorText(err));
-  }
+  changePw.mutate(
+    { currentPassword: pw.value.current, newPassword: pw.value.next },
+    {
+      onSuccess: () => {
+        pw.value = { current: '', next: '', confirm: '' };
+        setMsg('pw', 'ok', 'Password changed. Other sessions were signed out.');
+      },
+      onError: failed('pw'),
+    },
+  );
 }
-async function disableTotp() {
-  try {
-    await http.post('/api/profile/totp/disable', { code: disableCode.value.trim() });
-    disableCode.value = '';
-    setMsg('totp', 'ok', 'Two-factor authentication is off.');
-    await load();
-  } catch (err) {
-    setMsg('totp', 'error', errorText(err));
-  }
+function disableTotp() {
+  disable.mutate(disableCode.value.trim(), {
+    onSuccess: () => {
+      disableCode.value = '';
+      setMsg('totp', 'ok', 'Two-factor authentication is off.');
+    },
+    onError: failed('totp'),
+  });
 }
-async function unlink() {
-  try {
-    await http.post('/api/profile/oidc/unlink');
-    setMsg('oidc', 'ok', 'Single sign-on unlinked.');
-    await load();
-  } catch (err) {
-    setMsg('oidc', 'error', errorText(err));
-  }
+function unlink() {
+  unlinkOidc.mutate(undefined, {
+    onSuccess: () => setMsg('oidc', 'ok', 'Single sign-on unlinked.'),
+    onError: failed('oidc'),
+  });
 }
 async function enrolled() {
-  await load();
+  await refreshProfile();
   await session.load();
 }
 </script>

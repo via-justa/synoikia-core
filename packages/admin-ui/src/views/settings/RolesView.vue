@@ -1,17 +1,38 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { errorText, http } from '../../api';
-import { useOverviewQuery, useRefreshOverview } from '../../composables/useOverview';
+import { computed, ref } from 'vue';
+import { errorText } from '../../api';
+import { useConfirm } from '../../composables/useConfirm';
+import { useOverviewQuery } from '../../composables/useOverview';
+import {
+  useCreateRole,
+  useDeleteRole,
+  useRolesQuery,
+  useSetRoleInstances,
+  useUpdateRole,
+} from '../../composables/useRoles';
 import type { RoleRow } from '../../types';
 
 /** Roles (design §6.4): Admin is built in; each other role has endpoints, maximum levels (set on an
  * endpoint's Access page) and three switches. */
-const { data: overview } = useOverviewQuery();
-const refreshOverview = useRefreshOverview();
-const instances = computed(() => overview.value?.instances ?? []);
-const roles = ref<RoleRow[]>([]);
-const error = ref<string>();
+const overviewQuery = useOverviewQuery();
+const rolesQuery = useRolesQuery();
+const createRole = useCreateRole();
+const update = useUpdateRole();
+const del = useDeleteRole();
+const setInstances = useSetRoleInstances();
+const { confirm, prompt } = useConfirm();
+const instances = computed(() => overviewQuery.data.value?.instances ?? []);
+const roles = computed(() => rolesQuery.data.value ?? []);
 const newName = ref('');
+
+// One page alert: the latest action's failure, else a failed load.
+const error = computed(() => {
+  const latest = [createRole, update, del, setInstances]
+    .map((m) => ({ at: m.submittedAt.value, text: m.errorText.value }))
+    .reduce((a, b) => (b.at > a.at ? b : a));
+  const loadError = rolesQuery.error.value ?? overviewQuery.error.value;
+  return latest.text ?? (loadError ? errorText(loadError) : undefined);
+});
 
 const SWITCHES = [
   {
@@ -31,48 +52,24 @@ const SWITCHES = [
   },
 ] as const;
 
-async function load() {
-  try {
-    roles.value = await http.get<RoleRow[]>('/api/roles');
-    if (!overview.value) await refreshOverview();
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
-onMounted(load);
-
 const custom = computed(() => roles.value.filter((r) => !r.isAdmin));
 
-async function run(fn: () => Promise<unknown>) {
-  error.value = undefined;
-  try {
-    await fn();
-    await load();
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
-
-const create = () =>
-  run(async () => {
-    await http.post('/api/roles', { name: newName.value.trim() });
-    newName.value = '';
-  });
-const flip = (r: RoleRow, key: (typeof SWITCHES)[number]['key']) =>
-  run(() => http.patch(`/api/roles/${r.id}`, { [key]: !r[key] }));
-const rename = (r: RoleRow) => {
-  const name = window.prompt('New name', r.name)?.trim();
-  if (name && name !== r.name) void run(() => http.patch(`/api/roles/${r.id}`, { name }));
+const create = () => createRole.mutate(newName.value.trim(), { onSuccess: () => (newName.value = '') });
+const flip = (r: RoleRow, key: (typeof SWITCHES)[number]['key']) => update.mutate({ id: r.id, [key]: !r[key] });
+const rename = async (r: RoleRow) => {
+  const name = (
+    await prompt({ title: `Rename ${r.name}`, label: 'New name', initial: r.name, action: 'Rename' })
+  )?.trim();
+  if (name && name !== r.name) update.mutate({ id: r.id, name });
 };
-const remove = (r: RoleRow) => {
-  if (window.confirm(`Delete the role ${r.name}?`)) void run(() => http.del(`/api/roles/${r.id}`));
+const remove = async (r: RoleRow) => {
+  if (await confirm({ title: `Delete the role ${r.name}?`, action: 'Delete', danger: true })) del.mutate(r.id);
 };
 const toggleEndpoint = (r: RoleRow, id: string) =>
-  run(() =>
-    http.put(`/api/roles/${r.id}/instances`, {
-      instanceIds: r.instanceIds.includes(id) ? r.instanceIds.filter((x) => x !== id) : [...r.instanceIds, id],
-    }),
-  );
+  setInstances.mutate({
+    id: r.id,
+    instanceIds: r.instanceIds.includes(id) ? r.instanceIds.filter((x) => x !== id) : [...r.instanceIds, id],
+  });
 const slugOf = (id: string) => instances.value.find((i) => i.id === id)?.slug ?? id;
 </script>
 

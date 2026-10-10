@@ -1,32 +1,36 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { errorText, http } from '../../api';
+import { computed, ref, toRaw, watch } from 'vue';
+import { errorText } from '../../api';
+import { useSaveSettings, useSettingsQuery } from '../../composables/useSettings';
 import { AUTH_MODE_LABELS } from '../../format';
 import { AUTH_MODES } from '../../types';
 import type { Settings } from '../../types';
 
+const settingsQuery = useSettingsQuery();
+const saveMcp = useSaveSettings('mcp');
 const form = ref<Settings['mcp']>();
-const publicMcpUrl = ref<string | null>(null);
-const message = ref<{ kind: 'ok' | 'error'; text: string }>();
+const publicMcpUrl = computed(() => settingsQuery.data.value?.publicMcpUrl ?? null);
+const saved = ref<{ kind: 'ok' | 'error'; text: string }>();
+const message = computed(() => {
+  const loadError = settingsQuery.error.value;
+  return saved.value ?? (loadError && !form.value ? { kind: 'error', text: errorText(loadError) } : undefined);
+});
 const endpointPattern = computed(() => `${publicMcpUrl.value ?? '<this server>'}/<slug>`);
 
-onMounted(async () => {
-  try {
-    const s = await http.get<Settings>('/api/settings');
-    form.value = structuredClone(s.mcp);
-    publicMcpUrl.value = s.publicMcpUrl;
-  } catch (err) {
-    message.value = { kind: 'error', text: errorText(err) };
-  }
-});
+// The form is a draft: it follows the cached section, which a save replaces with core's answer.
+watch(
+  () => settingsQuery.data.value?.mcp,
+  (mcp) => {
+    if (mcp) form.value = structuredClone(toRaw(mcp));
+  },
+  { immediate: true },
+);
 
-async function save() {
-  try {
-    form.value = await http.put<Settings['mcp']>('/api/settings/mcp', form.value);
-    message.value = { kind: 'ok', text: 'Saved.' };
-  } catch (err) {
-    message.value = { kind: 'error', text: errorText(err) };
-  }
+function save() {
+  saveMcp.mutate(form.value, {
+    onSuccess: () => (saved.value = { kind: 'ok', text: 'Saved.' }),
+    onError: (err) => (saved.value = { kind: 'error', text: errorText(err) }),
+  });
 }
 
 /** Redirect URIs to allow on the Cloudflare Access application's Managed OAuth, per client. */

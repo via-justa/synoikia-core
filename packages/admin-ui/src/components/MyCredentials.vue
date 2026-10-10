@@ -1,61 +1,66 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { errorText, http } from '../api';
+import { computed, ref } from 'vue';
+import { errorText } from '../api';
+import { useConfirm } from '../composables/useConfirm';
+import { useCreateMyToken, useMyGrantsQuery, useMyTokensQuery, useRevokeMine } from '../composables/useMyCredentials';
+import { useMyEndpointsQuery } from '../composables/useMyEndpoints';
 import { ago } from '../format';
-import type { Ceiling, Grant, MyEndpoint, Token } from '../types';
+import type { Ceiling } from '../types';
 
 /** A user's own MCP credentials (design §6.2, §6.4): bearer tokens they create and OAuth grants they gave. */
-const tokens = ref<Token[]>([]);
-const grants = ref<Grant[]>([]);
-const endpoints = ref<MyEndpoint[]>([]);
-const error = ref<string>();
+const tokensQuery = useMyTokensQuery();
+const grantsQuery = useMyGrantsQuery();
+const endpointsQuery = useMyEndpointsQuery();
+const createToken = useCreateMyToken();
+const revokeMine = useRevokeMine();
+const { confirm } = useConfirm();
+// The three lists show together, once all have loaded.
+const ready = computed(() => !!tokensQuery.data.value && !!grantsQuery.data.value && !!endpointsQuery.data.value);
+const tokens = computed(() => (ready.value ? (tokensQuery.data.value ?? []) : []));
+const grants = computed(() => (ready.value ? (grantsQuery.data.value ?? []) : []));
+const endpoints = computed(() => (ready.value ? endpointsQuery.endpoints.value : []));
+const actionError = ref<string>();
+const error = computed(() => {
+  const loadError = tokensQuery.error.value ?? grantsQuery.error.value ?? endpointsQuery.error.value;
+  return actionError.value ?? (loadError ? errorText(loadError) : undefined);
+});
 const created = ref<string>();
 const draft = ref<{ name: string; all: boolean; scope: string[]; access: Ceiling; expiresAt: string }>();
-
-async function load() {
-  try {
-    [tokens.value, grants.value, endpoints.value] = await Promise.all([
-      http.get<Token[]>('/api/me/tokens'),
-      http.get<Grant[]>('/api/me/grants'),
-      http.get<MyEndpoint[]>('/api/me/endpoints'),
-    ]);
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
-onMounted(load);
 
 const live = computed(() => tokens.value.filter((t) => !t.revokedAt));
 const liveGrants = computed(() => grants.value.filter((g) => !g.revokedAt));
 const slugOf = (id: string) =>
   id === '*' ? 'all my endpoints' : `/${endpoints.value.find((e) => e.id === id)?.slug ?? id}`;
+const failed = (err: unknown) => (actionError.value = errorText(err));
 
-async function create() {
+function create() {
   const d = draft.value;
   if (!d) return;
-  error.value = undefined;
-  try {
-    const res = await http.post<Token & { token: string }>('/api/me/tokens', {
+  actionError.value = undefined;
+  createToken.mutate(
+    {
       name: d.name.trim(),
       scope: d.all ? ['*'] : d.scope,
       access: d.access,
       expiresAt: d.expiresAt ? new Date(d.expiresAt).toISOString() : null,
-    });
-    created.value = res.token;
-    draft.value = undefined;
-    await load();
-  } catch (err) {
-    error.value = errorText(err);
-  }
+    },
+    {
+      onSuccess: (res) => {
+        created.value = res.token;
+        draft.value = undefined;
+      },
+      onError: failed,
+    },
+  );
 }
-async function revoke(path: string, what: string) {
-  if (!window.confirm(`Revoke ${what}? Clients using it lose access now.`)) return;
-  try {
-    await http.del(path);
-    await load();
-  } catch (err) {
-    error.value = errorText(err);
-  }
+async function revoke(kind: 'tokens' | 'grants', id: string, what: string) {
+  const ok = await confirm({
+    title: `Revoke ${what}?`,
+    message: 'Clients using it lose access now.',
+    action: 'Revoke',
+    danger: true,
+  });
+  if (ok) revokeMine.mutate({ kind, id }, { onError: failed });
 }
 </script>
 
@@ -82,9 +87,7 @@ async function revoke(path: string, what: string) {
           </td>
           <td class="small muted">used {{ ago(t.lastUsedAt) }}</td>
           <td class="right">
-            <button class="btn btn-sm btn-danger" type="button" @click="revoke(`/api/me/tokens/${t.id}`, t.name)">
-              Revoke
-            </button>
+            <button class="btn btn-sm btn-danger" type="button" @click="revoke('tokens', t.id, t.name)">Revoke</button>
           </td>
         </tr>
       </tbody>
@@ -147,11 +150,7 @@ async function revoke(path: string, what: string) {
           </td>
           <td class="small muted">since {{ ago(g.createdAt) }}</td>
           <td class="right">
-            <button
-              class="btn btn-sm btn-danger"
-              type="button"
-              @click="revoke(`/api/me/grants/${g.id}`, g.client.name)"
-            >
+            <button class="btn btn-sm btn-danger" type="button" @click="revoke('grants', g.id, g.client.name)">
               Revoke
             </button>
           </td>
