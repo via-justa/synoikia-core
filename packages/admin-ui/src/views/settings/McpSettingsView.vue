@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { messageRole } from '../../a11y';
-import { computed, ref, toRaw, watch } from 'vue';
+import { computed, ref, toRaw, useId, watch } from 'vue';
 import { errorText } from '../../api';
 import { useCopy } from '../../composables/useCopy';
 import { useSaveSettings, useSettingsQuery } from '../../composables/useSettings';
@@ -11,6 +11,7 @@ import type { Settings } from '../../types';
 const settingsQuery = useSettingsQuery();
 const saveMcp = useSaveSettings('mcp');
 const form = ref<Settings['mcp']>();
+const uid = useId();
 const publicMcpUrl = computed(() => settingsQuery.data.value?.publicMcpUrl ?? null);
 const saved = ref<{ kind: 'ok' | 'error'; text: string }>();
 const message = computed(() => {
@@ -193,8 +194,10 @@ const MODE_HELP: Record<string, string> = {
           <div v-for="r in CF_REDIRECTS" :key="r.client" class="redirects">
             <span class="label">{{ r.client }}</span>
             <div v-for="u in r.uris" :key="u" class="redirect">
-              <pre class="code">{{ u }}</pre>
-              <button class="btn btn-sm" type="button" @click="copy(u)">{{ copied === u ? 'Copied' : 'Copy' }}</button>
+              <pre :id="`${uid}-${u}`" class="code">{{ u }}</pre>
+              <button class="btn btn-sm" type="button" :aria-describedby="`${uid}-${u}`" @click="copy(u)">
+                {{ copied === u ? 'Copied' : 'Copy' }}
+              </button>
             </div>
           </div>
           <p class="note">

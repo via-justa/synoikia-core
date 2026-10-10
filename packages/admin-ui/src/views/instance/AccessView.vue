@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, useId } from 'vue';
 import { rovingKeydown, tabStop } from '../../a11y';
 import { errorText } from '../../api';
 import ModalDialog from '../../components/ModalDialog.vue';
@@ -43,6 +43,8 @@ const { confirm, prompt } = useConfirm();
 const opLabel = computed(() => props.instance.plugin?.labels?.operations ?? 'Operations');
 
 const expanded = ref<Set<string>>(new Set());
+const uid = useId();
+const groupId = (g: GroupSummary) => `${uid}-${encodeURIComponent(g.key)}`;
 const search = ref('');
 const attentionOnly = ref(false);
 
@@ -317,7 +319,7 @@ function status(op: Operation): { text: string; tone: string } {
             </svg>
           </button>
           <div class="grow name" @click="toggle(g.key)">
-            <strong>{{ g.label }}</strong>
+            <strong :id="groupId(g)">{{ g.label }}</strong>
             <span v-if="g.label !== g.key" class="mono small muted key">{{ g.key }}</span>
             <span v-if="g.stale" class="pill">stale</span>
             <div class="small muted">
@@ -326,7 +328,9 @@ function status(op: Operation): { text: string; tone: string } {
               <span v-if="g.counts.pendingReview" class="pill warn">{{ g.counts.pendingReview }} to acknowledge</span>
             </div>
           </div>
-          <button v-if="!scope" class="btn-link small" type="button" @click="rename(g)">Rename</button>
+          <button v-if="!scope" class="btn-link small" type="button" :aria-describedby="groupId(g)" @click="rename(g)">
+            Rename
+          </button>
           <span v-if="readonly" class="pill">{{ LEVEL_LABELS[g.level] }}</span>
           <!-- Arrows move focus only: each choice writes to the server, so Space or Enter picks it. -->
           <div
@@ -369,7 +373,7 @@ function status(op: Operation): { text: string; tone: string } {
         <div v-if="expanded.has(g.key) && opsOf(g.key).length" class="ops">
           <div v-for="op in opsOf(g.key)" :key="op.id" class="op" :data-op="op.key">
             <div class="op-name">
-              <span class="mono">{{ op.key }}</span>
+              <span :id="`${uid}-op-${op.id}`" class="mono">{{ op.key }}</span>
               <span
                 v-if="op.locked"
                 class="lock"
@@ -395,6 +399,7 @@ function status(op: Operation): { text: string; tone: string } {
                 v-if="op.pendingReview"
                 class="btn btn-sm btn-primary"
                 type="button"
+                :aria-describedby="`${uid}-op-${op.id}`"
                 @click="patchOp(op, { acknowledged: true })"
               >
                 Acknowledge

@@ -115,8 +115,12 @@ const slugOf = (id: string) => instances.value.find((i) => i.id === id)?.slug ??
         <div class="endpoints" role="group" :aria-labelledby="`${uid}-${r.id} ${uid}-${r.id}-endpoints`">
           <label v-for="i in instances" :key="i.id" class="row small check">
             <input type="checkbox" :checked="r.instanceIds.includes(i.id)" @change="toggleEndpoint(r, i.id)" />
-            <span class="mono">/{{ i.slug }}</span>
-            <RouterLink v-if="r.instanceIds.includes(i.id)" :to="`/endpoints/${i.slug}/access?role=${r.id}`">
+            <span :id="`${uid}-${r.id}-${i.id}`" class="mono">/{{ i.slug }}</span>
+            <RouterLink
+              v-if="r.instanceIds.includes(i.id)"
+              :to="`/endpoints/${i.slug}/access?role=${r.id}`"
+              :aria-describedby="`${uid}-${r.id}-${i.id}`"
+            >
               levels…
             </RouterLink>
           </label>
