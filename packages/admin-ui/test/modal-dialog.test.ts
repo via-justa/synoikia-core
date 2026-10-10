@@ -118,6 +118,25 @@ describe('ModalDialog', () => {
     expect(dialog()).not.toBeNull();
     expect((document.getElementById('name') as HTMLInputElement).value).toBe('draft');
   });
+
+  it('lets Escape hide a hovered InfoTip first, then close the dialog', async () => {
+    await openDialog();
+    const name = document.getElementById('name')!;
+    const tip = document.body.querySelector<HTMLButtonElement>('[aria-label="About the field"]')!;
+    const infotip = tip.closest('.infotip')!;
+    expect(tip.hasAttribute('aria-expanded')).toBe(false);
+    infotip.dispatchEvent(new MouseEvent('mouseenter'));
+    await flushPromises();
+
+    expect(press(name, 'Escape').defaultPrevented).toBe(true);
+    await flushPromises();
+    expect(infotip.classList.contains('dismissed')).toBe(true);
+    expect(dialog()).not.toBeNull();
+
+    press(name, 'Escape');
+    await flushPromises();
+    expect(dialog()).toBeNull();
+  });
 });
 
 describe('useConfirm', () => {

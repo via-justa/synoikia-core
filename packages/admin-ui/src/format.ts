@@ -1,3 +1,5 @@
+import type { RouteLocationNormalized } from 'vue-router';
+
 export function formatDate(value: string | Date | null | undefined): string {
   if (!value) return '—';
   const d = typeof value === 'string' ? new Date(value) : value;
@@ -75,4 +77,10 @@ export function kindSource(reason: string | null | undefined, locked: boolean): 
   if (naming) return `Named like a ${naming[1]} (${naming[2]})`;
   if (reason === 'default:ambiguous') return 'Not recognised, so treated as a write';
   return reason;
+}
+
+/** The page's name, with the endpoint slug on endpoint pages; the document title adds the product name. */
+export function pageTitle(to: RouteLocationNormalized): string | undefined {
+  const slug = to.params.slug;
+  return to.meta.title && typeof slug === 'string' ? `${to.meta.title} · /${slug}` : to.meta.title;
 }
