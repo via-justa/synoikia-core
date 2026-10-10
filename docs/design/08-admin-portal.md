@@ -1,6 +1,13 @@
 # §8 Admin portal
 
-The admin portal is a Vue 3 single-page app (Vite, vue-router, Pinia). The Admin listener serves it as static files. Its visual style uses the Synoikia brand, in a light and a dark theme. Terracotta marks the one primary action of a page. The fonts are Fraunces for the word mark and IBM Plex Sans and Mono for all other text.
+The admin portal is a Vue 3 single-page app (Vite, vue-router). The Admin listener serves it as static files. Its visual style uses the Synoikia brand, in a light and a dark theme. Terracotta marks the one primary action of a page. The fonts are Fraunces for the word mark and IBM Plex Sans and Mono for all other text.
+
+| Concern       | Design                                                                                                                                                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Server data   | `@tanstack/vue-query`. Pages read and change Admin API data through shared composables. A sign-out or a change of user clears the cached data.                                                                                                                      |
+| Client state  | Two Pinia setup stores: the sign-in session, and the `/api/events` stream. An event makes the queries of its data stale.                                                                                                                                            |
+| Confirmations | `ModalDialog`, also through the shared confirm and prompt dialog. The portal does not use the native browser dialogs.                                                                                                                                               |
+| Accessibility | A skip link to the page content. On a route change, the portal moves focus to the content, sets the page title and announces it. One polite live region announces short messages, for example "Copied". The arrow keys, Home and End operate tabs and radio groups. |
 
 ## 8.1 Navigation
 
