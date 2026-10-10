@@ -1,15 +1,37 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { errorText, http } from '../../api';
-import { useAppStore } from '../../stores/app';
+import { computed, ref, useId } from 'vue';
+import { errorText } from '../../api';
+import { latestError } from '../../composables/useApiMutation';
+import { useConfirm } from '../../composables/useConfirm';
+import { useOverviewQuery } from '../../composables/useOverview';
+import {
+  useCreateRole,
+  useDeleteRole,
+  useRolesQuery,
+  useSetRoleInstances,
+  useUpdateRole,
+} from '../../composables/useRoles';
 import type { RoleRow } from '../../types';
 
 /** Roles (design §6.4): Admin is built in; each other role has endpoints, maximum levels (set on an
  * endpoint's Access page) and three switches. */
-const app = useAppStore();
-const roles = ref<RoleRow[]>([]);
-const error = ref<string>();
+const overviewQuery = useOverviewQuery();
+const rolesQuery = useRolesQuery();
+const createRole = useCreateRole();
+const update = useUpdateRole();
+const del = useDeleteRole();
+const setInstances = useSetRoleInstances();
+const { confirm, prompt } = useConfirm();
+const instances = computed(() => overviewQuery.data.value?.instances ?? []);
+const roles = computed(() => rolesQuery.data.value ?? []);
 const newName = ref('');
+const uid = useId();
+
+// One page alert: the latest action's failure, else a failed load.
+const error = computed(() => {
+  const loadError = rolesQuery.error.value ?? overviewQuery.error.value;
+  return latestError([createRole, update, del, setInstances]) ?? (loadError ? errorText(loadError) : undefined);
+});
 
 const SWITCHES = [
   {
@@ -29,49 +51,25 @@ const SWITCHES = [
   },
 ] as const;
 
-async function load() {
-  try {
-    roles.value = await http.get<RoleRow[]>('/api/roles');
-    if (!app.overview) await app.refresh();
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
-onMounted(load);
-
 const custom = computed(() => roles.value.filter((r) => !r.isAdmin));
 
-async function run(fn: () => Promise<unknown>) {
-  error.value = undefined;
-  try {
-    await fn();
-    await load();
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
-
-const create = () =>
-  run(async () => {
-    await http.post('/api/roles', { name: newName.value.trim() });
-    newName.value = '';
-  });
-const flip = (r: RoleRow, key: (typeof SWITCHES)[number]['key']) =>
-  run(() => http.patch(`/api/roles/${r.id}`, { [key]: !r[key] }));
-const rename = (r: RoleRow) => {
-  const name = window.prompt('New name', r.name)?.trim();
-  if (name && name !== r.name) void run(() => http.patch(`/api/roles/${r.id}`, { name }));
+const create = () => createRole.mutate(newName.value.trim(), { onSuccess: () => (newName.value = '') });
+const flip = (r: RoleRow, key: (typeof SWITCHES)[number]['key']) => update.mutate({ id: r.id, [key]: !r[key] });
+const rename = async (r: RoleRow) => {
+  const name = (
+    await prompt({ title: `Rename ${r.name}`, label: 'New name', initial: r.name, action: 'Rename' })
+  )?.trim();
+  if (name && name !== r.name) update.mutate({ id: r.id, name });
 };
-const remove = (r: RoleRow) => {
-  if (window.confirm(`Delete the role ${r.name}?`)) void run(() => http.del(`/api/roles/${r.id}`));
+const remove = async (r: RoleRow) => {
+  if (await confirm({ title: `Delete the role ${r.name}?`, action: 'Delete', danger: true })) del.mutate(r.id);
 };
 const toggleEndpoint = (r: RoleRow, id: string) =>
-  run(() =>
-    http.put(`/api/roles/${r.id}/instances`, {
-      instanceIds: r.instanceIds.includes(id) ? r.instanceIds.filter((x) => x !== id) : [...r.instanceIds, id],
-    }),
-  );
-const slugOf = (id: string) => app.instances.find((i) => i.id === id)?.slug ?? id;
+  setInstances.mutate({
+    id: r.id,
+    instanceIds: r.instanceIds.includes(id) ? r.instanceIds.filter((x) => x !== id) : [...r.instanceIds, id],
+  });
+const slugOf = (id: string) => instances.value.find((i) => i.id === id)?.slug ?? id;
 </script>
 
 <template>
@@ -91,32 +89,42 @@ const slugOf = (id: string) => app.instances.find((i) => i.id === id)?.slug ?? i
 
     <div v-for="r in roles" :key="r.id" class="card role" :data-role="r.name">
       <div class="row">
-        <h2 class="grow">{{ r.name }} <span v-if="r.isDefault" class="pill info">default for new users</span></h2>
+        <h2 :id="`${uid}-${r.id}`" class="grow">
+          {{ r.name }} <span v-if="r.isDefault" class="pill info">default for new users</span>
+        </h2>
         <span class="small muted">{{ r.users }} {{ r.users === 1 ? 'user' : 'users' }}</span>
         <template v-if="!r.isAdmin">
-          <button class="btn btn-sm" type="button" @click="rename(r)">Rename</button>
-          <button class="btn btn-sm btn-danger" type="button" @click="remove(r)">Delete</button>
+          <button class="btn btn-sm" type="button" :aria-describedby="`${uid}-${r.id}`" @click="rename(r)">
+            Rename
+          </button>
+          <button class="btn btn-sm btn-danger" type="button" :aria-describedby="`${uid}-${r.id}`" @click="remove(r)">
+            Delete
+          </button>
         </template>
       </div>
       <p v-if="r.isAdmin" class="small muted">
         Built in. Every endpoint, at the endpoint's own levels, and every setting.
       </p>
       <template v-else>
-        <div class="switches">
+        <div class="switches" role="group" :aria-labelledby="`${uid}-${r.id}`">
           <label v-for="s in SWITCHES" :key="s.key" class="row small check" :title="s.help">
             <input type="checkbox" :checked="r[s.key]" @change="flip(r, s.key)" /> {{ s.label }}
           </label>
         </div>
-        <div class="small"><strong>Endpoints</strong></div>
-        <div class="endpoints">
-          <label v-for="i in app.instances" :key="i.id" class="row small check">
+        <div :id="`${uid}-${r.id}-endpoints`" class="small"><strong>Endpoints</strong></div>
+        <div class="endpoints" role="group" :aria-labelledby="`${uid}-${r.id} ${uid}-${r.id}-endpoints`">
+          <label v-for="i in instances" :key="i.id" class="row small check">
             <input type="checkbox" :checked="r.instanceIds.includes(i.id)" @change="toggleEndpoint(r, i.id)" />
-            <span class="mono">/{{ i.slug }}</span>
-            <RouterLink v-if="r.instanceIds.includes(i.id)" :to="`/endpoints/${i.slug}/access?role=${r.id}`">
+            <span :id="`${uid}-${r.id}-${i.id}`" class="mono">/{{ i.slug }}</span>
+            <RouterLink
+              v-if="r.instanceIds.includes(i.id)"
+              :to="`/endpoints/${i.slug}/access?role=${r.id}`"
+              :aria-describedby="`${uid}-${r.id}-${i.id}`"
+            >
               levels…
             </RouterLink>
           </label>
-          <span v-if="!app.instances.length" class="muted small">No endpoints yet.</span>
+          <span v-if="!instances.length" class="muted small">No endpoints yet.</span>
         </div>
         <p v-if="r.instanceIds.length" class="small muted">
           Has {{ r.instanceIds.map((id) => '/' + slugOf(id)).join(', ') }}.

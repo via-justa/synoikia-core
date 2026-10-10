@@ -1,7 +1,6 @@
 import type { Hono } from 'hono';
 import { z } from 'zod';
 import type { AppContext } from '../../app.js';
-import { levelView, setRoleBulkLevel, setRoleLevel } from '../../catalog/role-levels.js';
 import { ACCESS_LEVELS } from '../../gate/access.js';
 import { readJson } from '../common.js';
 import type { AdminEnv } from './auth.js';
@@ -29,28 +28,23 @@ export function registerRoleRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
   app.get('/api/roles/:id/endpoints/:instanceId/access', (c) => {
     const role = ctx.roles.get(c.req.param('id'));
     ctx.instances.get(c.req.param('instanceId'));
-    return c.json(levelView(ctx.db, c.req.param('instanceId'), { roleId: role.id }));
+    return c.json(ctx.roles.levels(role.id, c.req.param('instanceId')));
   });
 
   app.put('/api/roles/:id/endpoints/:instanceId/groups/:key', async (c) => {
     const { level } = await readJson(c, Level);
-    setRoleLevel(ctx.db, c.req.param('id'), c.req.param('instanceId'), { group: c.req.param('key') }, level, {
-      actor: actor(c),
-    });
-    return c.json(levelView(ctx.db, c.req.param('instanceId'), { roleId: c.req.param('id') }));
+    const target = { group: c.req.param('key') };
+    return c.json(ctx.roles.setLevel(c.req.param('id'), c.req.param('instanceId'), target, level, actor(c)));
   });
 
   app.put('/api/roles/:id/endpoints/:instanceId/operations/:opId', async (c) => {
     const { level } = await readJson(c, Level);
-    setRoleLevel(ctx.db, c.req.param('id'), c.req.param('instanceId'), { operationId: c.req.param('opId') }, level, {
-      actor: actor(c),
-    });
-    return c.json(levelView(ctx.db, c.req.param('instanceId'), { roleId: c.req.param('id') }));
+    const target = { operationId: c.req.param('opId') };
+    return c.json(ctx.roles.setLevel(c.req.param('id'), c.req.param('instanceId'), target, level, actor(c)));
   });
 
   app.post('/api/roles/:id/endpoints/:instanceId/bulk-level', async (c) => {
     const { level } = await readJson(c, z.object({ level: z.enum(ACCESS_LEVELS) }));
-    setRoleBulkLevel(ctx.db, c.req.param('id'), c.req.param('instanceId'), level, { actor: actor(c) });
-    return c.json(levelView(ctx.db, c.req.param('instanceId'), { roleId: c.req.param('id') }));
+    return c.json(ctx.roles.setBulkLevel(c.req.param('id'), c.req.param('instanceId'), level, actor(c)));
   });
 }

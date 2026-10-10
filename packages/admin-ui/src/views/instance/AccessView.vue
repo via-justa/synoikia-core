@@ -1,39 +1,52 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { errorText, http } from '../../api';
+import { computed, ref, useId } from 'vue';
+import { rovingKeydown, tabStop } from '../../a11y';
+import { errorText } from '../../api';
 import ModalDialog from '../../components/ModalDialog.vue';
+import {
+  accessBase,
+  useGroupsQuery,
+  useLevelViewQuery,
+  useMergeGroups,
+  useOperationsQuery,
+  useRenameGroup,
+  useSetAllGroups,
+  useSetGroupLevel,
+  useSetOperation,
+} from '../../composables/useAccess';
+import type { AccessScope as Scope } from '../../composables/useAccess';
+import { latestError } from '../../composables/useApiMutation';
+import { useConfirm } from '../../composables/useConfirm';
 import { LEVEL_HELP, LEVEL_LABELS, OP_LEVEL_HELP, REASON_LABELS, kindSource } from '../../format';
-import { useAppStore } from '../../stores/app';
 import { LEVELS } from '../../types';
 import type { GroupSummary, Instance, Level, LevelView, Operation } from '../../types';
 
 /** Access page (design §5.2.1): a level per group, and per operation a level its kind allows that
  * overrides the group (↺ resets it). Locked operations need their own Ask and never take Write.
  * With a `scope` it shows a role's maximums or the user's personal levels (design §6.4) instead. */
-type Scope = { kind: 'role'; roleId: string } | { kind: 'own' };
 const props = defineProps<{
   instance: Pick<Instance, 'id' | 'slug'> & { plugin?: Pick<Instance['plugin'], 'labels' | 'attestation'> };
   scope?: Scope;
   readonly?: boolean;
 }>();
-const app = useAppStore();
-const base = computed(() =>
-  !props.scope
-    ? `/api/instances/${props.instance.id}`
-    : props.scope.kind === 'role'
-      ? `/api/roles/${props.scope.roleId}/endpoints/${props.instance.id}`
-      : `/api/me/endpoints/${props.instance.id}`,
-);
+const target = () => ({ instanceId: props.instance.id, scope: props.scope });
+const base = computed(() => accessBase(target()));
+const groupsQuery = useGroupsQuery(base, () => !props.scope);
+const opsQuery = useOperationsQuery(base, () => !props.scope);
+const viewQuery = useLevelViewQuery(base, () => !!props.scope);
+const setGroupLevel = useSetGroupLevel(target);
+const setAllGroups = useSetAllGroups(target);
+const renameGroup = useRenameGroup(target);
+const mergeGroups = useMergeGroups(target);
+const setOperation = useSetOperation(target);
+const { confirm, prompt } = useConfirm();
 const opLabel = computed(() => props.instance.plugin?.labels?.operations ?? 'Operations');
-/** The most a level can be in a scope: the endpoint's level for a role, the role's for a user. */
-const caps = ref<{ groups: Map<string, Level>; ops: Map<string, Level> }>({ groups: new Map(), ops: new Map() });
 
-const groups = ref<GroupSummary[]>([]);
-const ops = ref<Operation[]>([]);
 const expanded = ref<Set<string>>(new Set());
+const uid = useId();
+const groupId = (g: GroupSummary) => `${uid}-${encodeURIComponent(g.key)}`;
 const search = ref('');
 const attentionOnly = ref(false);
-const error = ref<string>();
 
 /** A scope's level view in the shapes the endpoint view uses. */
 function fromView(view: LevelView, scope: Scope) {
@@ -68,32 +81,37 @@ function fromView(view: LevelView, scope: Scope) {
       },
     };
   });
-  caps.value = {
-    groups: new Map(view.groups.map((g) => [g.key, role ? g.endpointLevel : (g.roleLevel ?? 'none')])),
-    ops: new Map(view.operations.map((o) => [o.id, role ? o.endpointLevel : o.roleMax])),
+  return {
+    groups: groupsOut,
+    ops: opsOut,
+    /** The most a level can be in a scope: the endpoint's level for a role, the role's for a user. */
+    caps: {
+      groups: new Map(view.groups.map((g) => [g.key, role ? g.endpointLevel : (g.roleLevel ?? 'none')])),
+      ops: new Map(view.operations.map((o) => [o.id, role ? o.endpointLevel : o.roleMax])),
+    },
+    /** Whether the scope has its own entry for the group (↺ clears it). */
+    entries: new Set(view.groups.filter((g) => (role ? g.roleLevel : g.ownLevel) !== null).map((g) => g.key)),
   };
-  /** Whether the scope has its own entry for the group (↺ clears it). */
-  groupEntries.value = new Set(view.groups.filter((g) => (role ? g.roleLevel : g.ownLevel) !== null).map((g) => g.key));
-  return { groupsOut, opsOut };
 }
-const groupEntries = ref<Set<string>>(new Set());
 
-async function load() {
-  try {
-    if (props.scope) {
-      const { groupsOut, opsOut } = fromView(await http.get<LevelView>(`${base.value}/access`), props.scope);
-      [groups.value, ops.value] = [groupsOut, opsOut];
-      return;
-    }
-    [groups.value, ops.value] = await Promise.all([
-      http.get<GroupSummary[]>(`${base.value}/groups`),
-      http.get<Operation[]>(`${base.value}/operations`),
-    ]);
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
-onMounted(load);
+const levels = computed(() => {
+  if (props.scope) return viewQuery.data.value ? fromView(viewQuery.data.value, props.scope) : undefined;
+  if (!groupsQuery.data.value || !opsQuery.data.value) return undefined;
+  return { groups: groupsQuery.data.value, ops: opsQuery.data.value, caps: undefined, entries: undefined };
+});
+const groups = computed(() => levels.value?.groups ?? []);
+const ops = computed(() => levels.value?.ops ?? []);
+const caps = computed(() => levels.value?.caps ?? { groups: new Map<string, Level>(), ops: new Map<string, Level>() });
+const groupEntries = computed(() => levels.value?.entries ?? new Set<string>());
+
+// One page alert: the latest change's failure, else a failed load.
+const error = computed(() => {
+  const loadError = groupsQuery.error.value ?? opsQuery.error.value ?? viewQuery.error.value;
+  return (
+    latestError([setGroupLevel, setAllGroups, renameGroup, setOperation]) ??
+    (loadError ? errorText(loadError) : undefined)
+  );
+});
 
 const text = computed(() => search.value.trim().toLowerCase());
 const isWrite = (o: Operation) => o.locked || o.classification === 'write';
@@ -126,17 +144,6 @@ function toggle(key: string) {
   expanded.value = next;
 }
 
-async function act(fn: () => Promise<unknown>) {
-  error.value = undefined;
-  try {
-    await fn();
-    await load();
-    if (!props.scope) void app.refresh();
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
-
 // ── single-group level ──
 
 // Levels in this order open more for one group (and, below, for one operation).
@@ -150,19 +157,13 @@ const groupLevelDisabled = (g: GroupSummary, l: Level) => {
   return !!props.scope && cap !== undefined && GROUP_RANK[l] > GROUP_RANK[cap];
 };
 
-/** A scope writes its own entries with PUT; the endpoint's levels are PATCHed. */
-const writeGroup = (key: string, level: Level | null) =>
-  act(() =>
-    props.scope
-      ? http.put(`${base.value}/groups/${encodeURIComponent(key)}`, { level })
-      : http.patch(`${base.value}/groups/${encodeURIComponent(key)}`, { level }),
-  );
+const writeGroup = (key: string, level: Level | null) => setGroupLevel.mutate({ key, level });
 
 function setLevel(group: GroupSummary, level: Level) {
   if (groupLevelDisabled(group, level)) return;
   // Clicking the current level still resets operations that have their own.
   if (level === group.level && !group.counts.overridden && (!props.scope || groupEntries.value.has(group.key))) return;
-  void writeGroup(group.key, level);
+  writeGroup(group.key, level);
 }
 
 // ── bulk ──
@@ -174,48 +175,36 @@ async function onBulkChoice() {
   bulkChoice.value = '';
   if (!level) return;
   // One confirm because it changes every group at once, the same for every level.
-  if (
-    !window.confirm(
-      `Set every group on /${props.instance.slug} to ${LEVEL_LABELS[level]}? Operations with their own level go back to following their group.`,
-    )
-  )
-    return;
-  await act(() => http.post(`${base.value}/groups/bulk-level`, { level }));
+  const ok = await confirm({
+    title: `Set every group on /${props.instance.slug} to ${LEVEL_LABELS[level]}?`,
+    message: 'Operations with their own level go back to following their group.',
+    action: 'Set all groups',
+  });
+  if (ok) setAllGroups.mutate(level);
 }
 
 // ── regroup ──
 
 const merging = ref<{ from: string[]; into: string; label: string; note?: string }>();
-async function confirmMerge() {
+function confirmMerge() {
   const m = merging.value;
   if (!m) return;
-  try {
-    await http.post(`${base.value}/groups/merge`, {
-      from: m.from,
-      into: m.into.trim(),
-      label: m.label.trim() || undefined,
-    });
-    merging.value = undefined;
-    await load();
-  } catch (err) {
-    merging.value = { ...m, note: errorText(err) };
-  }
+  mergeGroups.mutate(
+    { from: m.from, into: m.into.trim(), label: m.label.trim() || undefined },
+    {
+      onSuccess: () => (merging.value = undefined),
+      onError: (err) => (merging.value = { ...m, note: errorText(err) }),
+    },
+  );
 }
-function rename(g: GroupSummary) {
-  const label = window.prompt(`Label for ${g.key}`, g.label);
-  if (label && label.trim() && label !== g.label) {
-    void act(() => http.patch(`${base.value}/groups/${encodeURIComponent(g.key)}`, { label: label.trim() }));
-  }
+async function rename(g: GroupSummary) {
+  const label = await prompt({ title: `Label for ${g.key}`, label: 'Label', initial: g.label, action: 'Rename' });
+  if (label && label.trim() && label !== g.label) renameGroup.mutate({ key: g.key, label: label.trim() });
 }
 
 // ── per-operation ──
 
-const patchOp = (op: Operation, body: Record<string, unknown>) =>
-  act(() =>
-    props.scope
-      ? http.put(`${base.value}/operations/${op.id}`, { level: body.level ?? null })
-      : http.patch(`${base.value}/operations/${op.id}`, body),
-  );
+const patchOp = (op: Operation, body: Record<string, unknown>) => setOperation.mutate({ id: op.id, body });
 
 type Kind = 'read' | 'write' | 'locked';
 const kindOf = (op: Operation): Kind => (op.locked ? 'locked' : op.classification);
@@ -242,12 +231,16 @@ async function setOpLevel(op: Operation, group: GroupSummary, level: Level) {
   if (
     own === 'ask' &&
     op.locked &&
-    !window.confirm(
-      `${op.key} is locked (destructive or irreversible). At Ask it becomes callable: every call needs your approval on the approval page, with a typed confirmation and a fresh authenticator code. Continue?`,
-    )
+    !(await confirm({
+      title: `${op.key} is locked (destructive or irreversible).`,
+      message:
+        'At Ask it becomes callable: every call needs your approval on the approval page, with a typed confirmation and a fresh authenticator code. Continue?',
+      action: 'Continue',
+      danger: true,
+    }))
   )
     return;
-  await patchOp(op, { level: own });
+  patchOp(op, { level: own });
 }
 
 /** What a call does right now, in words. */
@@ -326,7 +319,7 @@ function status(op: Operation): { text: string; tone: string } {
             </svg>
           </button>
           <div class="grow name" @click="toggle(g.key)">
-            <strong>{{ g.label }}</strong>
+            <strong :id="groupId(g)">{{ g.label }}</strong>
             <span v-if="g.label !== g.key" class="mono small muted key">{{ g.key }}</span>
             <span v-if="g.stale" class="pill">stale</span>
             <div class="small muted">
@@ -335,9 +328,18 @@ function status(op: Operation): { text: string; tone: string } {
               <span v-if="g.counts.pendingReview" class="pill warn">{{ g.counts.pendingReview }} to acknowledge</span>
             </div>
           </div>
-          <button v-if="!scope" class="btn-link small" type="button" @click="rename(g)">Rename</button>
+          <button v-if="!scope" class="btn-link small" type="button" :aria-describedby="groupId(g)" @click="rename(g)">
+            Rename
+          </button>
           <span v-if="readonly" class="pill">{{ LEVEL_LABELS[g.level] }}</span>
-          <div v-else class="segmented" role="radiogroup" :aria-label="`Access for ${g.label}`">
+          <!-- Arrows move focus only: each choice writes to the server, so Space or Enter picks it. -->
+          <div
+            v-else
+            class="segmented"
+            role="radiogroup"
+            :aria-label="`Access for ${g.label}`"
+            @keydown="rovingKeydown($event, false)"
+          >
             <button
               v-for="l in LEVELS"
               :key="l"
@@ -345,6 +347,7 @@ function status(op: Operation): { text: string; tone: string } {
               role="radio"
               :title="groupLevelDisabled(g, l) ? capTitle : LEVEL_HELP[l]"
               :aria-checked="g.level === l"
+              :tabindex="l === tabStop(LEVELS, g.level, (x) => groupLevelDisabled(g, x)) ? 0 : -1"
               :disabled="groupLevelDisabled(g, l)"
               :class="{ on: g.level === l, write: l === 'write' }"
               @click="setLevel(g, l)"
@@ -370,8 +373,13 @@ function status(op: Operation): { text: string; tone: string } {
         <div v-if="expanded.has(g.key) && opsOf(g.key).length" class="ops">
           <div v-for="op in opsOf(g.key)" :key="op.id" class="op" :data-op="op.key">
             <div class="op-name">
-              <span class="mono">{{ op.key }}</span>
-              <span v-if="op.locked" class="lock" title="Locked: destructive or irreversible" aria-label="Locked"
+              <span :id="`${uid}-op-${op.id}`" class="mono">{{ op.key }}</span>
+              <span
+                v-if="op.locked"
+                class="lock"
+                title="Locked: destructive or irreversible"
+                role="img"
+                aria-label="Locked"
                 >🔒</span
               >
               <div v-if="op.displayName" class="small muted">{{ op.displayName }}</div>
@@ -391,6 +399,7 @@ function status(op: Operation): { text: string; tone: string } {
                 v-if="op.pendingReview"
                 class="btn btn-sm btn-primary"
                 type="button"
+                :aria-describedby="`${uid}-op-${op.id}`"
                 @click="patchOp(op, { acknowledged: true })"
               >
                 Acknowledge
@@ -408,13 +417,20 @@ function status(op: Operation): { text: string; tone: string } {
                 />
                 Guide
               </label>
-              <div v-if="!readonly" class="segmented sm" role="radiogroup" :aria-label="`Level of ${op.key}`">
+              <div
+                v-if="!readonly"
+                class="segmented sm"
+                role="radiogroup"
+                :aria-label="`Level of ${op.key}`"
+                @keydown="rovingKeydown($event, false)"
+              >
                 <button
                   v-for="l in levelsShown(op)"
                   :key="l"
                   type="button"
                   role="radio"
                   :aria-checked="op.level === l"
+                  :tabindex="l === tabStop(levelsShown(op), op.level, (x) => levelDisabled(op, x)) ? 0 : -1"
                   :disabled="levelDisabled(op, l)"
                   :title="
                     scope && op.allowedLevels.includes(l) && levelDisabled(op, l)
@@ -424,7 +440,7 @@ function status(op: Operation): { text: string; tone: string } {
                   :class="{ on: op.level === l, write: l === 'write' }"
                   @click="setOpLevel(op, g, l)"
                 >
-                  {{ LEVEL_LABELS[l] }}<template v-if="levelDisabled(op, l)"> 🔒</template>
+                  {{ LEVEL_LABELS[l] }}<span v-if="levelDisabled(op, l)" aria-hidden="true"> 🔒</span>
                 </button>
               </div>
               <button
@@ -474,7 +490,7 @@ function status(op: Operation): { text: string; tone: string } {
           <input id="m-label" v-model="merging.label" placeholder="Apps" />
         </div>
       </div>
-      <p v-if="merging.note" class="alert error">{{ merging.note }}</p>
+      <p v-if="merging.note" class="alert error" role="alert">{{ merging.note }}</p>
       <template #footer>
         <button class="btn" type="button" @click="merging = undefined">Cancel</button>
         <button

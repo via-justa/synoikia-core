@@ -1,18 +1,41 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { messageRole, rovingKeydown } from '../../a11y';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import { errorText, http } from '../../api';
+import { errorText } from '../../api';
 import MyCredentials from '../../components/MyCredentials.vue';
 import TotpEnrollment from '../../components/TotpEnrollment.vue';
+import {
+  useApprovalBrowsersQuery,
+  useChangePassword,
+  useDisableTotp,
+  useProfileQuery,
+  useRefreshProfile,
+  useSignOutApprovalBrowsers,
+  useUnlinkOidc,
+} from '../../composables/useProfile';
 import { useSessionStore } from '../../stores/session';
 import { THEME_PREFS, getTheme, setTheme } from '../../theme';
 import type { ThemePref } from '../../theme';
-import type { PublicUser } from '../../types';
+
+type Message = { kind: 'ok' | 'error'; text: string };
 
 const session = useSessionStore();
 const route = useRoute();
-const me = ref<PublicUser>();
-const messages = ref<Record<string, { kind: 'ok' | 'error'; text: string }>>({});
+const profileQuery = useProfileQuery();
+const browsersQuery = useApprovalBrowsersQuery();
+const refreshProfile = useRefreshProfile();
+const changePw = useChangePassword();
+const disable = useDisableTotp();
+const unlinkOidc = useUnlinkOidc();
+const signOutBrowsers = useSignOutApprovalBrowsers();
+const me = computed(() => profileQuery.data.value);
+const approvalBrowsers = computed(() => browsersQuery.data.value ?? []);
+const notes = ref<Record<string, Message>>({});
+const messages = computed<Record<string, Message>>(() => {
+  const loadError = profileQuery.error.value ?? browsersQuery.error.value;
+  return loadError ? { load: { kind: 'error', text: errorText(loadError) }, ...notes.value } : notes.value;
+});
 const pw = ref({ current: '', next: '', confirm: '' });
 const disableCode = ref('');
 const theme = ref<ThemePref>(getTheme());
@@ -22,68 +45,58 @@ function pickTheme(pref: ThemePref) {
   setTheme(pref);
 }
 
-const OIDC_RESULT: Record<string, { kind: 'ok' | 'error'; text: string }> = {
+const OIDC_RESULT: Record<string, Message> = {
   linked: { kind: 'ok', text: 'Single sign-on linked.' },
   oidc_not_allowed: { kind: 'error', text: 'That single sign-on account is not allowed by the policy.' },
   oidc_taken: { kind: 'error', text: 'That single sign-on account is already linked to another user.' },
 };
 
-const approvalBrowsers = ref<{ createdAt: string; lastSeenAt: string; userAgent: string | null }[]>([]);
-
-async function load() {
-  me.value = await http.get<PublicUser>('/api/profile');
-  approvalBrowsers.value = await http.get('/api/profile/approval-sessions');
-}
-async function signOutApprovalBrowsers() {
-  try {
-    await http.post('/api/profile/approval-sessions/revoke');
-    setMsg('approval', 'ok', 'Approval browsers signed out. The next approval asks you to sign in again.');
-    await load();
-  } catch (err) {
-    setMsg('approval', 'error', errorText(err));
-  }
-}
-onMounted(async () => {
-  await load().catch((err) => (messages.value = { load: { kind: 'error', text: errorText(err) } }));
+onMounted(() => {
   const q = route.query.linked ? 'linked' : typeof route.query.error === 'string' ? route.query.error : undefined;
-  if (q && OIDC_RESULT[q]) messages.value = { ...messages.value, oidc: OIDC_RESULT[q]! };
+  if (q && OIDC_RESULT[q]) notes.value = { ...notes.value, oidc: OIDC_RESULT[q]! };
 });
 
 const setMsg = (key: string, kind: 'ok' | 'error', text: string) =>
-  (messages.value = { ...messages.value, [key]: { kind, text } });
+  (notes.value = { ...notes.value, [key]: { kind, text } });
+const failed = (key: string) => (err: unknown) => setMsg(key, 'error', errorText(err));
 
-async function changePassword() {
+function signOutApprovalBrowsers() {
+  signOutBrowsers.mutate(undefined, {
+    onSuccess: () =>
+      setMsg('approval', 'ok', 'Approval browsers signed out. The next approval asks you to sign in again.'),
+    onError: failed('approval'),
+  });
+}
+function changePassword() {
   if (pw.value.next !== pw.value.confirm) return setMsg('pw', 'error', 'The new passwords do not match.');
-  try {
-    await http.post('/api/profile/password', { currentPassword: pw.value.current, newPassword: pw.value.next });
-    pw.value = { current: '', next: '', confirm: '' };
-    setMsg('pw', 'ok', 'Password changed. Other sessions were signed out.');
-    await load();
-  } catch (err) {
-    setMsg('pw', 'error', errorText(err));
-  }
+  changePw.mutate(
+    { currentPassword: pw.value.current, newPassword: pw.value.next },
+    {
+      onSuccess: () => {
+        pw.value = { current: '', next: '', confirm: '' };
+        setMsg('pw', 'ok', 'Password changed. Other sessions were signed out.');
+      },
+      onError: failed('pw'),
+    },
+  );
 }
-async function disableTotp() {
-  try {
-    await http.post('/api/profile/totp/disable', { code: disableCode.value.trim() });
-    disableCode.value = '';
-    setMsg('totp', 'ok', 'Two-factor authentication is off.');
-    await load();
-  } catch (err) {
-    setMsg('totp', 'error', errorText(err));
-  }
+function disableTotp() {
+  disable.mutate(disableCode.value.trim(), {
+    onSuccess: () => {
+      disableCode.value = '';
+      setMsg('totp', 'ok', 'Two-factor authentication is off.');
+    },
+    onError: failed('totp'),
+  });
 }
-async function unlink() {
-  try {
-    await http.post('/api/profile/oidc/unlink');
-    setMsg('oidc', 'ok', 'Single sign-on unlinked.');
-    await load();
-  } catch (err) {
-    setMsg('oidc', 'error', errorText(err));
-  }
+function unlink() {
+  unlinkOidc.mutate(undefined, {
+    onSuccess: () => setMsg('oidc', 'ok', 'Single sign-on unlinked.'),
+    onError: failed('oidc'),
+  });
 }
 async function enrolled() {
-  await load();
+  await refreshProfile();
   await session.load();
 }
 </script>
@@ -96,14 +109,21 @@ async function enrolled() {
     <MyCredentials />
     <section class="card">
       <h2>Appearance</h2>
-      <p class="small muted">Auto follows your system setting. Saved in this browser.</p>
-      <div class="segmented" role="radiogroup" aria-label="Theme">
+      <p id="theme-help" class="small muted">Auto follows your system setting. Saved in this browser.</p>
+      <div
+        class="segmented"
+        role="radiogroup"
+        aria-label="Theme"
+        aria-describedby="theme-help"
+        @keydown="rovingKeydown"
+      >
         <button
           v-for="t in THEME_PREFS"
           :key="t"
           type="button"
           role="radio"
           :aria-checked="theme === t"
+          :tabindex="theme === t ? 0 : -1"
           :class="{ on: theme === t }"
           @click="pickTheme(t)"
         >
@@ -131,7 +151,9 @@ async function enrolled() {
           <button class="btn btn-primary" type="submit" :disabled="pw.next.length < 12">Change password</button>
         </div>
       </form>
-      <p v-if="messages.pw" class="alert" :class="messages.pw.kind">{{ messages.pw.text }}</p>
+      <p v-if="messages.pw" class="alert" :class="messages.pw.kind" :role="messageRole(messages.pw.kind)">
+        {{ messages.pw.text }}
+      </p>
     </section>
 
     <section class="card">
@@ -151,7 +173,9 @@ async function enrolled() {
         </form>
       </template>
       <TotpEnrollment v-else @enrolled="enrolled" />
-      <p v-if="messages.totp" class="alert" :class="messages.totp.kind">{{ messages.totp.text }}</p>
+      <p v-if="messages.totp" class="alert" :class="messages.totp.kind" :role="messageRole(messages.totp.kind)">
+        {{ messages.totp.text }}
+      </p>
     </section>
 
     <section class="card">
@@ -174,21 +198,38 @@ async function enrolled() {
       >
         Sign out all approval browsers
       </button>
-      <p v-if="messages.approval" class="alert" :class="messages.approval.kind">{{ messages.approval.text }}</p>
+      <p
+        v-if="messages.approval"
+        class="alert"
+        :class="messages.approval.kind"
+        :role="messageRole(messages.approval.kind)"
+      >
+        {{ messages.approval.text }}
+      </p>
     </section>
 
     <section v-if="session.oidcEnabled || me.oidcLinked" class="card">
       <h2>Single sign-on</h2>
       <template v-if="me.oidcLinked">
         <p class="small"><span class="pill info">Linked</span> You can sign in with {{ session.oidcLabel }}.</p>
-        <button class="btn" type="button" :disabled="!me.hasPassword" @click="unlink">Unlink</button>
-        <p v-if="!me.hasPassword" class="help small muted">Set a password before unlinking.</p>
+        <button
+          class="btn"
+          type="button"
+          :disabled="!me.hasPassword"
+          :aria-describedby="me.hasPassword ? undefined : 'unlink-help'"
+          @click="unlink"
+        >
+          Unlink
+        </button>
+        <p v-if="!me.hasPassword" id="unlink-help" class="help small muted">Set a password before unlinking.</p>
       </template>
       <a v-else class="btn" href="/auth/oidc/link">Link {{ session.oidcLabel }}</a>
-      <p v-if="messages.oidc" class="alert" :class="messages.oidc.kind">{{ messages.oidc.text }}</p>
+      <p v-if="messages.oidc" class="alert" :class="messages.oidc.kind" :role="messageRole(messages.oidc.kind)">
+        {{ messages.oidc.text }}
+      </p>
     </section>
   </div>
-  <p v-else-if="messages.load" class="alert error">{{ messages.load.text }}</p>
+  <p v-else-if="messages.load" class="alert error" role="alert">{{ messages.load.text }}</p>
 </template>
 
 <style scoped>

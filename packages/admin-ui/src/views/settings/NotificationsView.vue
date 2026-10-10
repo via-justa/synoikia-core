@@ -1,16 +1,28 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import { errorText, http } from '../../api';
+import { computed, ref, useId } from 'vue';
+import { errorText } from '../../api';
 import ModalDialog from '../../components/ModalDialog.vue';
+import { useConfirm } from '../../composables/useConfirm';
+import { useDeleteNotifier, useNotifiersQuery, useSaveNotifier, useTestNotifier } from '../../composables/useNotifiers';
+import { useInstances } from '../../composables/useOverview';
 import { ago } from '../../format';
-import { useAppStore } from '../../stores/app';
 import { NOTIFY_EVENTS } from '../../types';
 import type { Notifier, NotifyEvent } from '../../types';
 
-const app = useAppStore();
-const channels = ref<Notifier[]>([]);
-const error = ref<string>();
+const instances = useInstances();
+const notifiersQuery = useNotifiersQuery();
+const saveNotifier = useSaveNotifier();
+const testNotifier = useTestNotifier();
+const deleteNotifier = useDeleteNotifier();
+const { confirm } = useConfirm();
+const channels = computed(() => notifiersQuery.data.value ?? []);
+const actionError = ref<string>();
+const error = computed(() => {
+  const loadError = notifiersQuery.error.value;
+  return actionError.value ?? (loadError ? errorText(loadError) : undefined);
+});
 const notice = ref<string>();
+const uid = useId();
 
 const EVENT_LABELS: Record<NotifyEvent, string> = {
   'instance.error': 'Endpoint went down',
@@ -20,18 +32,6 @@ const EVENT_LABELS: Record<NotifyEvent, string> = {
   'sync.pending_review': 'New write operations found (they ask until acknowledged)',
   'auth.lockout': 'Sign-in lockout',
 };
-
-async function load() {
-  try {
-    channels.value = await http.get<Notifier[]>('/api/notifiers');
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
-onMounted(() => {
-  void app.refresh().catch(() => undefined);
-  void load();
-});
 
 interface Draft {
   id?: string;
@@ -71,7 +71,7 @@ function edit(ch?: Notifier) {
   };
 }
 
-async function save() {
+function save() {
   const d = draft.value;
   if (!d) return;
   const secret = (key: 'token' | 'hmacSecret') => (d.clear[key] ? null : d[key] ? d[key] : undefined);
@@ -84,36 +84,29 @@ async function save() {
     instanceFilter: d.allInstances ? null : d.instanceFilter,
     enabled: d.enabled,
   };
-  try {
-    if (d.id) await http.patch(`/api/notifiers/${d.id}`, body);
-    else await http.post('/api/notifiers', body);
-    draft.value = undefined;
-    await load();
-  } catch (err) {
-    draft.value = { ...d, note: errorText(err) };
-  }
+  saveNotifier.mutate(
+    { id: d.id, body },
+    {
+      onSuccess: () => (draft.value = undefined),
+      onError: (err) => (draft.value = { ...d, note: errorText(err) }),
+    },
+  );
 }
 
-async function test(ch: Notifier) {
+function test(ch: Notifier) {
   notice.value = undefined;
-  error.value = undefined;
-  try {
-    const res = await http.post<{ ok: boolean; error?: string }>(`/api/notifiers/${ch.id}/test`);
-    if (res.ok) notice.value = `Test sent to ${ch.name}.`;
-    else error.value = `Test to ${ch.name} failed: ${res.error}`;
-    await load();
-  } catch (err) {
-    error.value = errorText(err);
-  }
+  actionError.value = undefined;
+  testNotifier.mutate(ch.id, {
+    onSuccess: (res) => {
+      if (res.ok) notice.value = `Test sent to ${ch.name}.`;
+      else actionError.value = `Test to ${ch.name} failed: ${res.error}`;
+    },
+    onError: (err) => (actionError.value = errorText(err)),
+  });
 }
 async function remove(ch: Notifier) {
-  if (!window.confirm(`Delete ${ch.name}?`)) return;
-  try {
-    await http.del(`/api/notifiers/${ch.id}`);
-    await load();
-  } catch (err) {
-    error.value = errorText(err);
-  }
+  if (!(await confirm({ title: `Delete ${ch.name}?`, action: 'Delete', danger: true }))) return;
+  deleteNotifier.mutate(ch.id, { onError: (err) => (actionError.value = errorText(err)) });
 }
 </script>
 
@@ -130,19 +123,19 @@ async function remove(ch: Notifier) {
     <p v-if="notice" class="alert ok" role="status">{{ notice }}</p>
 
     <div class="table-card">
-      <table class="table">
+      <table class="table" aria-label="Notification channels" :aria-busy="notifiersQuery.isPending.value">
         <thead>
           <tr>
             <th>Channel</th>
             <th>Events</th>
             <th>Last sent</th>
-            <th />
+            <th><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="ch in channels" :key="ch.id" :class="{ off: !ch.enabled }">
             <td>
-              <strong>{{ ch.name }}</strong> <span class="pill">{{ ch.kind }}</span>
+              <strong :id="`${uid}-${ch.id}`">{{ ch.name }}</strong> <span class="pill">{{ ch.kind }}</span>
               <div class="small mono muted">
                 {{ ch.kind === 'ntfy' ? `${ch.config.server}/${ch.config.topic}` : ch.config.url }}
               </div>
@@ -155,9 +148,20 @@ async function remove(ch: Notifier) {
             </td>
             <td class="small">{{ ago(ch.lastSentAt) }}</td>
             <td class="right">
-              <button class="btn btn-sm" type="button" @click="test(ch)">Test</button>
-              <button class="btn btn-sm" type="button" @click="edit(ch)">Edit</button>
-              <button class="btn btn-sm btn-danger" type="button" @click="remove(ch)">Delete</button>
+              <button class="btn btn-sm" type="button" :aria-describedby="`${uid}-${ch.id}`" @click="test(ch)">
+                Test
+              </button>
+              <button class="btn btn-sm" type="button" :aria-describedby="`${uid}-${ch.id}`" @click="edit(ch)">
+                Edit
+              </button>
+              <button
+                class="btn btn-sm btn-danger"
+                type="button"
+                :aria-describedby="`${uid}-${ch.id}`"
+                @click="remove(ch)"
+              >
+                Delete
+              </button>
             </td>
           </tr>
         </tbody>
@@ -191,8 +195,10 @@ async function remove(ch: Notifier) {
         </div>
         <div class="field">
           <label for="n-topic">Topic</label>
-          <input id="n-topic" v-model="draft.topic" placeholder="homelab-a8f3" />
-          <p class="help">On public servers, anyone who knows the topic can read it: pick something unguessable.</p>
+          <input id="n-topic" v-model="draft.topic" placeholder="homelab-a8f3" aria-describedby="n-topic-help" />
+          <p id="n-topic-help" class="help">
+            On public servers, anyone who knows the topic can read it: pick something unguessable.
+          </p>
         </div>
         <div class="field">
           <label for="n-tok">Access token</label>
@@ -221,8 +227,9 @@ async function remove(ch: Notifier) {
             type="password"
             autocomplete="new-password"
             :placeholder="draft.secretsSet.hmacSecret ? 'Set — leave empty to keep' : 'Optional'"
+            aria-describedby="n-hmac-help"
           />
-          <p class="help">
+          <p id="n-hmac-help" class="help">
             Sent as <span class="mono">x-synoikia-signature: sha256=HMAC(secret, timestamp + "." + body)</span>.
           </p>
           <label v-if="draft.secretsSet.hmacSecret" class="row small"
@@ -230,17 +237,17 @@ async function remove(ch: Notifier) {
           >
         </div>
       </div>
-      <div class="field">
-        <label>Events</label>
+      <div class="field" role="group" aria-labelledby="n-events">
+        <label id="n-events">Events</label>
         <label v-for="e in NOTIFY_EVENTS" :key="e" class="row small">
           <input v-model="draft.events" type="checkbox" :value="e" /> {{ EVENT_LABELS[e] }}
         </label>
       </div>
-      <div class="field">
-        <label>Endpoints</label>
+      <div class="field" role="group" aria-labelledby="n-endpoints">
+        <label id="n-endpoints">Endpoints</label>
         <label class="row small"><input v-model="draft.allInstances" type="checkbox" /> All endpoints</label>
         <template v-if="!draft.allInstances">
-          <label v-for="i in app.instances" :key="i.id" class="row small">
+          <label v-for="i in instances" :key="i.id" class="row small">
             <input v-model="draft.instanceFilter" type="checkbox" :value="i.id" />
             <span class="mono">/{{ i.slug }}</span>
           </label>
@@ -249,7 +256,7 @@ async function remove(ch: Notifier) {
       <div class="field check">
         <label><input v-model="draft.enabled" type="checkbox" /> Enabled</label>
       </div>
-      <p v-if="draft.note" class="alert error">{{ draft.note }}</p>
+      <p v-if="draft.note" class="alert error" role="alert">{{ draft.note }}</p>
       <template #footer>
         <button class="btn" type="button" @click="draft = undefined">Cancel</button>
         <button

@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useQueryClient } from '@tanstack/vue-query';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import BrandLockup from '../components/BrandLockup.vue';
+import { announce } from '../composables/useAnnounce';
+import { useMyEndpointsQuery } from '../composables/useMyEndpoints';
+import { useOverviewQuery } from '../composables/useOverview';
+import { pageTitle } from '../format';
 import { useAppStore } from '../stores/app';
 import { useSessionStore } from '../stores/session';
 
@@ -9,15 +14,43 @@ const session = useSessionStore();
 const app = useAppStore();
 const router = useRouter();
 const route = useRoute();
+const queryClient = useQueryClient();
+// Overview and live events are admin-only; every role has its own endpoint list (design §6.4).
+// Read once, so signing out doesn't start the other query.
+const isAdmin = session.isAdmin;
+const { data: overview } = useOverviewQuery(isAdmin);
+const { endpoints: mine } = useMyEndpointsQuery(!isAdmin);
 
 // Small screens: the sidebar collapses into a top bar with a menu toggle.
 const menuOpen = ref(false);
+const menuButton = useTemplateRef<HTMLButtonElement>('menuButton');
+const main = useTemplateRef<HTMLElement>('main');
 watch(
   () => route.fullPath,
   () => (menuOpen.value = false),
 );
+// A new page: focus its content and say its name, as a full page load would.
+watch(
+  () => route.path,
+  async () => {
+    await nextTick();
+    focusMain();
+    const title = pageTitle(route);
+    if (title) void announce(title);
+  },
+);
 
-const endpoints = computed(() => app.instances);
+function focusMain() {
+  main.value?.focus({ preventScroll: true });
+}
+function closeMenu(e: KeyboardEvent) {
+  if (!menuOpen.value) return;
+  e.preventDefault();
+  menuOpen.value = false;
+  menuButton.value?.focus();
+}
+
+const endpoints = computed(() => overview.value?.instances ?? []);
 const ISSUES_URL = 'https://github.com/via-justa/synoikia-core/issues';
 
 const globalNav = [
@@ -31,11 +64,7 @@ const adminNav = [
 ];
 
 onMounted(() => {
-  // Overview and live events are admin-only; every role has its own endpoint list (design §6.4).
-  if (session.isAdmin) {
-    void app.refresh().catch(() => undefined);
-    app.connect();
-  } else void app.refreshMine().catch(() => undefined);
+  if (isAdmin) app.connect(queryClient);
 });
 onBeforeUnmount(() => app.disconnect());
 
@@ -48,34 +77,50 @@ async function logout() {
 
 <template>
   <div class="shell">
-    <aside class="sidebar" :class="{ open: menuOpen }">
+    <a href="#main" class="skip-link" @click.prevent="focusMain">Skip to content</a>
+    <aside class="sidebar" :class="{ open: menuOpen }" @keydown.esc="closeMenu">
       <div class="brand">
         <RouterLink :to="session.isAdmin ? '/' : '/my'" class="home" aria-label="Synoikia, home"
           ><BrandLockup :size="32"
         /></RouterLink>
-        <button class="menu mobile-only" type="button" :aria-expanded="menuOpen" @click="menuOpen = !menuOpen">
+        <button
+          ref="menuButton"
+          class="menu mobile-only"
+          type="button"
+          aria-controls="app-nav"
+          :aria-expanded="menuOpen"
+          @click="menuOpen = !menuOpen"
+        >
           {{ menuOpen ? 'Close' : 'Menu' }}
         </button>
       </div>
 
-      <nav v-if="!session.isAdmin">
+      <nav v-if="!session.isAdmin" id="app-nav" aria-label="Main">
         <RouterLink to="/my" class="nav-item" exact-active-class="active"><span>My endpoints</span></RouterLink>
         <div class="nav-section">Endpoints</div>
         <RouterLink
-          v-for="ep in app.mine"
+          v-for="ep in mine"
           :key="ep.id"
           :to="`/my/${ep.id}`"
           class="nav-item mono"
           :class="{ active: $route.path === `/my/${ep.id}` }"
+          :aria-current="$route.path === `/my/${ep.id}` ? 'page' : undefined"
         >
           <span>/{{ ep.slug }}</span>
-          <span v-if="ep.status" class="dot" :class="ep.status.state" :title="ep.status.state" />
+          <span
+            v-if="ep.status"
+            class="dot"
+            :class="ep.status.state"
+            :title="ep.status.state"
+            role="img"
+            :aria-label="ep.status.state"
+          />
         </RouterLink>
-        <div v-if="app.mine.length === 0" class="nav-empty">No endpoints for your role</div>
+        <div v-if="mine.length === 0" class="nav-empty">No endpoints for your role</div>
         <div class="nav-section" />
         <RouterLink to="/settings/profile" class="nav-item" active-class="active">My profile</RouterLink>
       </nav>
-      <nav v-else>
+      <nav v-else id="app-nav" aria-label="Main">
         <RouterLink v-for="item in globalNav" :key="item.to" :to="item.to" class="nav-item" exact-active-class="active">
           <span>{{ item.label }}</span>
         </RouterLink>
@@ -87,21 +132,29 @@ async function logout() {
           :to="`/endpoints/${ep.slug}/connection`"
           class="nav-item mono"
           :class="{ active: $route.path.startsWith(`/endpoints/${ep.slug}/`) }"
+          :aria-current="$route.path.startsWith(`/endpoints/${ep.slug}/`) ? 'page' : undefined"
         >
           <span>/{{ ep.slug }}</span>
-          <span class="dot" :class="ep.status" :title="ep.status" />
+          <span class="dot" :class="ep.status" :title="ep.status" role="img" :aria-label="ep.status" />
         </RouterLink>
         <div v-if="endpoints.length === 0" class="nav-empty">No endpoints yet</div>
         <RouterLink to="/endpoints/new" class="nav-item add" exact-active-class="active">+ New endpoint</RouterLink>
 
         <div class="nav-section" />
-        <RouterLink v-for="item in adminNav" :key="item.to" :to="item.to" class="nav-item" active-class="active">
+        <RouterLink
+          v-for="item in adminNav"
+          :key="item.to"
+          :to="item.to"
+          class="nav-item"
+          active-class="active"
+          :aria-current="$route.path.startsWith(item.to) ? 'page' : undefined"
+        >
           {{ item.label }}
         </RouterLink>
       </nav>
 
       <div class="about">
-        <span v-if="app.overview?.version" class="mono">v{{ app.overview.version }}</span>
+        <span v-if="overview?.version" class="mono">v{{ overview.version }}</span>
         <a
           :href="ISSUES_URL"
           class="github"
@@ -123,7 +176,7 @@ async function logout() {
       </div>
     </aside>
 
-    <main class="content">
+    <main id="main" ref="main" class="content" tabindex="-1">
       <RouterView />
     </main>
   </div>
@@ -312,6 +365,9 @@ nav {
     margin-top: 12px;
     padding: 12px 16px 0;
   }
+}
+.content:focus {
+  outline: none;
 }
 .content {
   flex-grow: 1;

@@ -3,6 +3,7 @@ import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { errorText } from '../api';
 import BrandLockup from '../components/BrandLockup.vue';
+import { announce } from '../composables/useAnnounce';
 import { useSessionStore } from '../stores/session';
 
 const session = useSessionStore();
@@ -22,6 +23,13 @@ const canSubmit = computed(
   () =>
     username.value.trim().length >= 2 && password.value.length >= 12 && confirm.value === password.value && !busy.value,
 );
+
+// The check updates on every keystroke, so screen readers hear it when a field is left, not as an alert.
+let spoken: string | undefined;
+function speakProblem() {
+  if (problem.value && problem.value !== spoken) void announce(problem.value);
+  spoken = problem.value;
+}
 
 async function submit() {
   if (!canSubmit.value) return;
@@ -53,13 +61,29 @@ async function submit() {
       </div>
       <div class="field">
         <label for="sp">Password</label>
-        <input id="sp" v-model="password" type="password" autocomplete="new-password" />
+        <input
+          id="sp"
+          v-model="password"
+          type="password"
+          autocomplete="new-password"
+          :aria-describedby="problem ? 'setup-problem' : undefined"
+          @blur="speakProblem"
+        />
       </div>
       <div class="field">
         <label for="sc">Confirm password</label>
-        <input id="sc" v-model="confirm" type="password" autocomplete="new-password" />
+        <input
+          id="sc"
+          v-model="confirm"
+          type="password"
+          autocomplete="new-password"
+          :aria-describedby="problem ? 'setup-problem' : undefined"
+          @blur="speakProblem"
+        />
       </div>
-      <p v-if="problem || error" class="error" role="alert">{{ error ?? problem }}</p>
+      <p v-if="problem || error" id="setup-problem" class="error" :role="error ? 'alert' : undefined">
+        {{ error ?? problem }}
+      </p>
       <button class="btn btn-primary" type="submit" :disabled="!canSubmit">Create account</button>
     </form>
   </main>

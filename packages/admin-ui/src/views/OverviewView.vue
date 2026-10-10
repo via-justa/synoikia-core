@@ -1,28 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, useId } from 'vue';
 import { errorText } from '../api';
 import PageHeader from '../components/PageHeader.vue';
+import { useCopy } from '../composables/useCopy';
+import { useOverviewQuery } from '../composables/useOverview';
 import { AUTH_MODE_LABELS, ago } from '../format';
-import { useAppStore } from '../stores/app';
 
-const app = useAppStore();
-const error = ref<string>();
+const { data: overview, error: loadError, isPending: loading } = useOverviewQuery();
+const instances = computed(() => overview.value?.instances ?? []);
+const error = computed(() => (loadError.value ? errorText(loadError.value) : undefined));
 
-onMounted(async () => {
-  try {
-    await app.refresh();
-  } catch (err) {
-    error.value = errorText(err);
-  }
-});
-
-const unhealthyPlugins = computed(() => (app.overview?.plugins ?? []).filter((p) => p.status !== 'ok'));
-const copied = ref<string>();
-async function copy(url: string) {
-  await navigator.clipboard?.writeText(url).catch(() => undefined);
-  copied.value = url;
-  setTimeout(() => (copied.value = undefined), 1500);
-}
+const unhealthyPlugins = computed(() => (overview.value?.plugins ?? []).filter((p) => p.status !== 'ok'));
+const { copied, copy } = useCopy();
+const uid = useId();
 </script>
 
 <template>
@@ -33,7 +23,7 @@ async function copy(url: string) {
 
     <div class="stack">
       <p v-if="error" class="alert error" role="alert">{{ error }}</p>
-      <div v-for="w in app.overview?.warnings ?? []" :key="w" class="alert warn">{{ w }}</div>
+      <div v-for="w in overview?.warnings ?? []" :key="w" class="alert warn">{{ w }}</div>
       <div v-if="unhealthyPlugins.length" class="alert warn">
         Plugin problems:
         <span v-for="p in unhealthyPlugins" :key="p.id" class="mono"> {{ p.pluginId }} ({{ p.status }}) </span>
@@ -41,7 +31,7 @@ async function copy(url: string) {
       </div>
 
       <div class="table-card">
-        <table class="table">
+        <table class="table" aria-label="Endpoints" :aria-busy="loading">
           <thead>
             <tr>
               <th>Endpoint</th>
@@ -49,19 +39,21 @@ async function copy(url: string) {
               <th>Status</th>
               <th>Auth</th>
               <th>Last sync</th>
-              <th />
+              <th><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="i in app.instances" :key="i.id">
+            <tr v-for="i in instances" :key="i.id">
               <td>
-                <RouterLink :to="`/endpoints/${i.slug}/connection`" class="mono">/{{ i.slug }}</RouterLink>
+                <RouterLink :id="`${uid}-${i.id}`" :to="`/endpoints/${i.slug}/connection`" class="mono"
+                  >/{{ i.slug }}</RouterLink
+                >
                 <div class="small muted">{{ i.displayName }}</div>
               </td>
               <td>{{ i.plugin.name }}</td>
               <td>
                 <span class="row">
-                  <span class="dot" :class="i.status" />
+                  <span class="dot" :class="i.status" aria-hidden="true" />
                   {{ i.enabled ? i.status : 'disabled' }}
                 </span>
                 <div v-if="i.statusError" class="small err">{{ i.statusError }}</div>
@@ -72,18 +64,25 @@ async function copy(url: string) {
                 <span v-if="i.lastSyncStatus === 'error'" class="pill danger">failed</span>
               </td>
               <td class="right">
-                <button v-if="i.endpointUrl" class="btn btn-sm" type="button" @click="copy(i.endpointUrl)">
+                <button
+                  v-if="i.endpointUrl"
+                  class="btn btn-sm"
+                  type="button"
+                  :aria-describedby="`${uid}-${i.id}`"
+                  @click="copy(i.endpointUrl)"
+                >
                   {{ copied === i.endpointUrl ? 'Copied' : 'Copy URL' }}
                 </button>
               </td>
             </tr>
           </tbody>
         </table>
-        <div v-if="app.overview && !app.instances.length" class="empty">
+        <p v-if="loading" class="sr-only" role="status">Loading…</p>
+        <div v-if="overview && !instances.length" class="empty">
           No endpoints yet. <RouterLink to="/endpoints/new">Create one</RouterLink> from an enabled plugin.
         </div>
       </div>
-      <p v-if="app.overview && !app.overview.publicMcpUrl" class="small muted">
+      <p v-if="overview && !overview.publicMcpUrl" class="small muted">
         Set <code>PUBLIC_MCP_URL</code> so endpoint URLs point at your public MCP address.
       </p>
     </div>

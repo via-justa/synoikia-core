@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
-import { errorText, http, qs } from '../api';
+import { computed, reactive, ref, useId } from 'vue';
+import { errorText, qs } from '../api';
 import PageHeader from '../components/PageHeader.vue';
+import { useAuditQuery } from '../composables/useAudit';
+import { useInstances } from '../composables/useOverview';
 import { formatDate, pretty } from '../format';
-import { useAppStore } from '../stores/app';
-import type { AuditRow } from '../types';
 
-const app = useAppStore();
+const instances = useInstances();
 const PAGE = 100;
 const filters = reactive({
   kind: '',
@@ -18,11 +18,8 @@ const filters = reactive({
   from: '',
   to: '',
 });
-const rows = ref<AuditRow[]>([]);
-const total = ref(0);
-const offset = ref(0);
-const error = ref<string>();
 const open = ref<number>();
+const uid = useId();
 
 const query = computed(() =>
   qs({
@@ -31,29 +28,24 @@ const query = computed(() =>
     to: filters.to ? new Date(filters.to).toISOString() : '',
   }),
 );
-const slugOf = (id: string | null) => (id ? (app.instances.find((i) => i.id === id)?.slug ?? id.slice(0, 8)) : '');
+// The filters apply on submit or when paging, not while they are typed.
+const request = ref({ query: query.value, offset: 0 });
+const search = computed(
+  () => `${request.value.query}${request.value.query ? '&' : '?'}limit=${PAGE}&offset=${request.value.offset}`,
+);
+const auditQuery = useAuditQuery(search);
+const fetching = auditQuery.isFetching;
+const rows = computed(() => auditQuery.data.value?.rows ?? []);
+const total = computed(() => auditQuery.data.value?.total ?? 0);
+const offset = computed(() => request.value.offset);
+const error = computed(() => (auditQuery.error.value ? errorText(auditQuery.error.value) : undefined));
+const slugOf = (id: string | null) => (id ? (instances.value.find((i) => i.id === id)?.slug ?? id.slice(0, 8)) : '');
 
-async function load(reset = true) {
-  if (reset) offset.value = 0;
-  try {
-    const res = await http.get<{ rows: AuditRow[]; total: number }>(
-      `/api/audit${query.value}${query.value ? '&' : '?'}limit=${PAGE}&offset=${offset.value}`,
-    );
-    rows.value = res.rows;
-    total.value = res.total;
-    error.value = undefined;
-  } catch (err) {
-    error.value = errorText(err);
-  }
+function load(at = 0) {
+  if (request.value.query === query.value && request.value.offset === at) void auditQuery.refetch();
+  else request.value = { query: query.value, offset: at };
 }
-function page(delta: number) {
-  offset.value = Math.max(0, offset.value + delta * PAGE);
-  void load(false);
-}
-onMounted(() => {
-  void app.refresh().catch(() => undefined);
-  void load();
-});
+const page = (delta: number) => load(Math.max(0, offset.value + delta * PAGE));
 
 const DECISION_CLASS = (d: string | null) =>
   !d
@@ -87,7 +79,7 @@ const DECISION_CLASS = (d: string | null) =>
         <label for="a-inst">Endpoint</label>
         <select id="a-inst" v-model="filters.instance">
           <option value="">All</option>
-          <option v-for="i in app.instances" :key="i.id" :value="i.id">/{{ i.slug }}</option>
+          <option v-for="i in instances" :key="i.id" :value="i.id">/{{ i.slug }}</option>
         </select>
       </div>
       <div class="field">
@@ -120,7 +112,7 @@ const DECISION_CLASS = (d: string | null) =>
     <p v-if="error" class="alert error" role="alert">{{ error }}</p>
 
     <div class="table-card">
-      <table class="table">
+      <table class="table" aria-label="Audit events" :aria-busy="fetching">
         <thead>
           <tr>
             <th>Time</th>
@@ -134,7 +126,16 @@ const DECISION_CLASS = (d: string | null) =>
         <tbody>
           <template v-for="r in rows" :key="r.id">
             <tr class="clickable" @click="open = open === r.id ? undefined : r.id">
-              <td class="nowrap">{{ formatDate(r.at) }}</td>
+              <td class="nowrap">
+                <button
+                  class="expand"
+                  type="button"
+                  :aria-expanded="open === r.id"
+                  :aria-controls="open === r.id ? `${uid}-${r.id}` : undefined"
+                >
+                  {{ formatDate(r.at) }}
+                </button>
+              </td>
               <td>{{ r.kind }}</td>
               <td class="mono">{{ slugOf(r.instanceId) }}</td>
               <td class="mono">{{ r.operationKey }}</td>
@@ -146,7 +147,7 @@ const DECISION_CLASS = (d: string | null) =>
                 <div v-if="r.decidedBy" class="small muted">decided by {{ r.decidedBy }} via {{ r.decidedVia }}</div>
               </td>
             </tr>
-            <tr v-if="open === r.id">
+            <tr v-if="open === r.id" :id="`${uid}-${r.id}`">
               <td colspan="6">
                 <pre class="code">{{
                   pretty({
@@ -187,6 +188,20 @@ const DECISION_CLASS = (d: string | null) =>
 }
 .clickable {
   cursor: pointer;
+}
+/* The row's click opens it; the button only gives that to the keyboard, so it looks like the cell text. */
+.expand {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  cursor: inherit;
 }
 .nowrap {
   white-space: nowrap;

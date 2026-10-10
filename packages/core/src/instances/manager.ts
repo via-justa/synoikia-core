@@ -3,9 +3,11 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseManifest, SDK_VERSION } from '@synoikia/plugin-sdk';
 import type { Manifest } from '@synoikia/plugin-sdk';
-import { asc, eq } from 'drizzle-orm';
+import { asc, count, eq } from 'drizzle-orm';
 import { writeAudit } from '../audit.js';
+import type { PublicRole } from '../auth/roles.js';
 import { applyRegistrySync } from '../catalog/registry.js';
+import { roleInstanceIds } from '../catalog/role-levels.js';
 import { applyCatalogSync } from '../catalog/sync.js';
 import type { SyncSummary } from '../catalog/sync.js';
 import { aad } from '../crypto/index.js';
@@ -18,6 +20,7 @@ import type { CoreEvents } from '../events.js';
 import { createInstanceRedactor, GLOBAL_SENSITIVE_KEYS } from '../gate/redact.js';
 import type { InstanceRuntime } from '../gate/pipeline.js';
 import { PluginProcess, PluginUnavailableError } from '../plugins/process.js';
+import { getSettings } from '../settings.js';
 import { PluginSupervisor } from '../plugins/supervisor.js';
 import type { InstanceStatus } from '../plugins/supervisor.js';
 import { mergeSecrets, storedSecretsFor, summarizeSecrets, validateConnection } from './connection.js';
@@ -116,6 +119,29 @@ export class InstanceManager {
     return p;
   }
 
+  /** Installed plugins with their instance counts. */
+  listPlugins() {
+    const counts = new Map(
+      this.db
+        .select({ pluginId: pluginInstances.pluginId, n: count() })
+        .from(pluginInstances)
+        .groupBy(pluginInstances.pluginId)
+        .all()
+        .map((r) => [r.pluginId, r.n]),
+    );
+    return this.db
+      .select()
+      .from(plugins)
+      .orderBy(asc(plugins.pluginId))
+      .all()
+      .map((p) => ({ ...p, instances: counts.get(p.id) ?? 0 }));
+  }
+
+  /** A plugin by row id only, or null. */
+  findPlugin(pluginRowId: string): PluginRow | null {
+    return this.db.select().from(plugins).where(eq(plugins.id, pluginRowId)).get() ?? null;
+  }
+
   list() {
     return this.db
       .select({ instance: pluginInstances, plugin: plugins })
@@ -124,6 +150,34 @@ export class InstanceManager {
       .orderBy(asc(pluginInstances.slug))
       .all()
       .map(({ instance, plugin }) => this.describe(instance, plugin));
+  }
+
+  /** The role's endpoints at `mcpBase`, with live status only where the role shows it (design §6.4). */
+  listForRole(role: PublicRole, mcpBase: string) {
+    const mine = role.isAdmin ? null : new Set(roleInstanceIds(this.db, role.id));
+    const mode = getSettings(this.db, 'mcp').defaultAuthMode;
+    return this.list()
+      .filter((i) => !mine || mine.has(i.id))
+      .map((i) => ({
+        id: i.id,
+        slug: i.slug,
+        displayName: i.displayName,
+        endpointUrl: `${mcpBase}/${i.slug}`,
+        authMode: i.authMode ?? mode,
+        ...(role.isAdmin || role.canSeeStatus
+          ? {
+              status: {
+                enabled: i.enabled,
+                state: i.status,
+                error: i.statusError,
+                plugin: i.plugin.name,
+                upstreamVersion: i.upstreamVersion,
+                lastSyncedAt: i.lastSyncedAt,
+                lastSyncStatus: i.lastSyncStatus,
+              },
+            }
+          : {}),
+      }));
   }
 
   get(id: string) {
@@ -612,7 +666,7 @@ export class InstanceManager {
         if (manifest.capabilities.registry) {
           applyRegistrySync(this.db, instanceId, await client.call('syncRegistry'), this.now());
         }
-        live.lastVersionCheck = Date.now();
+        live.lastVersionCheck = this.now().getTime();
         if (this.row(instanceId).status === 'error' && live.supervisor.status === 'ready')
           this.setStatus(instanceId, 'ready');
         this.opts.events.emit('sync.completed', {
@@ -662,13 +716,14 @@ export class InstanceManager {
       return;
     }
     const settings = this.settingsOf(row);
-    if (Date.now() - row.lastSyncedAt.getTime() > settings.syncMaxAgeMs) {
+    const nowMs = this.now().getTime();
+    if (nowMs - row.lastSyncedAt.getTime() > settings.syncMaxAgeMs) {
       await this.syncNow(instanceId).catch(() => undefined);
       return;
     }
     const interval = opts.forceVersionCheck ? 60_000 : (this.opts.versionCheckIntervalMs ?? 30 * 60_000);
-    if (Date.now() - live.lastVersionCheck < interval) return;
-    live.lastVersionCheck = Date.now();
+    if (nowMs - live.lastVersionCheck < interval) return;
+    live.lastVersionCheck = nowMs;
     try {
       const version = await live.supervisor.client.call('getUpstreamVersion');
       if (version !== row.upstreamVersion) await this.syncNow(instanceId).catch(() => undefined);
@@ -682,7 +737,7 @@ export class InstanceManager {
     for (const [id, live] of this.live) {
       if (live.supervisor.status !== 'ready') continue;
       const row = this.db.select().from(pluginInstances).where(eq(pluginInstances.id, id)).get();
-      if (!row?.lastSyncedAt || Date.now() - row.lastSyncedAt.getTime() > maxAgeMs) {
+      if (!row?.lastSyncedAt || this.now().getTime() - row.lastSyncedAt.getTime() > maxAgeMs) {
         await this.syncNow(id).catch(() => undefined);
       }
     }

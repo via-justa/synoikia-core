@@ -1,28 +1,12 @@
 import type { Context, Hono } from 'hono';
-import { eq } from 'drizzle-orm';
 import type { AppContext } from '../../app.js';
+import { grantOptions } from '../../approvals/grants.js';
+import { mayDecide as ownerMayDecide, needsTotpProof } from '../../approvals/service.js';
 import type { ValidSession } from '../../auth/sessions.js';
-import { operations, pendingApprovals, pluginInstances } from '../../db/schema.js';
 import { ServiceError } from '../../errors.js';
 import { clientIp } from '../common.js';
-import { checkUiCsrf, recordTotpProof, renderLogin, sinceTotpProof, uiCsrf, uiSession } from './oauth-routes.js';
+import { checkUiCsrf, recordTotpProof, renderLogin, uiCsrf, uiSession } from './oauth-routes.js';
 import { approvalPage, errorPage } from './pages.js';
-
-/** A locked operation needs a TOTP code proved this recently (design §5.3). */
-const LOCKED_TOTP_MAX_AGE_MS = 5 * 60_000;
-
-/** "Approve for this session" lengths (design §5.8), capped by the endpoint's `sessionGrantMaxHours`. */
-function grantOptions(now: Date, maxHours: number) {
-  if (maxHours <= 0) return [];
-  const opts = [1, 4]
-    .filter((h) => h <= maxHours)
-    .map((h) => ({ value: String(h), label: `${h} h`, until: new Date(now.getTime() + h * 3_600_000) }));
-  const midnight = new Date(now);
-  midnight.setHours(24, 0, 0, 0);
-  if (midnight.getTime() - now.getTime() <= maxHours * 3_600_000)
-    opts.push({ value: 'midnight', label: 'until midnight', until: midnight });
-  return opts;
-}
 
 /** The approval page (design §5.3): deciding needs a signed-in user with a TOTP proof in this browser
  * (fresh for locked ops) and a CSRF-protected POST, so neither the link holder nor a prefetch decides. */
@@ -37,13 +21,7 @@ export function registerApprovalRoutes(app: Hono, ctx: AppContext) {
       ctx.throttle.allowIp(clientIp(c, ctx.config.TRUST_PROXY));
       return null;
     }
-    const row = ctx.db
-      .select({ approval: pendingApprovals, op: operations, instance: pluginInstances })
-      .from(pendingApprovals)
-      .innerJoin(operations, eq(pendingApprovals.operationId, operations.id))
-      .innerJoin(pluginInstances, eq(pendingApprovals.instanceId, pluginInstances.id))
-      .where(eq(pendingApprovals.id, link.approvalId))
-      .get();
+    const row = ctx.approvals.withDetails(link.approvalId);
     return row ? { link, ...row } : null;
   };
   type Loaded = NonNullable<ReturnType<typeof load>>;
@@ -54,11 +32,8 @@ export function registerApprovalRoutes(app: Hono, ctx: AppContext) {
       ? []
       : grantOptions(ctx.now(), ctx.instances.settingsOf(data.instance).sessionGrantMaxHours);
 
-  /** Every approval needs a TOTP proof in this session (OIDC sign-ins have none); locked ops a fresh one. */
-  const needsTotp = (session: ValidSession, data: Loaded) => {
-    const since = sinceTotpProof(ctx, session);
-    return data.op.locked ? since > LOCKED_TOTP_MAX_AGE_MS : since === Infinity;
-  };
+  const needsTotp = (session: ValidSession, data: Loaded) =>
+    needsTotpProof(data.op.locked, ctx.sessions.sinceTotpProof(session.idHash));
 
   const noTotp = (c: Context) =>
     errorPage(
@@ -68,9 +43,8 @@ export function registerApprovalRoutes(app: Hono, ctx: AppContext) {
       403,
     );
 
-  /** Only the credential's owner decides (design §5.3); a call without one, only an admin. */
   const mayDecide = (session: ValidSession, data: Loaded) =>
-    data.approval.ownerUserId ? data.approval.ownerUserId === session.user.id : ctx.users.isAdmin(session.user);
+    ownerMayDecide(data.approval, session.user.id, ctx.users.isAdmin(session.user));
 
   const notYours = (c: Context) =>
     errorPage(

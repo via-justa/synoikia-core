@@ -1,16 +1,13 @@
 import type { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { asc, count, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { AppContext } from '../../app.js';
 import { auditCsvChunks, queryAudit } from '../../audit-query.js';
-import { pluginInstances, plugins } from '../../db/schema.js';
 import { ConflictError, NotFoundError, ValidationError } from '../../errors.js';
 import { CORE_EVENT_NAMES } from '../../events.js';
 import { getSettings, isSettingsSection, updateSettings } from '../../settings.js';
 import { CORE_VERSION } from '../../version.js';
 import { readJson } from '../common.js';
-import { assertSsoRemains } from './auth.js';
 import type { AdminEnv } from './auth.js';
 
 /** Global Admin API routes (design §8.4): overview, plugins, audit, tokens, users, settings, events. */
@@ -28,17 +25,9 @@ export function registerSystemRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     }));
     return c.json({
       instances,
-      plugins: ctx.db
-        .select()
-        .from(plugins)
-        .orderBy(asc(plugins.pluginId))
-        .all()
-        .map((p) => ({
-          id: p.id,
-          pluginId: p.pluginId,
-          status: p.status,
-          enabled: p.enabled,
-        })),
+      plugins: ctx.instances
+        .listPlugins()
+        .map((p) => ({ id: p.id, pluginId: p.pluginId, status: p.status, enabled: p.enabled })),
       warnings: ctx.warnings,
       publicMcpUrl: ctx.config.PUBLIC_MCP_URL ?? null,
       version: CORE_VERSION,
@@ -47,35 +36,12 @@ export function registerSystemRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
 
   // ── plugins ──
 
-  app.get('/api/plugins', (c) => {
-    const counts = new Map(
-      ctx.db
-        .select({ pluginId: pluginInstances.pluginId, n: count() })
-        .from(pluginInstances)
-        .groupBy(pluginInstances.pluginId)
-        .all()
-        .map((r) => [r.pluginId, r.n]),
-    );
-    return c.json(
-      ctx.db
-        .select()
-        .from(plugins)
-        .orderBy(asc(plugins.pluginId))
-        .all()
-        .map((p) => ({ ...p, instances: counts.get(p.id) ?? 0 })),
-    );
-  });
+  app.get('/api/plugins', (c) => c.json(ctx.instances.listPlugins()));
 
   app.patch('/api/plugins/:id', async (c) => {
     const { enabled } = await readJson(c, z.object({ enabled: z.boolean() }));
     await ctx.instances.setPluginEnabled(c.req.param('id'), enabled, actor(c));
-    return c.json(
-      ctx.db
-        .select()
-        .from(plugins)
-        .where(eq(plugins.id, c.req.param('id')))
-        .get() ?? null,
-    );
+    return c.json(ctx.instances.findPlugin(c.req.param('id')));
   });
 
   app.post('/api/plugins/rescan', (c) => c.json(ctx.discoverPlugins()));
@@ -205,7 +171,7 @@ export function registerSystemRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     if (body.disabled !== undefined) {
       if (id === c.get('user').id && body.disabled)
         throw new ConflictError('self_disable', 'You cannot disable yourself');
-      if (body.disabled) assertSsoRemains(ctx, { losingUser: id });
+      if (body.disabled) ctx.users.assertSsoRemains({ losingUser: id });
       ctx.users.setDisabled(id, body.disabled, actor(c));
       if (body.disabled) {
         // Everything the user could still reach MCP with goes too; re-enabling revives none of it.
@@ -244,7 +210,7 @@ export function registerSystemRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
 
   app.put('/api/settings/oidc', async (c) => {
     const body = await readJson(c, z.record(z.string(), z.unknown()));
-    if (body.enabled === false) assertSsoRemains(ctx, { oidcOff: true });
+    if (body.enabled === false) ctx.users.assertSsoRemains({ oidcOff: true });
     return c.json(ctx.oidc.updateSettings(body, actor(c)));
   });
 

@@ -2,12 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { hash, verify } from '@node-rs/argon2';
 import { and, asc, count, eq, ne, sql } from 'drizzle-orm';
 import { writeAudit } from '../audit.js';
+import { levelView, roleHasInstance, setOwnLevel } from '../catalog/role-levels.js';
+import type { LevelTarget, LevelView } from '../catalog/role-levels.js';
 import { aad } from '../crypto/index.js';
 import type { SecretBox } from '../crypto/index.js';
 import type { Db } from '../db/index.js';
 import { roles, users } from '../db/schema.js';
-import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors.js';
 import { ADMIN_ROLE_ID } from '../gate/access.js';
+import type { AccessLevel } from '../gate/access.js';
 import { getSettings } from '../settings.js';
 import { toPublicRole } from './roles.js';
 import type { PublicRole } from './roles.js';
@@ -304,8 +307,17 @@ export class UserService {
     });
   }
 
-  markLogin(userId: string) {
-    this.db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId)).run();
+  /** A successful sign-in on any surface; `detail` says how and where. */
+  recordLogin(userId: string, detail: Record<string, unknown>) {
+    this.db.transaction((tx) => {
+      tx.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId)).run();
+      writeAudit(tx, { kind: 'auth', decision: 'login', actorKind: 'user', actorId: userId, detail });
+    });
+  }
+
+  /** Local-password users must have TOTP when the admin requires it (OIDC-only users rely on the IdP). */
+  mustEnrollTotp(u: UserRow): boolean {
+    return getSettings(this.db, 'security').requireTotp && !!u.passwordHash && !u.totpEnabled;
   }
 
   // ── TOTP ─────────────────────────────────────────────────────────────────────────────────────────
@@ -407,6 +419,16 @@ export class UserService {
     return null;
   }
 
+  /** Turning TOTP off needs a current code, so a hijacked session alone can't remove it. False on a wrong code. */
+  disableOwnTotp(u: UserRow, code: string): boolean {
+    if (getSettings(this.db, 'security').requireTotp && u.passwordHash) {
+      throw new ConflictError('totp_required', 'Two-factor authentication is required on this server');
+    }
+    if (!this.verifySecondFactor(u.id, code)) return false;
+    this.resetTotp(u.id);
+    return true;
+  }
+
   // ── OIDC links ───────────────────────────────────────────────────────────────────────────────────
 
   linkOidc(userId: string, issuer: string, subject: string) {
@@ -432,11 +454,55 @@ export class UserService {
     });
   }
 
+  unlinkOwnOidc(u: UserRow) {
+    if (!u.passwordHash) throw new ConflictError('last_login_method', 'Set a password before unlinking single sign-on');
+    this.assertSsoRemains({ losingUser: u.id });
+    this.unlinkOidc(u.id);
+  }
+
+  /** While local login is off, refuse any change that would leave no enabled user linked to SSO (§6.1). */
+  assertSsoRemains(change: { oidcOff?: boolean; losingUser?: string }) {
+    if (!getSettings(this.db, 'security').disableLocalLogin) return;
+    if (change.oidcOff || !this.hasOidcLinkedUser(change.losingUser)) {
+      throw new ConflictError(
+        'local_login_disabled',
+        'Local login is disabled, so this would lock everyone out. Re-enable local login first.',
+      );
+    }
+  }
+
   hasOidcLinkedUser(except?: string): boolean {
     return this.db
       .select()
       .from(users)
       .all()
       .some((u) => !!u.oidcSubject && !u.disabled && u.id !== except);
+  }
+
+  // ── the user's own endpoints (design §6.4) ──
+
+  /** An endpoint of the user's role; any other answers 404, as if it didn't exist. */
+  ownEndpoint(u: UserRow, instanceId: string): string {
+    if (!this.hasEndpoint(u, instanceId)) throw new NotFoundError('instance_not_found', 'No such endpoint');
+    return instanceId;
+  }
+
+  hasEndpoint(u: UserRow, instanceId: string): boolean {
+    return roleHasInstance(this.db, u.roleId, instanceId);
+  }
+
+  assertAllowed(u: UserRow, cap: 'canSetOwnLevels' | 'canManageOwnRules') {
+    if (!this.roleOf(u)[cap]) throw new ForbiddenError('forbidden', 'Your role does not allow this');
+  }
+
+  /** The user's levels on an endpoint; a non-admin sees only what they can call. */
+  levels(u: UserRow, instanceId: string): LevelView {
+    const who = { roleId: u.roleId, userId: u.id };
+    return levelView(this.db, instanceId, who, { reachableOnly: !this.roleOf(u).isAdmin });
+  }
+
+  setOwnLevel(u: UserRow, instanceId: string, target: LevelTarget, level: AccessLevel | null): LevelView {
+    setOwnLevel(this.db, u.id, instanceId, target, level);
+    return this.levels(u, instanceId);
   }
 }

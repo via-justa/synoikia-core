@@ -202,6 +202,12 @@ export class OAuthService {
     });
   }
 
+  /** Revokes a grant of the user; any other answers 404, as if it didn't exist. */
+  revokeOwnGrant(id: string, userId: string) {
+    if (!this.listGrants(userId).some((g) => g.id === id)) throw new NotFoundError('grant_not_found', 'No such grant');
+    this.revokeGrant(id, { userId });
+  }
+
   /** Password changed or user disabled: revoke every live grant and its tokens; re-enabling revives nothing. */
   revokeUserGrants(userId: string, reason: 'password_changed' | 'user_disabled', actor: { userId?: string } = {}) {
     const now = this.now();
@@ -223,6 +229,17 @@ export class OAuthService {
         detail: { userId, reason, grants: live.length },
       });
       return live.length;
+    });
+  }
+
+  /** The user refused the consent page; nothing is granted. */
+  denyConsent(client: ClientRow, userId: string) {
+    writeAudit(this.db, {
+      kind: 'auth',
+      decision: 'oauth_consent_denied',
+      actorKind: 'user',
+      actorId: userId,
+      detail: { clientId: client.clientId },
     });
   }
 

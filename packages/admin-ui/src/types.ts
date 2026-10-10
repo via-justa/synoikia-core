@@ -34,6 +34,20 @@ export interface PublicUser {
   role: PublicRole;
 }
 
+/** `POST /api/users`. */
+export interface NewUser {
+  username: string;
+  password?: string;
+  roleId: string;
+}
+
+/** `PATCH /api/users/:id`. */
+export interface UserPatch {
+  roleId?: string;
+  disabled?: boolean;
+  password?: string;
+}
+
 export interface SessionInfo {
   authenticated: boolean;
   setupRequired: boolean;
@@ -384,6 +398,13 @@ export interface Settings {
   forceLocalLogin: boolean;
   publicMcpUrl: string | null;
   publicAdminUrl: string | null;
+}
+
+/** A browser signed in to the approval page (`/api/profile/approval-sessions`). */
+export interface ApprovalBrowser {
+  createdAt: string;
+  lastSeenAt: string;
+  userAgent: string | null;
 }
 
 /** A live "Approve for this session" grant on one endpoint (design §5.8). */

@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { useAppStore } from '../../stores/app';
+import { useOverviewQuery } from '../../composables/useOverview';
 
 /** Resolves `/endpoints/:slug/*` to an instance and hands it to the tab views. */
-const app = useAppStore();
+const overview = useOverviewQuery();
 const route = useRoute();
 const slug = computed(() => String(route.params.slug));
-const instance = computed(() => app.bySlug(slug.value));
+const instance = computed(() => overview.data.value?.instances.find((i) => i.slug === slug.value));
 const loaded = ref(false);
 
+// A slug the cache doesn't know may be new: fetch once more (joining a fetch in flight) before saying so.
 async function ensure() {
-  if (!instance.value) await app.refresh().catch(() => undefined);
+  if (!instance.value) await overview.refetch({ cancelRefetch: false });
   loaded.value = true;
 }
 onMounted(ensure);
@@ -32,7 +33,13 @@ const tabs = [
         <div>
           <h1>
             <span class="mono">/{{ instance.slug }}</span>
-            <span class="dot" :class="instance.status" :title="instance.status" />
+            <span
+              class="dot"
+              :class="instance.status"
+              :title="instance.status"
+              role="img"
+              :aria-label="instance.status"
+            />
           </h1>
           <p class="sub">
             {{ instance.displayName
@@ -42,8 +49,8 @@ const tabs = [
           </p>
         </div>
       </div>
-      <p v-if="instance.statusError" class="alert error">{{ instance.statusError }}</p>
-      <nav class="tabs">
+      <p v-if="instance.statusError" class="alert error" role="alert">{{ instance.statusError }}</p>
+      <nav class="tabs" aria-label="Endpoint sections">
         <RouterLink
           v-for="t in tabs"
           :key="t.path"

@@ -1,85 +1,109 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import { errorText, http } from '../../api';
+import { messageRole } from '../../a11y';
+import { computed, ref, toRaw, watch } from 'vue';
+import { errorText } from '../../api';
 import ChipsInput from '../../components/ChipsInput.vue';
-import type { RoleRow, Settings } from '../../types';
+import { useConfirm } from '../../composables/useConfirm';
+import { useRolesQuery } from '../../composables/useRoles';
+import { useSaveSettings, useSettingsQuery } from '../../composables/useSettings';
+import type { Settings } from '../../types';
 
 type Oidc = NonNullable<Settings['oidc']>;
+type Message = { kind: 'ok' | 'error'; text: string };
 
+const DEFAULT_OIDC: Oidc = {
+  enabled: false,
+  issuer: '',
+  clientId: '',
+  scopes: 'openid email profile',
+  label: 'SSO',
+  allowPolicy: { emails: [], subjects: [], group: '', groupsClaim: 'groups' },
+  autoProvision: false,
+  clientSecretSet: false,
+};
+
+const settingsQuery = useSettingsQuery();
+const rolesQuery = useRolesQuery();
+const saves = { security: useSaveSettings('security'), audit: useSaveSettings('audit') };
+const saveOidcSettings = useSaveSettings('oidc');
+const { prompt } = useConfirm();
+// The page shows once both have loaded.
+const loaded = computed(() => (rolesQuery.data.value ? settingsQuery.data.value : undefined));
+const roles = computed(() => rolesQuery.data.value ?? []);
 const security = ref<Settings['security']>();
 const audit = ref<Settings['audit']>();
 const oidc = ref<Omit<Oidc, 'clientSecretSet'>>();
-const oidcSecretSet = ref(false);
+const oidcSecretSet = computed(() => loaded.value?.oidc?.clientSecretSet ?? false);
 const oidcSecret = ref('');
-const forceLocal = ref(false);
-const adminUrl = ref<string | null>(null);
-const messages = ref<Record<string, { kind: 'ok' | 'error'; text: string }>>({});
-const roles = ref<RoleRow[]>([]);
-
-onMounted(async () => {
-  try {
-    const s = await http.get<Settings>('/api/settings');
-    roles.value = await http.get<RoleRow[]>('/api/roles');
-    security.value = structuredClone(s.security);
-    audit.value = structuredClone(s.audit);
-    forceLocal.value = s.forceLocalLogin;
-    adminUrl.value = s.publicAdminUrl;
-    const { clientSecretSet, ...rest } = s.oidc ?? {
-      enabled: false,
-      issuer: '',
-      clientId: '',
-      scopes: 'openid email profile',
-      label: 'SSO',
-      allowPolicy: { emails: [], subjects: [], group: '', groupsClaim: 'groups' },
-      autoProvision: false,
-      clientSecretSet: false,
-    };
-    oidc.value = structuredClone(rest);
-    oidcSecretSet.value = clientSecretSet;
-  } catch (err) {
-    messages.value = { load: { kind: 'error', text: errorText(err) } };
-  }
+const forceLocal = computed(() => loaded.value?.forceLocalLogin ?? false);
+const adminUrl = computed(() => loaded.value?.publicAdminUrl ?? null);
+const saved = ref<Record<string, Message>>({});
+const messages = computed<Record<string, Message>>(() => {
+  const loadError = loaded.value ? undefined : (settingsQuery.error.value ?? rolesQuery.error.value);
+  return loadError ? { load: { kind: 'error', text: errorText(loadError) }, ...saved.value } : saved.value;
 });
+
+// Each form is a draft of its section; a save replaces only that section in the cache with core's answer.
+watch(
+  () => loaded.value?.security,
+  (s) => s && (security.value = structuredClone(toRaw(s))),
+  { immediate: true },
+);
+watch(
+  () => loaded.value?.audit,
+  (s) => s && (audit.value = structuredClone(toRaw(s))),
+  { immediate: true },
+);
+watch(
+  () => loaded.value && (loaded.value.oidc ?? DEFAULT_OIDC),
+  (s) => {
+    if (!s) return;
+    const { clientSecretSet: _set, ...rest } = structuredClone(toRaw(s));
+    oidc.value = rest;
+  },
+  { immediate: true },
+);
+
+const setMsg = (key: string, message: Message) => (saved.value = { ...saved.value, [key]: message });
 
 async function saveSection(key: 'security' | 'audit' | 'registration') {
   // Anyone who can reach the sign-in page, or whom the proxy or the IdP lets through, becomes an admin.
   if (
     key === 'registration' &&
     security.value?.defaultRoleId === 'admin' &&
-    window.prompt('New accounts will be administrators. Type ADMIN to confirm.') !== 'ADMIN'
+    (await prompt({
+      title: 'New accounts will be administrators.',
+      label: 'Type ADMIN to confirm.',
+      action: 'Save',
+      danger: true,
+    })) !== 'ADMIN'
   )
     return;
-  if (key === 'registration') key = 'security';
-  try {
-    const body = key === 'security' ? security.value : audit.value;
-    const res = await http.put<Record<string, unknown>>(`/api/settings/${key}`, body);
-    if (key === 'security') security.value = res as Settings['security'];
-    else audit.value = res as Settings['audit'];
-    messages.value = { ...messages.value, [key]: { kind: 'ok', text: 'Saved.' } };
-  } catch (err) {
-    messages.value = { ...messages.value, [key]: { kind: 'error', text: errorText(err) } };
-  }
+  const section = key === 'registration' ? 'security' : key;
+  saves[section].mutate(section === 'security' ? security.value : audit.value, {
+    onSuccess: () => setMsg(section, { kind: 'ok', text: 'Saved.' }),
+    onError: (err) => setMsg(section, { kind: 'error', text: errorText(err) }),
+  });
 }
 
-async function saveOidc() {
-  try {
-    const res = await http.put<Oidc>('/api/settings/oidc', {
-      ...oidc.value,
-      ...(oidcSecret.value ? { clientSecret: oidcSecret.value } : {}),
-    });
-    oidcSecretSet.value = res.clientSecretSet;
-    oidcSecret.value = '';
-    messages.value = { ...messages.value, oidc: { kind: 'ok', text: 'Saved.' } };
-  } catch (err) {
-    messages.value = { ...messages.value, oidc: { kind: 'error', text: errorText(err) } };
-  }
+function saveOidc() {
+  saveOidcSettings.mutate(
+    { ...oidc.value, ...(oidcSecret.value ? { clientSecret: oidcSecret.value } : {}) },
+    {
+      onSuccess: () => {
+        oidcSecret.value = '';
+        setMsg('oidc', { kind: 'ok', text: 'Saved.' });
+      },
+      onError: (err) => setMsg('oidc', { kind: 'error', text: errorText(err) }),
+    },
+  );
 }
 const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc/callback`;
 </script>
 
 <template>
   <div class="stack">
-    <p v-if="messages.load" class="alert error">{{ messages.load.text }}</p>
+    <p v-if="messages.load" class="alert error" role="alert">{{ messages.load.text }}</p>
 
     <form v-if="security" class="card" @submit.prevent="saveSection('security')">
       <h2>Sign-in</h2>
@@ -91,10 +115,10 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
       </div>
       <div class="field check">
         <label>
-          <input v-model="security.disableLocalLogin" type="checkbox" />
+          <input v-model="security.disableLocalLogin" type="checkbox" aria-describedby="s-local-help" />
           Disable password sign-in (single sign-on only)
         </label>
-        <p class="help">
+        <p id="s-local-help" class="help">
           Needs working OIDC and at least one linked user.
           <template v-if="forceLocal">
             <strong>ADMIN_FORCE_LOCAL_LOGIN</strong> is set, so password sign-in stays on.</template
@@ -112,18 +136,39 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
         </div>
         <div class="field">
           <label for="s-aidle">Approval page sign-in idle timeout (hours)</label>
-          <input id="s-aidle" v-model.number="security.approvalSessionIdleHours" type="number" min="1" max="168" />
+          <input
+            id="s-aidle"
+            v-model.number="security.approvalSessionIdleHours"
+            type="number"
+            min="1"
+            max="168"
+            aria-describedby="s-approval-help"
+          />
         </div>
         <div class="field">
           <label for="s-aabs">Approval page sign-in maximum (days)</label>
-          <input id="s-aabs" v-model.number="security.approvalSessionAbsoluteDays" type="number" min="1" max="30" />
+          <input
+            id="s-aabs"
+            v-model.number="security.approvalSessionAbsoluteDays"
+            type="number"
+            min="1"
+            max="30"
+            aria-describedby="s-approval-help"
+          />
         </div>
       </div>
-      <p class="help">
+      <p id="s-approval-help" class="help">
         The approval page asks for an authenticator code once per browser sign-in. Locked operations always ask for a
         fresh one.
       </p>
-      <p v-if="messages.security" class="alert" :class="messages.security.kind">{{ messages.security.text }}</p>
+      <p
+        v-if="messages.security"
+        class="alert"
+        :class="messages.security.kind"
+        :role="messageRole(messages.security.kind)"
+      >
+        {{ messages.security.text }}
+      </p>
       <button class="btn btn-primary" type="submit">Save</button>
     </form>
 
@@ -131,15 +176,21 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
       <h2>Self-registration</h2>
       <div class="field">
         <label for="s-role">Role of new accounts</label>
-        <select id="s-role" v-model="security.defaultRoleId">
+        <select
+          id="s-role"
+          v-model="security.defaultRoleId"
+          :aria-describedby="security.defaultRoleId === 'admin' ? 's-role-help s-role-warn' : 's-role-help'"
+        >
           <option :value="null">None: nobody can register</option>
           <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option>
         </select>
-        <p class="help">
+        <p id="s-role-help" class="help">
           With a role set, unknown users named by the MCP proxy (External sign-in) and, with auto-provisioning on, new
           single sign-on users get an account with this role.
         </p>
-        <p v-if="security.defaultRoleId === 'admin'" class="alert warn">Every new account will be an administrator.</p>
+        <p v-if="security.defaultRoleId === 'admin'" id="s-role-warn" class="alert warn" role="status">
+          Every new account will be an administrator.
+        </p>
       </div>
       <div class="field check">
         <label>
@@ -147,7 +198,14 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
           Show “Create account” on the sign-in page
         </label>
       </div>
-      <p v-if="messages.security" class="alert" :class="messages.security.kind">{{ messages.security.text }}</p>
+      <p
+        v-if="messages.security"
+        class="alert"
+        :class="messages.security.kind"
+        :role="messageRole(messages.security.kind)"
+      >
+        {{ messages.security.text }}
+      </p>
       <button class="btn btn-primary" type="submit">Save</button>
     </form>
 
@@ -189,8 +247,8 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
       </p>
       <h2>Who may sign in</h2>
       <div class="field">
-        <label>Allowed emails</label>
-        <ChipsInput v-model="oidc.allowPolicy.emails" placeholder="me@example.com" />
+        <label for="o-emails">Allowed emails</label>
+        <ChipsInput v-model="oidc.allowPolicy.emails" input-id="o-emails" placeholder="me@example.com" />
       </div>
       <div class="form-grid">
         <div class="field">
@@ -203,20 +261,22 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
         </div>
       </div>
       <div class="field">
-        <label>Allowed subjects</label>
-        <ChipsInput v-model="oidc.allowPolicy.subjects" placeholder="subject id" />
+        <label for="o-subjects">Allowed subjects</label>
+        <ChipsInput v-model="oidc.allowPolicy.subjects" input-id="o-subjects" placeholder="subject id" />
       </div>
       <div class="field check">
         <label
-          ><input v-model="oidc.autoProvision" type="checkbox" /> Create an account on first sign-in for anyone the
-          policy allows</label
+          ><input v-model="oidc.autoProvision" type="checkbox" aria-describedby="o-auto-help" /> Create an account on
+          first sign-in for anyone the policy allows</label
         >
-        <p class="help">
+        <p id="o-auto-help" class="help">
           Otherwise each user must link single sign-on from their profile first. New accounts get the self-registration
           role, so this works only while one is set.
         </p>
       </div>
-      <p v-if="messages.oidc" class="alert" :class="messages.oidc.kind">{{ messages.oidc.text }}</p>
+      <p v-if="messages.oidc" class="alert" :class="messages.oidc.kind" :role="messageRole(messages.oidc.kind)">
+        {{ messages.oidc.text }}
+      </p>
       <button class="btn btn-primary" type="submit">Save single sign-on</button>
     </form>
 
@@ -230,15 +290,18 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
           type="number"
           min="7"
           placeholder="Keep forever"
+          aria-describedby="a-ret-help"
           @input="
             audit.retentionDays = ($event.target as HTMLInputElement).value
               ? Number(($event.target as HTMLInputElement).value)
               : null
           "
         />
-        <p class="help">Empty keeps everything (the default). Purges are themselves audited.</p>
+        <p id="a-ret-help" class="help">Empty keeps everything (the default). Purges are themselves audited.</p>
       </div>
-      <p v-if="messages.audit" class="alert" :class="messages.audit.kind">{{ messages.audit.text }}</p>
+      <p v-if="messages.audit" class="alert" :class="messages.audit.kind" :role="messageRole(messages.audit.kind)">
+        {{ messages.audit.text }}
+      </p>
       <button class="btn btn-primary" type="submit">Save</button>
     </form>
   </div>

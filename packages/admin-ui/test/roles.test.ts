@@ -196,7 +196,7 @@ describe('own pre-approval rules', () => {
       'GET /api/me/endpoints/i1/options/names': [{ value: 'a', label: 'A' }],
       'GET /api/me/endpoints/i1/registry': [{ kind: 'volume', id: 'vol/a', name: 'A', parentId: null, scopes: null }],
     });
-    const { wrapper } = await mountAt('/my/i1');
+    const { wrapper, body } = await mountAt('/my/i1');
     await flushPromises();
     await wrapper
       .findAll('a')
@@ -208,7 +208,7 @@ describe('own pre-approval rules', () => {
       .find((b) => b.text() === 'New rule')!
       .trigger('click');
     await flushPromises();
-    await wrapper.get('select#r-op').setValue('op1');
+    await body.get('select#r-op').setValue('op1');
     await flushPromises();
     const paths = calls.map((c) => c.path);
     expect(paths.some((p) => p.startsWith('/api/me/endpoints/i1/registry?'))).toBe(true);

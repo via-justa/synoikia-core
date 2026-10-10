@@ -23,7 +23,7 @@ const tabs = computed(() =>
 <template>
   <div class="page">
     <PageHeader title="Settings" />
-    <nav class="tabs">
+    <nav class="tabs" aria-label="Settings sections">
       <RouterLink
         v-for="t in tabs"
         :key="t.path"

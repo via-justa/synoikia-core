@@ -1,8 +1,10 @@
-import { flushPromises, mount } from '@vue/test-utils';
+import { VueQueryPlugin } from '@tanstack/vue-query';
+import { DOMWrapper, flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { vi } from 'vitest';
 import { createMemoryHistory } from 'vue-router';
 import App from '../src/App.vue';
+import { createQueryClient } from '../src/api';
 import { createAppRouter } from '../src/router';
 
 export function json(status: number, body: unknown) {
@@ -54,13 +56,22 @@ export const signedIn = {
   mustEnrollTotp: false,
 };
 
+/** Mounts the app at `path`; `body` also finds what dialogs teleport out of the wrapper. */
 export async function mountAt(path: string) {
   const pinia = createPinia();
   setActivePinia(pinia);
   const router = createAppRouter(createMemoryHistory());
   await router.push(path);
   await router.isReady();
-  const wrapper = mount(App, { global: { plugins: [pinia, router] }, attachTo: document.body });
+  const queryClient = createQueryClient();
+  queryClient.setDefaultOptions({
+    queries: { ...queryClient.getDefaultOptions().queries, retry: false },
+    mutations: { retry: false },
+  });
+  const wrapper = mount(App, {
+    global: { plugins: [pinia, router, [VueQueryPlugin, { queryClient }]] },
+    attachTo: document.body,
+  });
   await flushPromises();
-  return { wrapper, router };
+  return { wrapper, router, body: new DOMWrapper(document.body), queryClient };
 }

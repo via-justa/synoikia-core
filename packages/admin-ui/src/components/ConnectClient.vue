@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { useCopy } from '../composables/useCopy';
 import { AUTH_MODE_LABELS } from '../format';
 import type { Instance } from '../types';
 
@@ -68,12 +69,7 @@ const desktopConfig = computed(() => {
   return JSON.stringify({ mcpServers: { [slug.value]: server } }, null, 2);
 });
 
-const copied = ref<string>();
-async function copy(text: string) {
-  await navigator.clipboard?.writeText(text).catch(() => undefined);
-  copied.value = text;
-  setTimeout(() => (copied.value = undefined), 1500);
-}
+const { copied, copy } = useCopy();
 </script>
 
 <template>
@@ -84,8 +80,8 @@ async function copy(text: string) {
     </select>
     <div class="snippet">
       <div class="snippet-head">
-        <span class="label">Endpoint URL</span>
-        <button class="btn btn-sm copy" type="button" @click="copy(url)">
+        <span id="connect-url-label" class="label">Endpoint URL</span>
+        <button class="btn btn-sm copy" type="button" aria-describedby="connect-url-label" @click="copy(url)">
           {{ copied === url ? 'Copied' : 'Copy' }}
         </button>
       </div>
@@ -116,7 +112,7 @@ async function copy(text: string) {
         </template>
         <div class="snippet">
           <div class="snippet-head">
-            <button class="btn btn-sm copy" type="button" @click="copy(codeCommand)">
+            <button class="btn btn-sm copy" type="button" aria-label="Copy command" @click="copy(codeCommand)">
               {{ copied === codeCommand ? 'Copied' : 'Copy' }}
             </button>
           </div>
@@ -163,7 +159,7 @@ async function copy(text: string) {
           <strong>Settings → Developer → Edit Config</strong>, and add to <code>claude_desktop_config.json</code>:
           <div class="snippet">
             <div class="snippet-head">
-              <button class="btn btn-sm copy" type="button" @click="copy(desktopConfig)">
+              <button class="btn btn-sm copy" type="button" aria-label="Copy config" @click="copy(desktopConfig)">
                 {{ copied === desktopConfig ? 'Copied' : 'Copy' }}
               </button>
             </div>

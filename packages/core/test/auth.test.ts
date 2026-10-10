@@ -137,6 +137,31 @@ describe('UserService', () => {
         .map((a) => a.decision),
     ).toEqual(expect.arrayContaining(['totp_enabled', 'recovery_code_used', 'totp_reset']));
   });
+
+  it('turns off its own TOTP only with a valid code and while the server does not require it', async () => {
+    const t = setup();
+    const u = await t.users.create({ username: 'admin', password: PASSWORD });
+    const { secret } = t.users.beginTotp(u.id);
+    t.users.confirmTotp(u.id, totpAt(secret, currentStep()));
+    updateSettings(t.db, 'security', { requireTotp: true });
+    expect(() => t.users.disableOwnTotp(t.users.get(u.id), '000000')).toThrow(ConflictError);
+    updateSettings(t.db, 'security', { requireTotp: false });
+    expect(t.users.disableOwnTotp(t.users.get(u.id), '000000')).toBe(false);
+    expect(t.users.get(u.id).totpEnabled).toBe(true);
+    expect(t.users.disableOwnTotp(t.users.get(u.id), totpAt(secret, currentStep() + 1))).toBe(true);
+    expect(t.users.get(u.id).totpEnabled).toBe(false);
+  });
+
+  it('unlinks its own SSO identity only when a password remains', async () => {
+    const t = setup();
+    const sso = await t.users.create({ username: 'sso-only' });
+    t.users.linkOidc(sso.id, 'https://idp', 'sub-1');
+    expect(() => t.users.unlinkOwnOidc(t.users.get(sso.id))).toThrow(/Set a password/);
+    const local = await t.users.create({ username: 'local', password: PASSWORD });
+    t.users.linkOidc(local.id, 'https://idp', 'sub-2');
+    t.users.unlinkOwnOidc(t.users.get(local.id));
+    expect(t.users.get(local.id).oidcSubject).toBeNull();
+  });
 });
 
 describe('SessionService', () => {

@@ -4,7 +4,15 @@ import { writeAudit } from '../audit.js';
 import type { Db, DbLike } from '../db/index.js';
 import { operationGroupAliases, operationGroups, operations, pluginInstances } from '../db/schema.js';
 import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
-import { ACCESS_LEVELS, FULL_ACCESS, allowedLevels, effectiveAccess, isAccessLevel, minLevel } from '../gate/access.js';
+import {
+  ACCESS_LEVELS,
+  FULL_ACCESS,
+  allowedLevels,
+  effectiveAccess,
+  isAccessLevel,
+  levelInForce,
+  minLevel,
+} from '../gate/access.js';
 import type { AccessDecision, AccessLevel, AccessPrincipal } from '../gate/access.js';
 import { loadCaps } from './role-levels.js';
 
@@ -29,6 +37,13 @@ export const accessInput = (op: OperationRow) => ({
   levelOverride: op.levelOverride,
   writeAcknowledged: op.writeAcknowledged,
 });
+
+/** What the upstream API says the operation does, when it says. */
+export const describeOf = (op: OperationRow) => {
+  const docs = op.docs as { summary?: unknown; description?: unknown } | null;
+  if (typeof docs?.summary === 'string') return docs.summary;
+  return typeof docs?.description === 'string' ? docs.description : null;
+};
 
 const isPlainWrite = (op: OperationRow) => !op.stale && !op.locked && op.classification === 'write';
 
@@ -117,6 +132,60 @@ export function listGroups(db: DbLike, instanceId: string): GroupSummary[] {
       },
     };
   });
+}
+
+/** Filters from the operations list's query string; `'1'` turns a switch on. */
+export interface OperationFilter {
+  stale?: string;
+  group?: string;
+  reason?: string;
+  needsReview?: string;
+  q?: string;
+}
+
+/** An endpoint's operations with their group, level in force and reachability. */
+export function listOperations(db: DbLike, instanceId: string, filter: OperationFilter = {}) {
+  const groups = new Map(
+    db
+      .select()
+      .from(operationGroups)
+      .where(eq(operationGroups.instanceId, instanceId))
+      .all()
+      .map((g) => [g.id, g]),
+  );
+  const conditions = [eq(operations.instanceId, instanceId)];
+  if (filter.stale !== '1') conditions.push(eq(operations.stale, false));
+  const text = filter.q?.toLowerCase();
+  return db
+    .select()
+    .from(operations)
+    .where(and(...conditions))
+    .orderBy(asc(operations.key))
+    .all()
+    .map((op) => {
+      const group = groups.get(op.groupId);
+      const access = effectiveAccess(accessInput(op), group);
+      return {
+        ...op,
+        group: group?.key ?? null,
+        level: levelInForce(accessInput(op), group),
+        allowedLevels: allowedLevels(op),
+        description: describeOf(op),
+        reachable: access.reachable,
+        mode: access.reachable ? access.mode : null,
+        pendingReview: access.reachable && access.pendingReview === true,
+        reason: access.reachable ? null : access.reason,
+      };
+    })
+    .filter((op) => (!filter.group || op.group === filter.group) && (!filter.reason || op.reason === filter.reason))
+    .filter((op) => (filter.needsReview === '1' ? op.needsReview || op.pendingReview : true))
+    .filter(
+      (op) =>
+        !text ||
+        op.key.toLowerCase().includes(text) ||
+        (op.displayName ?? '').toLowerCase().includes(text) ||
+        (op.description ?? '').toLowerCase().includes(text),
+    );
 }
 
 /** Access decision for one operation key; unknown or stale operations are unreachable. */
@@ -234,6 +303,19 @@ export function applyBulkLevel(
   });
 }
 
+/** Renames, then sets the level of, one group; each change is its own audited write. */
+export function updateGroup(
+  db: Db,
+  instanceId: string,
+  key: string,
+  patch: { label?: string; level?: string },
+  opts: { actor?: Actor } = {},
+): GroupSummary | null {
+  if (patch.label !== undefined) renameGroup(db, instanceId, key, patch.label, opts);
+  if (patch.level !== undefined) setGroupLevel(db, instanceId, key, patch.level, opts);
+  return listGroups(db, instanceId).find((g) => g.key === key) ?? null;
+}
+
 // ── regrouping ───────────────────────────────────────────────────────────────────────────────────
 
 export function renameGroup(db: Db, instanceId: string, key: string, label: string, opts: { actor?: Actor } = {}) {
@@ -348,14 +430,14 @@ export interface OperationPatch {
 }
 
 /** Per-operation level and acknowledgement. The level must fit the operation's kind; locked refuses
- * `write` (409). Setting a write to `write` acknowledges it. */
+ * `write` (409). Setting a write to `write` acknowledges it. Returns the operation as stored. */
 export function updateOperation(
   db: Db,
   instanceId: string,
   opId: string,
   patch: OperationPatch,
   opts: { actor?: Actor; now?: Date } = {},
-): void {
+): OperationRow {
   const now = opts.now ?? new Date();
   const actor = opts.actor ?? {};
   db.transaction((tx) => {
@@ -419,4 +501,5 @@ export function updateOperation(
       now,
     );
   });
+  return db.select().from(operations).where(eq(operations.id, opId)).get()!;
 }

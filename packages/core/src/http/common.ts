@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import { ZodError } from 'zod';
 import { z } from 'zod';
 import { ServiceError, ValidationError } from '../errors.js';
+import type { Logger } from '../log.js';
 import { PluginTimeoutError, PluginUnavailableError } from '../plugins/process.js';
 
 /** Helpers shared by the admin and MCP listeners. */
@@ -61,7 +62,7 @@ export async function readOptionalJson<S extends z.ZodType>(c: Context, schema: 
 }
 
 /** Maps service errors onto JSON responses; anything unexpected is a 500 without internals. */
-export function errorResponse(err: unknown, c: Context) {
+export function errorResponse(err: unknown, c: Context, log: Logger) {
   if (err instanceof ServiceError) {
     return c.json(
       { error: err.code, message: err.message, ...(err.details !== undefined ? { details: err.details } : {}) },
@@ -81,6 +82,11 @@ export function errorResponse(err: unknown, c: Context) {
   if (err instanceof PluginUnavailableError || err instanceof PluginTimeoutError) {
     return c.json({ error: 'plugin_unavailable', message: err.message }, 503);
   }
-  console.error(err);
+  // The route pattern, not the path: approval links carry their token in the path.
+  log.error('request failed', {
+    method: c.req.method,
+    route: c.req.routePath,
+    error: err instanceof Error ? (err.stack ?? err.message) : String(err),
+  });
   return c.json({ error: 'internal', message: 'Internal error' }, 500);
 }

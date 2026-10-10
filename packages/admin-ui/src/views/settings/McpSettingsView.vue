@@ -1,32 +1,39 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { errorText, http } from '../../api';
+import { messageRole } from '../../a11y';
+import { computed, ref, toRaw, useId, watch } from 'vue';
+import { errorText } from '../../api';
+import { useCopy } from '../../composables/useCopy';
+import { useSaveSettings, useSettingsQuery } from '../../composables/useSettings';
 import { AUTH_MODE_LABELS } from '../../format';
 import { AUTH_MODES } from '../../types';
 import type { Settings } from '../../types';
 
+const settingsQuery = useSettingsQuery();
+const saveMcp = useSaveSettings('mcp');
 const form = ref<Settings['mcp']>();
-const publicMcpUrl = ref<string | null>(null);
-const message = ref<{ kind: 'ok' | 'error'; text: string }>();
+const uid = useId();
+const publicMcpUrl = computed(() => settingsQuery.data.value?.publicMcpUrl ?? null);
+const saved = ref<{ kind: 'ok' | 'error'; text: string }>();
+const message = computed(() => {
+  const loadError = settingsQuery.error.value;
+  return saved.value ?? (loadError && !form.value ? { kind: 'error', text: errorText(loadError) } : undefined);
+});
 const endpointPattern = computed(() => `${publicMcpUrl.value ?? '<this server>'}/<slug>`);
 
-onMounted(async () => {
-  try {
-    const s = await http.get<Settings>('/api/settings');
-    form.value = structuredClone(s.mcp);
-    publicMcpUrl.value = s.publicMcpUrl;
-  } catch (err) {
-    message.value = { kind: 'error', text: errorText(err) };
-  }
-});
+// The form is a draft: it follows the cached section, which a save replaces with core's answer.
+watch(
+  () => settingsQuery.data.value?.mcp,
+  (mcp) => {
+    if (mcp) form.value = structuredClone(toRaw(mcp));
+  },
+  { immediate: true },
+);
 
-async function save() {
-  try {
-    form.value = await http.put<Settings['mcp']>('/api/settings/mcp', form.value);
-    message.value = { kind: 'ok', text: 'Saved.' };
-  } catch (err) {
-    message.value = { kind: 'error', text: errorText(err) };
-  }
+function save() {
+  saveMcp.mutate(form.value, {
+    onSuccess: () => (saved.value = { kind: 'ok', text: 'Saved.' }),
+    onError: (err) => (saved.value = { kind: 'error', text: errorText(err) }),
+  });
 }
 
 /** Redirect URIs to allow on the Cloudflare Access application's Managed OAuth, per client. */
@@ -45,12 +52,7 @@ const CF_REDIRECTS = [
   },
 ];
 
-const copied = ref<string>();
-async function copy(text: string) {
-  await navigator.clipboard?.writeText(text).catch(() => undefined);
-  copied.value = text;
-  setTimeout(() => (copied.value = undefined), 1500);
-}
+const { copied, copy } = useCopy();
 
 const MODE_HELP: Record<string, string> = {
   external: 'A reverse proxy (Cloudflare Access, Authelia, Authentik) authenticates clients. Only use behind one.',
@@ -91,10 +93,10 @@ const MODE_HELP: Record<string, string> = {
       <h2>Default client authentication</h2>
       <p class="small muted">Endpoints use this unless they override it in their own settings.</p>
       <div class="field">
-        <select v-model="form.defaultAuthMode" aria-label="Default authentication mode">
+        <select v-model="form.defaultAuthMode" aria-label="Default authentication mode" aria-describedby="m-mode-help">
           <option v-for="m in AUTH_MODES" :key="m" :value="m">{{ AUTH_MODE_LABELS[m] }}</option>
         </select>
-        <p class="help">{{ MODE_HELP[form.defaultAuthMode] }}</p>
+        <p id="m-mode-help" class="help">{{ MODE_HELP[form.defaultAuthMode] }}</p>
       </div>
       <p class="small">
         Public MCP URL: <span class="mono">{{ publicMcpUrl ?? 'not set — derived from each request' }}</span>
@@ -133,10 +135,10 @@ const MODE_HELP: Record<string, string> = {
       </ul>
       <div class="field check">
         <label
-          ><input v-model="form.allowDynamicRegistration" type="checkbox" /> Let MCP clients register themselves
-          (dynamic client registration)</label
+          ><input v-model="form.allowDynamicRegistration" type="checkbox" aria-describedby="m-dcr-help" /> Let MCP
+          clients register themselves (dynamic client registration)</label
         >
-        <p class="help">When off, register each client by hand under Clients &amp; Tokens.</p>
+        <p id="m-dcr-help" class="help">When off, register each client by hand under Clients &amp; Tokens.</p>
       </div>
       <div class="form-grid">
         <div class="field">
@@ -160,13 +162,18 @@ const MODE_HELP: Record<string, string> = {
       <div class="form-grid">
         <div class="field">
           <label for="m-cft">Cloudflare team domain</label>
-          <input id="m-cft" v-model="form.cfAccess.teamDomain" placeholder="myteam.cloudflareaccess.com" />
-          <p class="help">Zero Trust → Settings → Team name and domain.</p>
+          <input
+            id="m-cft"
+            v-model="form.cfAccess.teamDomain"
+            placeholder="myteam.cloudflareaccess.com"
+            aria-describedby="m-cft-help"
+          />
+          <p id="m-cft-help" class="help">Zero Trust → Settings → Team name and domain.</p>
         </div>
         <div class="field">
           <label for="m-cfa">Application audience (AUD)</label>
-          <input id="m-cfa" v-model="form.cfAccess.aud" />
-          <p class="help">The Access application's Application Audience (AUD) Tag, on its Overview.</p>
+          <input id="m-cfa" v-model="form.cfAccess.aud" aria-describedby="m-cfa-help" />
+          <p id="m-cfa-help" class="help">The Access application's Application Audience (AUD) Tag, on its Overview.</p>
         </div>
       </div>
       <h3>Set up Cloudflare</h3>
@@ -187,8 +194,10 @@ const MODE_HELP: Record<string, string> = {
           <div v-for="r in CF_REDIRECTS" :key="r.client" class="redirects">
             <span class="label">{{ r.client }}</span>
             <div v-for="u in r.uris" :key="u" class="redirect">
-              <pre class="code">{{ u }}</pre>
-              <button class="btn btn-sm" type="button" @click="copy(u)">{{ copied === u ? 'Copied' : 'Copy' }}</button>
+              <pre :id="`${uid}-${u}`" class="code">{{ u }}</pre>
+              <button class="btn btn-sm" type="button" :aria-describedby="`${uid}-${u}`" @click="copy(u)">
+                {{ copied === u ? 'Copied' : 'Copy' }}
+              </button>
             </div>
           </div>
           <p class="note">
@@ -225,15 +234,20 @@ const MODE_HELP: Record<string, string> = {
       </p>
       <div class="field">
         <label for="m-hdr">Trusted identity header</label>
-        <input id="m-hdr" v-model="form.trustedIdentityHeader" placeholder="Remote-User" />
-        <p class="help">Used only to attribute calls in the audit log.</p>
+        <input
+          id="m-hdr"
+          v-model="form.trustedIdentityHeader"
+          placeholder="Remote-User"
+          aria-describedby="m-hdr-help"
+        />
+        <p id="m-hdr-help" class="help">Used only to attribute calls in the audit log.</p>
       </div>
     </section>
 
-    <p v-if="message" class="alert" :class="message.kind" role="status">{{ message.text }}</p>
+    <p v-if="message" class="alert" :class="message.kind" :role="messageRole(message.kind)">{{ message.text }}</p>
     <div class="actions"><button class="btn btn-primary" type="submit">Save</button></div>
   </form>
-  <p v-else-if="message" class="alert error">{{ message.text }}</p>
+  <p v-else-if="message" class="alert error" role="alert">{{ message.text }}</p>
 </template>
 
 <style scoped>

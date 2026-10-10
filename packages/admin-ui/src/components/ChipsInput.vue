@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { nextTick, ref, useTemplateRef } from 'vue';
+import { announce } from '../composables/useAnnounce';
 
 /** A list of strings edited as chips; Enter or comma adds, × removes. Optional suggestions. */
 const props = defineProps<{
   placeholder?: string;
   suggestions?: { value: string; label: string }[];
   inputId?: string;
+  ariaLabelledby?: string;
+  ariaDescribedby?: string;
 }>();
 const model = defineModel<string[]>({ required: true });
 const draft = ref('');
 const listId = `chips-${Math.random().toString(36).slice(2)}`;
+const root = useTemplateRef<HTMLElement>('root');
 
 function add(raw = draft.value) {
   const values = raw
@@ -17,25 +21,37 @@ function add(raw = draft.value) {
     .map((v) => v.trim())
     .filter(Boolean);
   const next = [...model.value];
-  for (const v of values) if (!next.includes(v)) next.push(v);
+  const added = values.filter((v, i) => !next.includes(v) && values.indexOf(v) === i);
+  next.push(...added);
   model.value = next;
   draft.value = '';
+  if (added.length) void announce(`Added ${added.map(labelOf).join(', ')}`);
 }
-function remove(v: string) {
+// Focus stays in the list: the next chip's remove button, else the input.
+async function remove(v: string) {
+  const index = model.value.indexOf(v);
   model.value = model.value.filter((x) => x !== v);
+  void announce(`Removed ${labelOf(v)}`);
+  await nextTick();
+  const target = root.value?.querySelectorAll<HTMLElement>('.chip button')[index] ?? root.value?.querySelector('input');
+  target?.focus();
 }
 const labelOf = (v: string) => props.suggestions?.find((s) => s.value === v)?.label ?? v;
 </script>
 
 <template>
-  <div class="chips">
-    <span v-for="v in model" :key="v" class="chip">
-      {{ labelOf(v) }}
-      <button type="button" :aria-label="`Remove ${v}`" @click="remove(v)">×</button>
+  <div ref="root" class="chips">
+    <span v-if="model.length" role="list" class="list">
+      <span v-for="v in model" :key="v" role="listitem" class="chip">
+        {{ labelOf(v) }}
+        <button type="button" :aria-label="`Remove ${v}`" @click="remove(v)">×</button>
+      </span>
     </span>
     <input
       :id="inputId"
       v-model="draft"
+      :aria-labelledby="ariaLabelledby"
+      :aria-describedby="ariaDescribedby"
       :placeholder="placeholder"
       :list="suggestions?.length ? listId : undefined"
       @keydown.enter.prevent="add()"
@@ -58,6 +74,14 @@ const labelOf = (v: string) => props.suggestions?.find((s) => s.value === v)?.la
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--surface-100);
+}
+.chips:focus-within {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -1px;
+  border-color: var(--focus-ring);
+}
+.list {
+  display: contents;
 }
 .chip {
   display: inline-flex;
@@ -84,6 +108,8 @@ input {
   background: transparent !important;
   padding: 4px !important;
   font-size: 13px;
+}
+.chips input:focus {
   outline: none;
 }
 </style>

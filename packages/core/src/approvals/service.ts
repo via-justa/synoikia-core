@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { writeAudit } from '../audit.js';
 import type { Db } from '../db/index.js';
-import { pendingApprovals } from '../db/schema.js';
+import { operations, pendingApprovals, pluginInstances } from '../db/schema.js';
 import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
 import type { ApprovalLinkService } from './links.js';
 
@@ -96,6 +96,17 @@ export interface ApprovalRequestInput {
   /** Present when the execution can park; used only when no client prompt applies. */
   park?: ParkHook;
 }
+
+/** A locked operation needs a TOTP code proved this recently (design §5.3). */
+const LOCKED_TOTP_MAX_AGE_MS = 5 * 60_000;
+
+/** Every approval needs a TOTP proof in the deciding session (OIDC sign-ins have none); locked ops a fresh one. */
+export const needsTotpProof = (locked: boolean, sinceProofMs: number) =>
+  locked ? sinceProofMs > LOCKED_TOTP_MAX_AGE_MS : sinceProofMs === Infinity;
+
+/** Only the credential's owner decides (design §5.3); a call without one, only an admin. */
+export const mayDecide = (approval: { ownerUserId: string | null }, userId: string, isAdmin: boolean) =>
+  approval.ownerUserId ? approval.ownerUserId === userId : isAdmin;
 
 interface Live {
   row: typeof pendingApprovals.$inferSelect;
@@ -263,6 +274,19 @@ export class ApprovalService {
         live.settle({ outcome: approved ? 'approved' : 'denied', via: 'elicitation', decidedBy: input.client.id });
       },
       () => this.live.get(id)?.settle({ outcome: 'denied', reason: 'prompt_failed' }),
+    );
+  }
+
+  /** An approval with its operation and endpoint, for the approval page. */
+  withDetails(id: string) {
+    return (
+      this.db
+        .select({ approval: pendingApprovals, op: operations, instance: pluginInstances })
+        .from(pendingApprovals)
+        .innerJoin(operations, eq(pendingApprovals.operationId, operations.id))
+        .innerJoin(pluginInstances, eq(pendingApprovals.instanceId, pluginInstances.id))
+        .where(eq(pendingApprovals.id, id))
+        .get() ?? null
     );
   }
 
