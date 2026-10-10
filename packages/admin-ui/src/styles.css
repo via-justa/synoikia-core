@@ -149,7 +149,10 @@ body {
 
 .sr-only,
 .skip-link:not(:focus) {
+  /* Pinned to the containing block's corner, so one inside a wide table can't widen the page. */
   position: absolute;
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
   margin: -1px;
