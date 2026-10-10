@@ -164,7 +164,7 @@ function reset() {
           <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option>
         </select>
       </div>
-      <p v-if="createError" class="alert error">{{ createError }}</p>
+      <p v-if="createError" class="alert error" role="alert">{{ createError }}</p>
       <template #footer>
         <button class="btn" type="button" @click="adding = undefined">Cancel</button>
         <button class="btn btn-primary" type="button" :disabled="adding.username.trim().length < 2" @click="add">
@@ -179,7 +179,7 @@ function reset() {
         <input id="r-pass" v-model="resetting.password" type="password" autocomplete="new-password" />
         <p class="help">Their existing sessions are signed out.</p>
       </div>
-      <p v-if="passwordError" class="alert error">{{ passwordError }}</p>
+      <p v-if="passwordError" class="alert error" role="alert">{{ passwordError }}</p>
       <template #footer>
         <button class="btn" type="button" @click="resetting = undefined">Cancel</button>
         <button class="btn btn-primary" type="button" :disabled="resetting.password.length < 12" @click="reset">

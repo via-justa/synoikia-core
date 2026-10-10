@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { messageRole } from '../../a11y';
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { errorText } from '../../api';
@@ -224,7 +225,7 @@ async function remove() {
       </div>
     </section>
 
-    <p v-if="message" class="alert" :class="message.kind" role="status">{{ message.text }}</p>
+    <p v-if="message" class="alert" :class="message.kind" :role="messageRole(message.kind)">{{ message.text }}</p>
     <div class="actions">
       <button class="btn btn-primary" type="submit">Save settings</button>
       <span class="grow" />
@@ -242,7 +243,7 @@ async function remove() {
         >
         <input id="del-confirm" v-model="deleting.confirm" autocomplete="off" />
       </div>
-      <p v-if="deleting.note" class="alert error">{{ deleting.note }}</p>
+      <p v-if="deleting.note" class="alert error" role="alert">{{ deleting.note }}</p>
       <template #footer>
         <button class="btn" type="button" @click="deleting = undefined">Cancel</button>
         <button

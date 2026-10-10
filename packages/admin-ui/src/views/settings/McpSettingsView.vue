@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { messageRole } from '../../a11y';
 import { computed, ref, toRaw, watch } from 'vue';
 import { errorText } from '../../api';
 import { useCopy } from '../../composables/useCopy';
@@ -230,10 +231,10 @@ const MODE_HELP: Record<string, string> = {
       </div>
     </section>
 
-    <p v-if="message" class="alert" :class="message.kind" role="status">{{ message.text }}</p>
+    <p v-if="message" class="alert" :class="message.kind" :role="messageRole(message.kind)">{{ message.text }}</p>
     <div class="actions"><button class="btn btn-primary" type="submit">Save</button></div>
   </form>
-  <p v-else-if="message" class="alert error">{{ message.text }}</p>
+  <p v-else-if="message" class="alert error" role="alert">{{ message.text }}</p>
 </template>
 
 <style scoped>

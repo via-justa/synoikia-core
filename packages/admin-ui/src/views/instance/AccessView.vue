@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { rovingKeydown, tabStop } from '../../a11y';
 import { errorText } from '../../api';
 import ModalDialog from '../../components/ModalDialog.vue';
 import {
@@ -327,7 +328,14 @@ function status(op: Operation): { text: string; tone: string } {
           </div>
           <button v-if="!scope" class="btn-link small" type="button" @click="rename(g)">Rename</button>
           <span v-if="readonly" class="pill">{{ LEVEL_LABELS[g.level] }}</span>
-          <div v-else class="segmented" role="radiogroup" :aria-label="`Access for ${g.label}`">
+          <!-- Arrows move focus only: each choice writes to the server, so Space or Enter picks it. -->
+          <div
+            v-else
+            class="segmented"
+            role="radiogroup"
+            :aria-label="`Access for ${g.label}`"
+            @keydown="rovingKeydown($event, false)"
+          >
             <button
               v-for="l in LEVELS"
               :key="l"
@@ -335,6 +343,7 @@ function status(op: Operation): { text: string; tone: string } {
               role="radio"
               :title="groupLevelDisabled(g, l) ? capTitle : LEVEL_HELP[l]"
               :aria-checked="g.level === l"
+              :tabindex="l === tabStop(LEVELS, g.level, (x) => groupLevelDisabled(g, x)) ? 0 : -1"
               :disabled="groupLevelDisabled(g, l)"
               :class="{ on: g.level === l, write: l === 'write' }"
               @click="setLevel(g, l)"
@@ -361,7 +370,12 @@ function status(op: Operation): { text: string; tone: string } {
           <div v-for="op in opsOf(g.key)" :key="op.id" class="op" :data-op="op.key">
             <div class="op-name">
               <span class="mono">{{ op.key }}</span>
-              <span v-if="op.locked" class="lock" title="Locked: destructive or irreversible" aria-label="Locked"
+              <span
+                v-if="op.locked"
+                class="lock"
+                title="Locked: destructive or irreversible"
+                role="img"
+                aria-label="Locked"
                 >🔒</span
               >
               <div v-if="op.displayName" class="small muted">{{ op.displayName }}</div>
@@ -398,13 +412,20 @@ function status(op: Operation): { text: string; tone: string } {
                 />
                 Guide
               </label>
-              <div v-if="!readonly" class="segmented sm" role="radiogroup" :aria-label="`Level of ${op.key}`">
+              <div
+                v-if="!readonly"
+                class="segmented sm"
+                role="radiogroup"
+                :aria-label="`Level of ${op.key}`"
+                @keydown="rovingKeydown($event, false)"
+              >
                 <button
                   v-for="l in levelsShown(op)"
                   :key="l"
                   type="button"
                   role="radio"
                   :aria-checked="op.level === l"
+                  :tabindex="l === tabStop(levelsShown(op), op.level, (x) => levelDisabled(op, x)) ? 0 : -1"
                   :disabled="levelDisabled(op, l)"
                   :title="
                     scope && op.allowedLevels.includes(l) && levelDisabled(op, l)
@@ -414,7 +435,7 @@ function status(op: Operation): { text: string; tone: string } {
                   :class="{ on: op.level === l, write: l === 'write' }"
                   @click="setOpLevel(op, g, l)"
                 >
-                  {{ LEVEL_LABELS[l] }}<template v-if="levelDisabled(op, l)"> 🔒</template>
+                  {{ LEVEL_LABELS[l] }}<span v-if="levelDisabled(op, l)" aria-hidden="true"> 🔒</span>
                 </button>
               </div>
               <button
@@ -464,7 +485,7 @@ function status(op: Operation): { text: string; tone: string } {
           <input id="m-label" v-model="merging.label" placeholder="Apps" />
         </div>
       </div>
-      <p v-if="merging.note" class="alert error">{{ merging.note }}</p>
+      <p v-if="merging.note" class="alert error" role="alert">{{ merging.note }}</p>
       <template #footer>
         <button class="btn" type="button" @click="merging = undefined">Cancel</button>
         <button

@@ -241,7 +241,7 @@ async function remove(ch: Notifier) {
       <div class="field check">
         <label><input v-model="draft.enabled" type="checkbox" /> Enabled</label>
       </div>
-      <p v-if="draft.note" class="alert error">{{ draft.note }}</p>
+      <p v-if="draft.note" class="alert error" role="alert">{{ draft.note }}</p>
       <template #footer>
         <button class="btn" type="button" @click="draft = undefined">Cancel</button>
         <button

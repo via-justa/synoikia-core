@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { messageRole } from '../../a11y';
 import { computed, ref, toRaw, watch } from 'vue';
 import { errorText } from '../../api';
 import ChipsInput from '../../components/ChipsInput.vue';
@@ -102,7 +103,7 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
 
 <template>
   <div class="stack">
-    <p v-if="messages.load" class="alert error">{{ messages.load.text }}</p>
+    <p v-if="messages.load" class="alert error" role="alert">{{ messages.load.text }}</p>
 
     <form v-if="security" class="card" @submit.prevent="saveSection('security')">
       <h2>Sign-in</h2>
@@ -146,7 +147,14 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
         The approval page asks for an authenticator code once per browser sign-in. Locked operations always ask for a
         fresh one.
       </p>
-      <p v-if="messages.security" class="alert" :class="messages.security.kind">{{ messages.security.text }}</p>
+      <p
+        v-if="messages.security"
+        class="alert"
+        :class="messages.security.kind"
+        :role="messageRole(messages.security.kind)"
+      >
+        {{ messages.security.text }}
+      </p>
       <button class="btn btn-primary" type="submit">Save</button>
     </form>
 
@@ -162,7 +170,9 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
           With a role set, unknown users named by the MCP proxy (External sign-in) and, with auto-provisioning on, new
           single sign-on users get an account with this role.
         </p>
-        <p v-if="security.defaultRoleId === 'admin'" class="alert warn">Every new account will be an administrator.</p>
+        <p v-if="security.defaultRoleId === 'admin'" class="alert warn" role="status">
+          Every new account will be an administrator.
+        </p>
       </div>
       <div class="field check">
         <label>
@@ -170,7 +180,14 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
           Show “Create account” on the sign-in page
         </label>
       </div>
-      <p v-if="messages.security" class="alert" :class="messages.security.kind">{{ messages.security.text }}</p>
+      <p
+        v-if="messages.security"
+        class="alert"
+        :class="messages.security.kind"
+        :role="messageRole(messages.security.kind)"
+      >
+        {{ messages.security.text }}
+      </p>
       <button class="btn btn-primary" type="submit">Save</button>
     </form>
 
@@ -239,7 +256,9 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
           role, so this works only while one is set.
         </p>
       </div>
-      <p v-if="messages.oidc" class="alert" :class="messages.oidc.kind">{{ messages.oidc.text }}</p>
+      <p v-if="messages.oidc" class="alert" :class="messages.oidc.kind" :role="messageRole(messages.oidc.kind)">
+        {{ messages.oidc.text }}
+      </p>
       <button class="btn btn-primary" type="submit">Save single sign-on</button>
     </form>
 
@@ -261,7 +280,9 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
         />
         <p class="help">Empty keeps everything (the default). Purges are themselves audited.</p>
       </div>
-      <p v-if="messages.audit" class="alert" :class="messages.audit.kind">{{ messages.audit.text }}</p>
+      <p v-if="messages.audit" class="alert" :class="messages.audit.kind" :role="messageRole(messages.audit.kind)">
+        {{ messages.audit.text }}
+      </p>
       <button class="btn btn-primary" type="submit">Save</button>
     </form>
   </div>

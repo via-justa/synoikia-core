@@ -72,7 +72,7 @@ async function revoke(kind: 'tokens' | 'grants', id: string, what: string) {
       approve its calls.
     </p>
     <p v-if="error" class="alert error" role="alert">{{ error }}</p>
-    <div v-if="created" class="alert ok">
+    <div v-if="created" class="alert ok" role="status">
       Copy the token now; it is not shown again: <span class="mono">{{ created }}</span>
       <button class="btn btn-sm" type="button" @click="created = undefined">Done</button>
     </div>

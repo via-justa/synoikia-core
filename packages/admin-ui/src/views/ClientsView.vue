@@ -296,7 +296,7 @@ function createClient() {
         <input id="t-exp" v-model="newToken.expiresAt" type="datetime-local" />
         <p class="help">Leave empty for no expiry.</p>
       </div>
-      <p v-if="tokenError" class="alert error">{{ tokenError }}</p>
+      <p v-if="tokenError" class="alert error" role="alert">{{ tokenError }}</p>
       <template #footer>
         <button class="btn" type="button" @click="newToken = undefined">Cancel</button>
         <button class="btn btn-primary" type="button" :disabled="!canCreateToken" @click="createToken">
@@ -324,7 +324,7 @@ function createClient() {
           ><input v-model="newClient.confidential" type="checkbox" /> Confidential client (gets a client secret)</label
         >
       </div>
-      <p v-if="clientError" class="alert error">{{ clientError }}</p>
+      <p v-if="clientError" class="alert error" role="alert">{{ clientError }}</p>
       <template #footer>
         <button class="btn" type="button" @click="newClient = undefined">Cancel</button>
         <button

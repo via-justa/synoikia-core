@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, useId } from 'vue';
 import { errorText, qs } from '../api';
 import PageHeader from '../components/PageHeader.vue';
 import { useAuditQuery } from '../composables/useAudit';
@@ -19,6 +19,7 @@ const filters = reactive({
   to: '',
 });
 const open = ref<number>();
+const uid = useId();
 
 const query = computed(() =>
   qs({
@@ -33,6 +34,7 @@ const search = computed(
   () => `${request.value.query}${request.value.query ? '&' : '?'}limit=${PAGE}&offset=${request.value.offset}`,
 );
 const auditQuery = useAuditQuery(search);
+const fetching = auditQuery.isFetching;
 const rows = computed(() => auditQuery.data.value?.rows ?? []);
 const total = computed(() => auditQuery.data.value?.total ?? 0);
 const offset = computed(() => request.value.offset);
@@ -110,7 +112,7 @@ const DECISION_CLASS = (d: string | null) =>
     <p v-if="error" class="alert error" role="alert">{{ error }}</p>
 
     <div class="table-card">
-      <table class="table">
+      <table class="table" aria-label="Audit events" :aria-busy="fetching">
         <thead>
           <tr>
             <th>Time</th>
@@ -124,7 +126,16 @@ const DECISION_CLASS = (d: string | null) =>
         <tbody>
           <template v-for="r in rows" :key="r.id">
             <tr class="clickable" @click="open = open === r.id ? undefined : r.id">
-              <td class="nowrap">{{ formatDate(r.at) }}</td>
+              <td class="nowrap">
+                <button
+                  class="expand"
+                  type="button"
+                  :aria-expanded="open === r.id"
+                  :aria-controls="open === r.id ? `${uid}-${r.id}` : undefined"
+                >
+                  {{ formatDate(r.at) }}
+                </button>
+              </td>
               <td>{{ r.kind }}</td>
               <td class="mono">{{ slugOf(r.instanceId) }}</td>
               <td class="mono">{{ r.operationKey }}</td>
@@ -136,7 +147,7 @@ const DECISION_CLASS = (d: string | null) =>
                 <div v-if="r.decidedBy" class="small muted">decided by {{ r.decidedBy }} via {{ r.decidedVia }}</div>
               </td>
             </tr>
-            <tr v-if="open === r.id">
+            <tr v-if="open === r.id" :id="`${uid}-${r.id}`">
               <td colspan="6">
                 <pre class="code">{{
                   pretty({
@@ -177,6 +188,20 @@ const DECISION_CLASS = (d: string | null) =>
 }
 .clickable {
   cursor: pointer;
+}
+/* The row's click opens it; the button only gives that to the keyboard, so it looks like the cell text. */
+.expand {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  cursor: inherit;
 }
 .nowrap {
   white-space: nowrap;

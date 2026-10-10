@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { messageRole, rovingKeydown } from '../../a11y';
 import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { errorText } from '../../api';
@@ -108,14 +109,21 @@ async function enrolled() {
     <MyCredentials />
     <section class="card">
       <h2>Appearance</h2>
-      <p class="small muted">Auto follows your system setting. Saved in this browser.</p>
-      <div class="segmented" role="radiogroup" aria-label="Theme">
+      <p id="theme-help" class="small muted">Auto follows your system setting. Saved in this browser.</p>
+      <div
+        class="segmented"
+        role="radiogroup"
+        aria-label="Theme"
+        aria-describedby="theme-help"
+        @keydown="rovingKeydown"
+      >
         <button
           v-for="t in THEME_PREFS"
           :key="t"
           type="button"
           role="radio"
           :aria-checked="theme === t"
+          :tabindex="theme === t ? 0 : -1"
           :class="{ on: theme === t }"
           @click="pickTheme(t)"
         >
@@ -143,7 +151,9 @@ async function enrolled() {
           <button class="btn btn-primary" type="submit" :disabled="pw.next.length < 12">Change password</button>
         </div>
       </form>
-      <p v-if="messages.pw" class="alert" :class="messages.pw.kind">{{ messages.pw.text }}</p>
+      <p v-if="messages.pw" class="alert" :class="messages.pw.kind" :role="messageRole(messages.pw.kind)">
+        {{ messages.pw.text }}
+      </p>
     </section>
 
     <section class="card">
@@ -163,7 +173,9 @@ async function enrolled() {
         </form>
       </template>
       <TotpEnrollment v-else @enrolled="enrolled" />
-      <p v-if="messages.totp" class="alert" :class="messages.totp.kind">{{ messages.totp.text }}</p>
+      <p v-if="messages.totp" class="alert" :class="messages.totp.kind" :role="messageRole(messages.totp.kind)">
+        {{ messages.totp.text }}
+      </p>
     </section>
 
     <section class="card">
@@ -186,7 +198,14 @@ async function enrolled() {
       >
         Sign out all approval browsers
       </button>
-      <p v-if="messages.approval" class="alert" :class="messages.approval.kind">{{ messages.approval.text }}</p>
+      <p
+        v-if="messages.approval"
+        class="alert"
+        :class="messages.approval.kind"
+        :role="messageRole(messages.approval.kind)"
+      >
+        {{ messages.approval.text }}
+      </p>
     </section>
 
     <section v-if="session.oidcEnabled || me.oidcLinked" class="card">
@@ -197,10 +216,12 @@ async function enrolled() {
         <p v-if="!me.hasPassword" class="help small muted">Set a password before unlinking.</p>
       </template>
       <a v-else class="btn" href="/auth/oidc/link">Link {{ session.oidcLabel }}</a>
-      <p v-if="messages.oidc" class="alert" :class="messages.oidc.kind">{{ messages.oidc.text }}</p>
+      <p v-if="messages.oidc" class="alert" :class="messages.oidc.kind" :role="messageRole(messages.oidc.kind)">
+        {{ messages.oidc.text }}
+      </p>
     </section>
   </div>
-  <p v-else-if="messages.load" class="alert error">{{ messages.load.text }}</p>
+  <p v-else-if="messages.load" class="alert error" role="alert">{{ messages.load.text }}</p>
 </template>
 
 <style scoped>
