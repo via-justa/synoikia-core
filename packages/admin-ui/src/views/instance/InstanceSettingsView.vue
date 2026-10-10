@@ -4,13 +4,13 @@ import { useRouter } from 'vue-router';
 import { errorText, http } from '../../api';
 import ChipsInput from '../../components/ChipsInput.vue';
 import ModalDialog from '../../components/ModalDialog.vue';
+import { useRefreshOverview } from '../../composables/useOverview';
 import { AUTH_MODE_LABELS } from '../../format';
-import { useAppStore } from '../../stores/app';
 import { AUTH_MODES } from '../../types';
 import type { AuthMode, Instance, SessionGrant } from '../../types';
 
 const props = defineProps<{ instance: Instance }>();
-const app = useAppStore();
+const refreshOverview = useRefreshOverview();
 const router = useRouter();
 
 const s = props.instance.settings;
@@ -78,7 +78,7 @@ async function save() {
         memoryMb: f.memoryMb,
       },
     });
-    await app.refresh();
+    await refreshOverview();
     if (updated.slug !== props.instance.slug) await router.replace(`/endpoints/${updated.slug}/settings`);
     message.value = { kind: 'ok', text: 'Saved.' };
   } catch (err) {
@@ -91,7 +91,7 @@ async function remove() {
   if (!d) return;
   try {
     await http.del(`/api/instances/${props.instance.id}`, { confirm: d.confirm });
-    await app.refresh();
+    await refreshOverview();
     await router.replace('/');
   } catch (err) {
     deleting.value = { ...d, note: errorText(err) };

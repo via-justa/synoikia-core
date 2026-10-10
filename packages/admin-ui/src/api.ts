@@ -1,3 +1,5 @@
+import { QueryClient } from '@tanstack/vue-query';
+
 /** Reads the double-submit CSRF cookie set by the admin listener (design §6.1). */
 function csrfToken(): string | undefined {
   return document.cookie
@@ -69,3 +71,17 @@ export const qs = (params: Record<string, string | number | undefined | null>) =
   const s = p.toString();
   return s ? `?${s}` : '';
 };
+
+/** The portal's query defaults; the app and each test mount create their own client. */
+export function createQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 30_000,
+        refetchOnWindowFocus: false,
+        // A 4xx (403, 404, validation) won't change on retry.
+        retry: (failures, err) => failures < 1 && !(err instanceof ApiError && err.status >= 400 && err.status < 500),
+      },
+    },
+  });
+}

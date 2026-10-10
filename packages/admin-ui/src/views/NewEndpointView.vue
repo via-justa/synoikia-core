@@ -4,12 +4,12 @@ import { useRouter } from 'vue-router';
 import { errorText, http } from '../api';
 import PageHeader from '../components/PageHeader.vue';
 import SchemaForm from '../components/SchemaForm.vue';
+import { useRefreshOverview } from '../composables/useOverview';
 import { AUTH_MODE_LABELS } from '../format';
-import { useAppStore } from '../stores/app';
 import { AUTH_MODES } from '../types';
 import type { AuthMode, Instance, PluginRow } from '../types';
 
-const app = useAppStore();
+const refreshOverview = useRefreshOverview();
 const router = useRouter();
 const plugins = ref<PluginRow[]>([]);
 const pluginId = ref('');
@@ -48,7 +48,7 @@ async function create() {
       authMode: authMode.value || null,
       connection: { ...config.value, ...filled },
     });
-    await app.refresh();
+    await refreshOverview();
     await router.push(`/endpoints/${created.slug}/connection`);
   } catch (err) {
     error.value = errorText(err);

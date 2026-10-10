@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { errorText, http } from '../../api';
-import { useAppStore } from '../../stores/app';
+import { useOverviewQuery, useRefreshOverview } from '../../composables/useOverview';
 import type { RoleRow } from '../../types';
 
 /** Roles (design §6.4): Admin is built in; each other role has endpoints, maximum levels (set on an
  * endpoint's Access page) and three switches. */
-const app = useAppStore();
+const { data: overview } = useOverviewQuery();
+const refreshOverview = useRefreshOverview();
+const instances = computed(() => overview.value?.instances ?? []);
 const roles = ref<RoleRow[]>([]);
 const error = ref<string>();
 const newName = ref('');
@@ -32,7 +34,7 @@ const SWITCHES = [
 async function load() {
   try {
     roles.value = await http.get<RoleRow[]>('/api/roles');
-    if (!app.overview) await app.refresh();
+    if (!overview.value) await refreshOverview();
   } catch (err) {
     error.value = errorText(err);
   }
@@ -71,7 +73,7 @@ const toggleEndpoint = (r: RoleRow, id: string) =>
       instanceIds: r.instanceIds.includes(id) ? r.instanceIds.filter((x) => x !== id) : [...r.instanceIds, id],
     }),
   );
-const slugOf = (id: string) => app.instances.find((i) => i.id === id)?.slug ?? id;
+const slugOf = (id: string) => instances.value.find((i) => i.id === id)?.slug ?? id;
 </script>
 
 <template>
@@ -109,14 +111,14 @@ const slugOf = (id: string) => app.instances.find((i) => i.id === id)?.slug ?? i
         </div>
         <div class="small"><strong>Endpoints</strong></div>
         <div class="endpoints">
-          <label v-for="i in app.instances" :key="i.id" class="row small check">
+          <label v-for="i in instances" :key="i.id" class="row small check">
             <input type="checkbox" :checked="r.instanceIds.includes(i.id)" @change="toggleEndpoint(r, i.id)" />
             <span class="mono">/{{ i.slug }}</span>
             <RouterLink v-if="r.instanceIds.includes(i.id)" :to="`/endpoints/${i.slug}/access?role=${r.id}`">
               levels…
             </RouterLink>
           </label>
-          <span v-if="!app.instances.length" class="muted small">No endpoints yet.</span>
+          <span v-if="!instances.length" class="muted small">No endpoints yet.</span>
         </div>
         <p v-if="r.instanceIds.length" class="small muted">
           Has {{ r.instanceIds.map((id) => '/' + slugOf(id)).join(', ') }}.

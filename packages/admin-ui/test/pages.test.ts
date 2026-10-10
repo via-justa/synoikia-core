@@ -118,7 +118,7 @@ describe('Access page', () => {
 
   it('offers None / Read / Ask / Write per group and sets Ask without a dialog', async () => {
     const { calls } = api({ 'PATCH /api/instances/i1/groups/store': {} });
-    const { wrapper } = await mountAt('/endpoints/nas/access');
+    const { wrapper, body } = await mountAt('/endpoints/nas/access');
     const store = wrapper.get('[data-group="store"]');
     expect(store.findAll('[role="radio"]').map((b) => b.text())).toEqual(['None', 'Read', 'Ask', 'Write']);
     expect(wrapper.get('[data-group="app"]').text()).toContain('1 with their own level');
@@ -127,7 +127,7 @@ describe('Access page', () => {
       .find((b) => b.text() === 'Ask')!
       .trigger('click');
     await flushPromises();
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(body.find('[role="dialog"]').exists()).toBe(false);
     expect(calls.find((c) => c.method === 'PATCH')).toMatchObject({
       path: '/api/instances/i1/groups/store',
       body: { level: 'ask' },
@@ -136,14 +136,14 @@ describe('Access page', () => {
 
   it('sets a group to Write with no dialog and no acknowledgement list', async () => {
     const { calls } = api({ 'PATCH /api/instances/i1/groups/app': {} });
-    const { wrapper } = await mountAt('/endpoints/nas/access');
+    const { wrapper, body } = await mountAt('/endpoints/nas/access');
     await wrapper
       .get('[data-group="app"]')
       .findAll('[role="radio"]')
       .find((b) => b.text() === 'Write')!
       .trigger('click');
     await flushPromises();
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(body.find('[role="dialog"]').exists()).toBe(false);
     expect(calls.find((c) => c.method === 'PATCH')).toMatchObject({
       path: '/api/instances/i1/groups/app',
       body: { level: 'write' },
@@ -153,12 +153,12 @@ describe('Access page', () => {
   it('sets every group from the dropdown after one confirm, Write included', async () => {
     const { calls } = api({ 'POST /api/instances/i1/groups/bulk-level': [] });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
-    const { wrapper } = await mountAt('/endpoints/nas/access');
+    const { wrapper, body } = await mountAt('/endpoints/nas/access');
     const bulk = wrapper.get('select.bulk');
     expect(bulk.findAll('option').map((o) => o.text())).toEqual(['Set all groups…', 'None', 'Read', 'Ask', 'Write']);
     await bulk.setValue('write');
     await flushPromises();
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(body.find('[role="dialog"]').exists()).toBe(false);
     expect((bulk.element as HTMLSelectElement).value).toBe('');
     expect(calls.find((c) => c.path === '/api/instances/i1/groups/bulk-level')?.body).toEqual({ level: 'write' });
   });
@@ -344,6 +344,49 @@ describe('Endpoint settings', () => {
       settings: { formElicitationApprovals: 'writes' },
     });
   });
+
+  it('keeps the delete confirmation out of the settings form, so Enter there saves nothing', async () => {
+    const settings = {
+      approvalTimeoutMs: 900_000,
+      formElicitationApprovals: 'off',
+      executePerMinute: 30,
+      writesPerMinute: 10,
+      sandbox: { timeoutMs: 10_000, memoryMb: 64, maxResultBytes: 65_536 },
+      extraRedactKeys: [],
+      syncMaxAgeMs: 3_600_000,
+      memoryMb: 256,
+    };
+    const { calls } = fakeApi({
+      'GET /api/session': signedIn,
+      'GET /api/overview': { ...overview, instances: [{ ...instance, settings }] },
+      'DELETE /api/instances/i1': {},
+    });
+    const { wrapper, body, router } = await mountAt('/endpoints/nas/settings');
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Delete endpoint…')!
+      .trigger('click');
+    const confirm = body.get<HTMLInputElement>('[role="dialog"] input#del-confirm');
+    // Enter in a field submits the form that owns it; the dialog's field has none.
+    expect(confirm.element.form).toBeNull();
+    expect(document.activeElement).toBe(confirm.element);
+    await confirm.setValue('nas');
+    await confirm.trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+
+    await body
+      .get('[role="dialog"]')
+      .findAll('button')
+      .find((b) => b.text() === 'Delete')!
+      .trigger('click');
+    await flushPromises();
+    expect(calls.find((c) => c.method === 'DELETE')).toMatchObject({
+      path: '/api/instances/i1',
+      body: { confirm: 'nas' },
+    });
+    expect(router.currentRoute.value.path).toBe('/');
+  });
 });
 
 describe('Pre-approval rules', () => {
@@ -386,14 +429,14 @@ describe('Pre-approval rules', () => {
       ],
       'POST /api/instances/i1/rules': {},
     });
-    const { wrapper } = await mountAt('/endpoints/nas/rules');
+    const { wrapper, body } = await mountAt('/endpoints/nas/rules');
     await wrapper
       .findAll('button')
       .find((b) => b.text() === 'New rule')!
       .trigger('click');
-    await wrapper.get('[role="dialog"] select#r-op').setValue('op-widget.set');
+    await body.get('[role="dialog"] select#r-op').setValue('op-widget.set');
     await flushPromises();
-    const picker = wrapper.get('[role="dialog"] .picker');
+    const picker = body.get('[role="dialog"] .picker');
     // Only the scopes this field offers; the target field is named as the plugin names its targets.
     expect(picker.findAll('label').map((l) => l.text())).toEqual(['Zone', 'Widget']);
     // Scope values come from their registry kind; target suggestions are narrowed by the field's filter.
@@ -404,8 +447,8 @@ describe('Pre-approval rules', () => {
     const zone = picker.findAll('.field').find((f) => f.text().includes('Zone'))!;
     await zone.get('input').setValue('zone_a');
     await zone.get('input').trigger('keydown', { key: 'Enter' });
-    await wrapper.get('#r-reason').setValue('zone A widgets');
-    await wrapper
+    await body.get('#r-reason').setValue('zone A widgets');
+    await body
       .get('[role="dialog"]')
       .findAll('button')
       .find((b) => b.text() === 'Save rule')!
@@ -439,12 +482,12 @@ describe('Pre-approval rules', () => {
       ],
       'POST /api/instances/i1/rules': {},
     });
-    const { wrapper } = await mountAt('/endpoints/nas/rules');
+    const { wrapper, body } = await mountAt('/endpoints/nas/rules');
     await wrapper
       .findAll('button')
       .find((b) => b.text() === 'New rule')!
       .trigger('click');
-    const dialog = wrapper.get('[role="dialog"]');
+    const dialog = body.get('[role="dialog"]');
     await dialog.get('select#r-op').setValue('op-store.volume.create');
     await flushPromises();
     // Every setting explains itself; a tap opens the tip.
@@ -453,14 +496,14 @@ describe('Pre-approval rules', () => {
     await tip.get('button').trigger('click');
     expect(tip.classes()).toContain('open');
     expect(tip.get('[role="tooltip"]').text()).toContain('Ask');
-    await wrapper.get('[role="dialog"] input[placeholder="vol/media/"]').setValue('vol/media');
-    const compression = wrapper
+    await body.get('[role="dialog"] input[placeholder="vol/media/"]').setValue('vol/media');
+    const compression = body
       .get('[role="dialog"]')
       .findAll('.field')
       .find((f) => f.text().includes('Compression'))!;
     await compression.get('.any input').setValue(true);
-    await wrapper.get('#r-reason').setValue('media volumes');
-    await wrapper
+    await body.get('#r-reason').setValue('media volumes');
+    await body
       .get('[role="dialog"]')
       .findAll('button')
       .find((b) => b.text() === 'Save rule')!

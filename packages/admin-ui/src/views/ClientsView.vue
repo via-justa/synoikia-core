@@ -3,13 +3,13 @@ import { computed, onMounted, ref } from 'vue';
 import { errorText, http } from '../api';
 import ModalDialog from '../components/ModalDialog.vue';
 import PageHeader from '../components/PageHeader.vue';
+import { useInstances } from '../composables/useOverview';
 import { ago, formatDate } from '../format';
-import { useAppStore } from '../stores/app';
 import type { Ceiling, Grant, OAuthClient, PublicUser, Token } from '../types';
 
 const ACCESS_LABELS: Record<Ceiling, string> = { read: 'Read only', write: 'Read & write' };
 
-const app = useAppStore();
+const instances = useInstances();
 const tokens = ref<Token[]>([]);
 const clients = ref<OAuthClient[]>([]);
 const grants = ref<Grant[]>([]);
@@ -32,7 +32,6 @@ async function load() {
   }
 }
 onMounted(() => {
-  void app.refresh().catch(() => undefined);
   void load();
 });
 
@@ -41,7 +40,7 @@ const live = <T extends { revokedAt: string | null }>(rows: T[]) =>
 const scopeText = (scope: string[]) =>
   scope.includes('*')
     ? 'all endpoints'
-    : scope.map((id) => `/${app.instances.find((i) => i.id === id)?.slug ?? '?'}`).join(', ');
+    : scope.map((id) => `/${instances.value.find((i) => i.id === id)?.slug ?? '?'}`).join(', ');
 const resourcePath = (r: string) => {
   try {
     return new URL(r).pathname;
@@ -276,7 +275,7 @@ async function createClient() {
           ><input v-model="newToken.all" type="checkbox" /> All endpoints, including future ones</label
         >
         <template v-if="!newToken.all">
-          <label v-for="i in app.instances" :key="i.id" class="row small">
+          <label v-for="i in instances" :key="i.id" class="row small">
             <input v-model="newToken.scope" type="checkbox" :value="i.id" /> <span class="mono">/{{ i.slug }}</span>
           </label>
         </template>

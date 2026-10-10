@@ -103,7 +103,7 @@ export function createAppRouter(history: RouterHistory = createWebHistory()) {
   // A session that expires mid-use: back to the login page, keeping the current page.
   setUnauthenticatedHandler(() => {
     const session = useSessionStore();
-    session.$patch({ authenticated: false, user: undefined });
+    session.expire();
     const current = router.currentRoute.value;
     if (!current.meta.public) void router.replace({ path: '/login', query: { redirect: current.fullPath } });
   });

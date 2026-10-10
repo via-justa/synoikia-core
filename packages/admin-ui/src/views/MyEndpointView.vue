@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { errorText } from '../api';
+import { useMyEndpointsQuery } from '../composables/useMyEndpoints';
 import { ago } from '../format';
-import { useAppStore } from '../stores/app';
 import { useSessionStore } from '../stores/session';
 import AccessView from './instance/AccessView.vue';
 import RulesView from './instance/RulesView.vue';
@@ -11,20 +11,12 @@ import RulesView from './instance/RulesView.vue';
 /** One endpoint as a user sees it (design §6.4): their operations and levels, read-only unless the role
  * lets them set their own, and their own pre-approval rules where the role allows them. */
 const route = useRoute();
-const app = useAppStore();
 const session = useSessionStore();
 const id = computed(() => String(route.params.id));
-const endpoint = computed(() => app.mine.find((e) => e.id === id.value));
+const { endpoints: mine, error: loadError } = useMyEndpointsQuery();
+const endpoint = computed(() => mine.value.find((e) => e.id === id.value));
 const tab = ref<'access' | 'rules'>('access');
-const error = ref<string>();
-
-onMounted(async () => {
-  try {
-    if (!app.mine.length) await app.refreshMine();
-  } catch (err) {
-    error.value = errorText(err);
-  }
-});
+const error = computed(() => (loadError.value ? errorText(loadError.value) : undefined));
 </script>
 
 <template>

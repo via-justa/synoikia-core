@@ -34,6 +34,20 @@ export interface PublicUser {
   role: PublicRole;
 }
 
+/** `POST /api/users`. */
+export interface NewUser {
+  username: string;
+  password?: string;
+  roleId: string;
+}
+
+/** `PATCH /api/users/:id`. */
+export interface UserPatch {
+  roleId?: string;
+  disabled?: boolean;
+  password?: string;
+}
+
 export interface SessionInfo {
   authenticated: boolean;
   setupRequired: boolean;

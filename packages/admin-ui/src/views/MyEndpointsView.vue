@@ -1,23 +1,15 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, ref } from 'vue';
 import { errorText } from '../api';
 import PageHeader from '../components/PageHeader.vue';
+import { useMyEndpointsQuery } from '../composables/useMyEndpoints';
 import { AUTH_MODE_LABELS, ago } from '../format';
-import { useAppStore } from '../stores/app';
 import { useSessionStore } from '../stores/session';
 
 /** Every user's home (design §6.4): the endpoints their role has, and how to connect to them. */
-const app = useAppStore();
 const session = useSessionStore();
-const error = ref<string>();
-
-onMounted(async () => {
-  try {
-    await app.refreshMine();
-  } catch (err) {
-    error.value = errorText(err);
-  }
-});
+const { endpoints: mine, error: loadError } = useMyEndpointsQuery();
+const error = computed(() => (loadError.value ? errorText(loadError.value) : undefined));
 
 const copied = ref<string>();
 async function copy(url: string) {
@@ -42,11 +34,11 @@ async function copy(url: string) {
               <th>Endpoint</th>
               <th>URL</th>
               <th>Sign-in</th>
-              <th v-if="app.mine.some((e) => e.status)">Status</th>
+              <th v-if="mine.some((e) => e.status)">Status</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="ep in app.mine" :key="ep.id">
+            <tr v-for="ep in mine" :key="ep.id">
               <td>
                 <RouterLink :to="`/my/${ep.id}`" class="mono">/{{ ep.slug }}</RouterLink>
                 <div class="small muted">{{ ep.displayName }}</div>
@@ -66,7 +58,7 @@ async function copy(url: string) {
             </tr>
           </tbody>
         </table>
-        <div v-if="!app.mine.length" class="empty">Your role has no endpoints yet. Ask an administrator.</div>
+        <div v-if="!mine.length" class="empty">Your role has no endpoints yet. Ask an administrator.</div>
       </div>
     </div>
   </div>

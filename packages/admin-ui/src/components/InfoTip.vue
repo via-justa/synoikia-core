@@ -17,7 +17,7 @@ const open = ref(false);
       :aria-expanded="open"
       @click.prevent="open = !open"
       @blur="open = false"
-      @keydown.esc="open = false"
+      @keydown.esc.prevent="open = false"
     >
       ?
     </button>
