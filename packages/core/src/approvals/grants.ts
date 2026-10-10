@@ -18,6 +18,19 @@ export interface SessionGrant {
   expiresAt: Date;
 }
 
+/** "Approve for this session" lengths, capped by the endpoint's `sessionGrantMaxHours`. */
+export function grantOptions(now: Date, maxHours: number) {
+  if (maxHours <= 0) return [];
+  const opts = [1, 4]
+    .filter((h) => h <= maxHours)
+    .map((h) => ({ value: String(h), label: `${h} h`, until: new Date(now.getTime() + h * 3_600_000) }));
+  const midnight = new Date(now);
+  midnight.setHours(24, 0, 0, 0);
+  if (midnight.getTime() - now.getTime() <= maxHours * 3_600_000)
+    opts.push({ value: 'midnight', label: 'until midnight', until: midnight });
+  return opts;
+}
+
 export class SessionGrantService {
   private readonly grants = new Map<string, SessionGrant>();
 

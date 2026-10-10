@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { and, eq, gt, lt, ne } from 'drizzle-orm';
+import { writeAudit } from '../audit.js';
 import type { Db } from '../db/index.js';
 import { sessions, users } from '../db/schema.js';
 import { randomToken } from './tokens.js';
@@ -25,6 +26,9 @@ export interface ValidSession {
 const TOUCH_EVERY_MS = 60_000;
 
 export class SessionService {
+  /** When each MCP-port session last proved TOTP (design §5.3); in memory, so a restart asks again. */
+  private readonly totpProofs = new Map<string, number>();
+
   constructor(
     private readonly db: Db,
     private readonly pepper: Buffer,
@@ -119,6 +123,37 @@ export class SessionService {
       .delete(sessions)
       .where(and(eq(sessions.userId, userId), eq(sessions.kind, kind)))
       .run().changes;
+  }
+
+  /** The user signs out every approval browser at once (Profile page, design §5.3). */
+  revokeApprovalBrowsers(userId: string): number {
+    return this.db.transaction((tx) => {
+      const count = tx
+        .delete(sessions)
+        .where(and(eq(sessions.userId, userId), eq(sessions.kind, 'approval_ui')))
+        .run().changes;
+      writeAudit(tx, {
+        kind: 'auth',
+        decision: 'approval_sessions_revoked',
+        actorKind: 'user',
+        actorId: userId,
+        detail: { count },
+      });
+      return count;
+    });
+  }
+
+  /** Proofs older than `maxAgeMs` are dropped on the way. */
+  recordTotpProof(idHash: string, maxAgeMs: number) {
+    const now = this.now().getTime();
+    for (const [k, at] of this.totpProofs) if (now - at > maxAgeMs) this.totpProofs.delete(k);
+    this.totpProofs.set(idHash, now);
+  }
+
+  /** Milliseconds since this session last proved TOTP, or Infinity if it never did. */
+  sinceTotpProof(idHash: string): number {
+    const at = this.totpProofs.get(idHash);
+    return at === undefined ? Infinity : this.now().getTime() - at;
   }
 
   purgeExpired(): number {

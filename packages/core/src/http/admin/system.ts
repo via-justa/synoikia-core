@@ -8,7 +8,6 @@ import { CORE_EVENT_NAMES } from '../../events.js';
 import { getSettings, isSettingsSection, updateSettings } from '../../settings.js';
 import { CORE_VERSION } from '../../version.js';
 import { readJson } from '../common.js';
-import { assertSsoRemains } from './auth.js';
 import type { AdminEnv } from './auth.js';
 
 /** Global Admin API routes (design §8.4): overview, plugins, audit, tokens, users, settings, events. */
@@ -172,7 +171,7 @@ export function registerSystemRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     if (body.disabled !== undefined) {
       if (id === c.get('user').id && body.disabled)
         throw new ConflictError('self_disable', 'You cannot disable yourself');
-      if (body.disabled) assertSsoRemains(ctx, { losingUser: id });
+      if (body.disabled) ctx.users.assertSsoRemains({ losingUser: id });
       ctx.users.setDisabled(id, body.disabled, actor(c));
       if (body.disabled) {
         // Everything the user could still reach MCP with goes too; re-enabling revives none of it.
@@ -211,7 +210,7 @@ export function registerSystemRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
 
   app.put('/api/settings/oidc', async (c) => {
     const body = await readJson(c, z.record(z.string(), z.unknown()));
-    if (body.enabled === false) assertSsoRemains(ctx, { oidcOff: true });
+    if (body.enabled === false) ctx.users.assertSsoRemains({ oidcOff: true });
     return c.json(ctx.oidc.updateSettings(body, actor(c)));
   });
 

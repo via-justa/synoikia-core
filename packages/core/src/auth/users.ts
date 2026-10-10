@@ -307,8 +307,17 @@ export class UserService {
     });
   }
 
-  markLogin(userId: string) {
-    this.db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId)).run();
+  /** A successful sign-in on any surface; `detail` says how and where. */
+  recordLogin(userId: string, detail: Record<string, unknown>) {
+    this.db.transaction((tx) => {
+      tx.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId)).run();
+      writeAudit(tx, { kind: 'auth', decision: 'login', actorKind: 'user', actorId: userId, detail });
+    });
+  }
+
+  /** Local-password users must have TOTP when the admin requires it (OIDC-only users rely on the IdP). */
+  mustEnrollTotp(u: UserRow): boolean {
+    return getSettings(this.db, 'security').requireTotp && !!u.passwordHash && !u.totpEnabled;
   }
 
   // ── TOTP ─────────────────────────────────────────────────────────────────────────────────────────
@@ -410,6 +419,16 @@ export class UserService {
     return null;
   }
 
+  /** Turning TOTP off needs a current code, so a hijacked session alone can't remove it. False on a wrong code. */
+  disableOwnTotp(u: UserRow, code: string): boolean {
+    if (getSettings(this.db, 'security').requireTotp && u.passwordHash) {
+      throw new ConflictError('totp_required', 'Two-factor authentication is required on this server');
+    }
+    if (!this.verifySecondFactor(u.id, code)) return false;
+    this.resetTotp(u.id);
+    return true;
+  }
+
   // ── OIDC links ───────────────────────────────────────────────────────────────────────────────────
 
   linkOidc(userId: string, issuer: string, subject: string) {
@@ -435,6 +454,23 @@ export class UserService {
     });
   }
 
+  unlinkOwnOidc(u: UserRow) {
+    if (!u.passwordHash) throw new ConflictError('last_login_method', 'Set a password before unlinking single sign-on');
+    this.assertSsoRemains({ losingUser: u.id });
+    this.unlinkOidc(u.id);
+  }
+
+  /** While local login is off, refuse any change that would leave no enabled user linked to SSO (§6.1). */
+  assertSsoRemains(change: { oidcOff?: boolean; losingUser?: string }) {
+    if (!getSettings(this.db, 'security').disableLocalLogin) return;
+    if (change.oidcOff || !this.hasOidcLinkedUser(change.losingUser)) {
+      throw new ConflictError(
+        'local_login_disabled',
+        'Local login is disabled, so this would lock everyone out. Re-enable local login first.',
+      );
+    }
+  }
+
   hasOidcLinkedUser(except?: string): boolean {
     return this.db
       .select()
@@ -447,9 +483,12 @@ export class UserService {
 
   /** An endpoint of the user's role; any other answers 404, as if it didn't exist. */
   ownEndpoint(u: UserRow, instanceId: string): string {
-    if (!roleHasInstance(this.db, u.roleId, instanceId))
-      throw new NotFoundError('instance_not_found', 'No such endpoint');
+    if (!this.hasEndpoint(u, instanceId)) throw new NotFoundError('instance_not_found', 'No such endpoint');
     return instanceId;
+  }
+
+  hasEndpoint(u: UserRow, instanceId: string): boolean {
+    return roleHasInstance(this.db, u.roleId, instanceId);
   }
 
   assertAllowed(u: UserRow, cap: 'canSetOwnLevels' | 'canManageOwnRules') {
