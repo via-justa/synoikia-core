@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, useId } from 'vue';
+import { rovingKeydown } from '../a11y';
 import { ApiError, errorText } from '../api';
 import ModalDialog from '../components/ModalDialog.vue';
 import PageHeader from '../components/PageHeader.vue';
@@ -37,10 +38,14 @@ const installBusy = installPlugin.isPending;
 const installError = installPlugin.errorText;
 const confirmError = confirmRepoKey.errorText;
 const tab = ref<'installed' | 'available' | 'repos'>('installed');
+const uid = useId();
+const tabId = (t: string) => `${uid}-tab-${t}`;
+const rowId = (a: AvailablePlugin) => `${uid}-a-${a.repoId}-${a.pluginId}`;
 const notice = ref<string>();
 
 // The three lists show together, once all have loaded.
 const ready = computed(() => !!pluginsQuery.data.value && !!availableQuery.data.value && !!reposQuery.data.value);
+const loading = computed(() => [pluginsQuery, availableQuery, reposQuery].some((q) => q.isPending.value));
 const plugins = computed(() => (ready.value ? (pluginsQuery.data.value ?? []) : []));
 const available = computed(() => (ready.value ? (availableQuery.data.value ?? []) : []));
 const repos = computed(() => (ready.value ? (reposQuery.data.value ?? []) : []));
@@ -169,14 +174,41 @@ const BLOCKED: Record<string, string> = {
       <button class="btn" type="button" @click="rescan">Rescan</button>
     </PageHeader>
 
-    <nav class="tabs">
-      <button type="button" :class="{ active: tab === 'installed' }" @click="tab = 'installed'">
+    <nav class="tabs" role="tablist" aria-label="Plugin lists" @keydown="rovingKeydown">
+      <button
+        :id="tabId('installed')"
+        type="button"
+        role="tab"
+        :aria-selected="tab === 'installed'"
+        :aria-controls="tab === 'installed' ? `${uid}-panel` : undefined"
+        :tabindex="tab === 'installed' ? 0 : -1"
+        :class="{ active: tab === 'installed' }"
+        @click="tab = 'installed'"
+      >
         Installed ({{ plugins.length }})
       </button>
-      <button type="button" :class="{ active: tab === 'available' }" @click="tab = 'available'">
+      <button
+        :id="tabId('available')"
+        type="button"
+        role="tab"
+        :aria-selected="tab === 'available'"
+        :aria-controls="tab === 'available' ? `${uid}-panel` : undefined"
+        :tabindex="tab === 'available' ? 0 : -1"
+        :class="{ active: tab === 'available' }"
+        @click="tab = 'available'"
+      >
         Available ({{ available.length }})
       </button>
-      <button type="button" :class="{ active: tab === 'repos' }" @click="tab = 'repos'">
+      <button
+        :id="tabId('repos')"
+        type="button"
+        role="tab"
+        :aria-selected="tab === 'repos'"
+        :aria-controls="tab === 'repos' ? `${uid}-panel` : undefined"
+        :tabindex="tab === 'repos' ? 0 : -1"
+        :class="{ active: tab === 'repos' }"
+        @click="tab = 'repos'"
+      >
         Repositories ({{ repos.length }})
       </button>
     </nav>
@@ -184,8 +216,14 @@ const BLOCKED: Record<string, string> = {
     <p v-if="error" class="alert error" role="alert">{{ error }}</p>
     <p v-if="notice" class="alert ok" role="status">{{ notice }}</p>
 
-    <div v-if="tab === 'installed'" class="table-card">
-      <table class="table">
+    <div
+      v-if="tab === 'installed'"
+      :id="`${uid}-panel`"
+      class="table-card"
+      role="tabpanel"
+      :aria-labelledby="tabId('installed')"
+    >
+      <table class="table" :aria-labelledby="tabId('installed')" :aria-busy="loading">
         <thead>
           <tr>
             <th>Plugin</th>
@@ -193,13 +231,13 @@ const BLOCKED: Record<string, string> = {
             <th>Signature</th>
             <th>Status</th>
             <th>Endpoints</th>
-            <th />
+            <th><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="p in plugins" :key="p.id">
             <td>
-              <strong>{{ p.manifest.name ?? p.pluginId }}</strong>
+              <strong :id="`${uid}-p-${p.id}`">{{ p.manifest.name ?? p.pluginId }}</strong>
               <span class="mono small muted">{{ p.pluginId }}</span>
               <div v-if="p.manifest.description" class="small muted">{{ p.manifest.description }}</div>
               <div v-if="p.manifest.network?.hosts?.length" class="small muted">
@@ -217,33 +255,52 @@ const BLOCKED: Record<string, string> = {
             </td>
             <td>{{ p.instances }}</td>
             <td class="right">
-              <button class="btn btn-sm" type="button" :disabled="p.status !== 'ok' && !p.enabled" @click="toggle(p)">
+              <button
+                class="btn btn-sm"
+                type="button"
+                :disabled="p.status !== 'ok' && !p.enabled"
+                :aria-describedby="`${uid}-p-${p.id}`"
+                @click="toggle(p)"
+              >
                 {{ p.enabled ? 'Disable' : 'Enable' }}
               </button>
-              <button class="btn btn-sm btn-danger" type="button" :disabled="p.instances > 0" @click="uninstall(p)">
+              <button
+                class="btn btn-sm btn-danger"
+                type="button"
+                :disabled="p.instances > 0"
+                :aria-describedby="`${uid}-p-${p.id}`"
+                @click="uninstall(p)"
+              >
                 Uninstall
               </button>
             </td>
           </tr>
         </tbody>
       </table>
+      <p v-if="loading" class="sr-only" role="status">Loading…</p>
     </div>
 
-    <div v-else-if="tab === 'available'" class="table-card">
-      <table class="table">
+    <div
+      v-else-if="tab === 'available'"
+      :id="`${uid}-panel`"
+      class="table-card"
+      role="tabpanel"
+      :aria-labelledby="tabId('available')"
+    >
+      <table class="table" :aria-labelledby="tabId('available')" :aria-busy="loading">
         <thead>
           <tr>
             <th>Plugin</th>
             <th>Repository</th>
             <th>Latest</th>
             <th>Installed</th>
-            <th />
+            <th><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="a in available" :key="`${a.repoId}:${a.pluginId}`">
             <td>
-              <strong>{{ a.name }}</strong> <span class="mono small muted">{{ a.pluginId }}</span>
+              <strong :id="rowId(a)">{{ a.name }}</strong> <span class="mono small muted">{{ a.pluginId }}</span>
               <div v-if="a.description" class="small muted">{{ a.description }}</div>
             </td>
             <td>
@@ -257,7 +314,14 @@ const BLOCKED: Record<string, string> = {
             </td>
             <td class="right">
               <span v-if="a.blocked" class="pill warn">{{ BLOCKED[a.blocked] ?? a.blocked }}</span>
-              <button v-else class="btn btn-sm btn-primary" type="button" :disabled="!a.latest" @click="openInstall(a)">
+              <button
+                v-else
+                class="btn btn-sm btn-primary"
+                type="button"
+                :disabled="!a.latest"
+                :aria-describedby="rowId(a)"
+                @click="openInstall(a)"
+              >
                 {{
                   !a.installed
                     ? 'Install…'
@@ -275,7 +339,7 @@ const BLOCKED: Record<string, string> = {
       <div v-if="!available.length" class="empty">Add a repository to see plugins you can install.</div>
     </div>
 
-    <div v-else class="stack">
+    <div v-else :id="`${uid}-panel`" class="stack" role="tabpanel" :aria-labelledby="tabId('repos')">
       <div class="row">
         <span class="grow" />
         <button class="btn btn-primary" type="button" @click="adding = { url: '', signingMode: 'signed', pasted: '' }">
@@ -283,20 +347,20 @@ const BLOCKED: Record<string, string> = {
         </button>
       </div>
       <div class="table-card">
-        <table class="table">
+        <table class="table" :aria-labelledby="tabId('repos')" :aria-busy="loading">
           <thead>
             <tr>
               <th>Repository</th>
               <th>Signing</th>
               <th>Plugins</th>
               <th>Fetched</th>
-              <th />
+              <th><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="r in repos" :key="r.id">
               <td>
-                <strong>{{ r.name ?? r.url }}</strong>
+                <strong :id="`${uid}-r-${r.id}`">{{ r.name ?? r.url }}</strong>
                 <div class="small mono muted">{{ r.url }}</div>
                 <div v-if="r.lastFetchError" class="small err">{{ r.lastFetchError }}</div>
               </td>
@@ -315,14 +379,23 @@ const BLOCKED: Record<string, string> = {
                   v-if="r.keyStatus === 'key_changed'"
                   class="btn btn-sm btn-danger"
                   type="button"
+                  :aria-describedby="`${uid}-r-${r.id}`"
                   @click="openConfirm(r)"
                 >
                   Review key…
                 </button>
-                <button class="btn btn-sm" type="button" @click="act(refreshRepo, r.id, 'Refreshed.')">Refresh</button>
+                <button
+                  class="btn btn-sm"
+                  type="button"
+                  :aria-describedby="`${uid}-r-${r.id}`"
+                  @click="act(refreshRepo, r.id, 'Refreshed.')"
+                >
+                  Refresh
+                </button>
                 <button
                   class="btn btn-sm btn-danger"
                   type="button"
+                  :aria-describedby="`${uid}-r-${r.id}`"
                   @click="act(removeRepo, r.id, 'Repository removed.')"
                 >
                   Remove
@@ -366,7 +439,7 @@ const BLOCKED: Record<string, string> = {
       <p v-else class="small">
         The download is checked against the index checksum and the repository's pinned signing key.
       </p>
-      <p v-if="installError" class="alert error">{{ installError }}</p>
+      <p v-if="installError" class="alert error" role="alert">{{ installError }}</p>
       <template #footer>
         <button class="btn" type="button" @click="installing = undefined">Cancel</button>
         <button
@@ -414,7 +487,7 @@ const BLOCKED: Record<string, string> = {
           <textarea id="r-key" v-model="adding.pasted" rows="3" placeholder="RW…" />
         </div>
       </template>
-      <p v-if="adding.note" class="alert error">{{ adding.note }}</p>
+      <p v-if="adding.note" class="alert error" role="alert">{{ adding.note }}</p>
       <template #footer>
         <button class="btn" type="button" @click="adding = undefined">Cancel</button>
         <button
@@ -448,7 +521,7 @@ const BLOCKED: Record<string, string> = {
         <label for="c-key">Publisher's new public key</label>
         <textarea id="c-key" v-model="confirming.pasted" rows="3" placeholder="RW…" />
       </div>
-      <p v-if="confirmError" class="alert error">{{ confirmError }}</p>
+      <p v-if="confirmError" class="alert error" role="alert">{{ confirmError }}</p>
       <template #footer>
         <button class="btn" type="button" @click="confirming = undefined">Cancel</button>
         <button class="btn btn-danger-solid" type="button" :disabled="!confirming.pasted.trim()" @click="confirmKey">

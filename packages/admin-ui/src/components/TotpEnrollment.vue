@@ -20,7 +20,7 @@ const confirm = () => confirmTotp.mutate(code.value.trim(), { onSettled: () => (
 <template>
   <div class="stack">
     <template v-if="recovery">
-      <div class="alert ok">Two-factor authentication is on.</div>
+      <div class="alert ok" role="status">Two-factor authentication is on.</div>
       <p class="small">
         Save these recovery codes somewhere safe. Each works once if you lose your authenticator. They are not shown
         again.

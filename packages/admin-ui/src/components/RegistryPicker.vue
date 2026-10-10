@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref, useId, watch } from 'vue';
 import { useRegistryKinds, useRegistrySearch } from '../composables/useRegistry';
 import type { TargetFieldOptions, TargetsDecl } from '../types';
 import ChipsInput from './ChipsInput.vue';
@@ -13,6 +13,7 @@ const model = defineModel<{ ids: string[]; scopes: Record<string, string[]> }>({
 const scopes = computed(() =>
   props.targets.scopes.filter((s) => !props.options?.scopes || props.options.scopes.includes(s.key)),
 );
+const uid = useId();
 const idQuery = ref('');
 const searchText = ref('');
 const filter = computed(() =>
@@ -49,10 +50,11 @@ function setScope(key: string, values: string[]) {
 </script>
 
 <template>
-  <div class="picker">
+  <div class="picker" role="group" :aria-describedby="`${uid}-help`">
     <div v-for="s in scopes" :key="s.key" class="field">
-      <label>{{ s.label }}</label>
+      <label :id="`${uid}-${s.key}`">{{ s.label }}</label>
       <ChipsInput
+        :aria-labelledby="`${uid}-${s.key}`"
         :model-value="model.scopes[s.key] ?? []"
         :suggestions="scopeOptions[s.key]"
         :placeholder="`Add a ${s.label.toLowerCase()}`"
@@ -60,7 +62,7 @@ function setScope(key: string, values: string[]) {
       />
     </div>
     <div class="field">
-      <label>{{ targets.label }}</label>
+      <label :id="`${uid}-ids`">{{ targets.label }}</label>
       <input
         v-if="targets.registryKind"
         v-model="idQuery"
@@ -70,11 +72,12 @@ function setScope(key: string, values: string[]) {
       />
       <ChipsInput
         v-model="model.ids"
+        :aria-labelledby="`${uid}-ids`"
         :suggestions="targets.registryKind ? idOptions : undefined"
         :placeholder="`Add a ${targets.label.toLowerCase()}`"
       />
     </div>
-    <p class="help">Every resolved target must fall inside all the filters you set.</p>
+    <p :id="`${uid}-help`" class="help">Every resolved target must fall inside all the filters you set.</p>
   </div>
 </template>
 

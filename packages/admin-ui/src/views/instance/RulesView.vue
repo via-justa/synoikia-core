@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref, useId, watch } from 'vue';
 import { errorText } from '../../api';
 import ChipsInput from '../../components/ChipsInput.vue';
 import InfoTip from '../../components/InfoTip.vue';
@@ -47,6 +47,7 @@ const saveRule = useSaveRule(base);
 const toggleRule = useToggleRule(base);
 const deleteRule = useDeleteRule(base);
 const { confirm } = useConfirm();
+const uid = useId();
 
 // Shown only once every call it needs has answered, as one load.
 const loaded = computed(() => {
@@ -76,6 +77,9 @@ const loaded = computed(() => {
   return { rules, ops, profiles: manifest?.matchProfiles ?? {}, targets: manifest?.targets };
 });
 const rules = computed(() => loaded.value?.rules ?? []);
+const loading = computed(() =>
+  [rulesQuery, viewQuery, formQuery, opsQuery, pluginsQuery].some((q) => q.isLoading.value),
+);
 const ops = computed(() => loaded.value?.ops ?? []);
 const profiles = computed<Record<string, MatchField[]>>(() => loaded.value?.profiles ?? {});
 const targets = computed<TargetsDecl | undefined>(() => loaded.value?.targets);
@@ -328,20 +332,20 @@ const TIPS = {
     <p v-if="error" class="alert error" role="alert">{{ error }}</p>
 
     <div class="table-card">
-      <table class="table">
+      <table class="table" aria-label="Pre-approval rules" :aria-busy="loading">
         <thead>
           <tr>
             <th>Operation</th>
             <th>When</th>
             <th>Limits</th>
             <th>Reason</th>
-            <th />
+            <th><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="r in rules" :key="r.id" :class="{ off: !r.enabled }">
             <td>
-              <span class="mono">{{ r.operation.key }}</span>
+              <span :id="`${uid}-${r.id}`" class="mono">{{ r.operation.key }}</span>
               <span v-if="own && !r.editable" class="pill info">Admin</span>
               <span v-else-if="!own && r.owner" class="pill info">{{ r.owner.username }}</span>
               <div v-if="r.inert" class="pill warn">inert: {{ reasonText(r.inert) }}</div>
@@ -364,11 +368,20 @@ const TIPS = {
             <td class="small">{{ r.reason }}</td>
             <td v-if="own && !r.editable" class="right small muted">Set by an admin</td>
             <td v-else class="right">
-              <button class="btn btn-sm" type="button" @click="toggle(r)">
+              <button class="btn btn-sm" type="button" :aria-describedby="`${uid}-${r.id}`" @click="toggle(r)">
                 {{ r.enabled ? 'Disable' : 'Enable' }}
               </button>
-              <button class="btn btn-sm" type="button" @click="edit(r)">Edit</button>
-              <button class="btn btn-sm btn-danger" type="button" @click="remove(r)">Delete</button>
+              <button class="btn btn-sm" type="button" :aria-describedby="`${uid}-${r.id}`" @click="edit(r)">
+                Edit
+              </button>
+              <button
+                class="btn btn-sm btn-danger"
+                type="button"
+                :aria-describedby="`${uid}-${r.id}`"
+                @click="remove(r)"
+              >
+                Delete
+              </button>
             </td>
           </tr>
         </tbody>
@@ -386,12 +399,12 @@ const TIPS = {
           placeholder="Filter operations…"
           aria-label="Filter operations"
         />
-        <select id="r-op" v-model="draft.operationId" :disabled="!!draft.id" size="6">
+        <select id="r-op" v-model="draft.operationId" :disabled="!!draft.id" size="6" aria-describedby="r-op-help">
           <option v-for="o in pickable" :key="o.id" :value="o.id">
             {{ o.key }}{{ o.reachable ? '' : ` — ${reasonText(o.reason ?? '')}` }}
           </option>
         </select>
-        <p class="help">Only non-locked writes can be pre-approved.</p>
+        <p id="r-op-help" class="help">Only non-locked writes can be pre-approved.</p>
       </div>
 
       <template v-if="draftOp">
@@ -400,9 +413,9 @@ const TIPS = {
           Strict: a call matches only if every parameter it sends is covered here. Leave a field empty to require that
           the parameter is absent, or tick “any value”.
         </p>
-        <div v-for="f in fields" :key="f.field" class="field">
+        <div v-for="(f, i) in fields" :key="f.field" class="field">
           <div class="field-head">
-            <label
+            <label :id="`${uid}-f${i}`"
               >{{ f.label }} <span class="mono muted small">{{ f.field }}{{ f.op ? ` · ${f.op}` : '' }}</span></label
             >
             <label v-if="f.field !== '$targets'" class="row small any"
@@ -416,6 +429,7 @@ const TIPS = {
             :base="base"
             :targets="targets"
             :options="targetOptions(f)"
+            :aria-labelledby="`${uid}-f${i}`"
           />
           <template v-else-if="valueOf(f).any" />
           <ChipsInput
@@ -423,13 +437,31 @@ const TIPS = {
             v-model="valueOf(f).list"
             :suggestions="f.optionsSource ? options[f.optionsSource] : undefined"
             placeholder="Add a value"
+            :aria-labelledby="`${uid}-f${i}`"
           />
           <div v-else-if="f.op === 'range'" class="row">
-            <input v-model="valueOf(f).min" type="number" placeholder="min" aria-label="Minimum" class="grow" />
-            <input v-model="valueOf(f).max" type="number" placeholder="max" aria-label="Maximum" class="grow" />
+            <input
+              :id="`${uid}-f${i}-min`"
+              v-model="valueOf(f).min"
+              type="number"
+              placeholder="min"
+              aria-label="Minimum"
+              :aria-labelledby="`${uid}-f${i} ${uid}-f${i}-min`"
+              class="grow"
+            />
+            <input
+              :id="`${uid}-f${i}-max`"
+              v-model="valueOf(f).max"
+              type="number"
+              placeholder="max"
+              aria-label="Maximum"
+              :aria-labelledby="`${uid}-f${i} ${uid}-f${i}-max`"
+              class="grow"
+            />
           </div>
           <select
             v-else-if="f.op === 'bool'"
+            :aria-labelledby="`${uid}-f${i}`"
             :value="valueOf(f).bool === null ? '' : String(valueOf(f).bool)"
             @change="
               valueOf(f).bool =
@@ -442,13 +474,18 @@ const TIPS = {
             <option value="true">true</option>
             <option value="false">false</option>
           </select>
-          <select v-else-if="f.optionsSource && options[f.optionsSource]?.length" v-model="valueOf(f).text">
+          <select
+            v-else-if="f.optionsSource && options[f.optionsSource]?.length"
+            v-model="valueOf(f).text"
+            :aria-labelledby="`${uid}-f${i}`"
+          >
             <option value="">—</option>
             <option v-for="o in options[f.optionsSource]" :key="o.value" :value="o.value">{{ o.label }}</option>
           </select>
           <input
             v-else
             v-model="valueOf(f).text"
+            :aria-labelledby="`${uid}-f${i}`"
             :type="f.widget === 'number' ? 'number' : 'text'"
             :placeholder="f.op === 'prefix' ? 'vol/media/' : ''"
           />
@@ -456,10 +493,10 @@ const TIPS = {
       </template>
 
       <div v-if="draftOp" class="field">
-        <label
+        <label :id="`${uid}-extra`"
           >Other parameters accepted with any value <InfoTip :text="TIPS.extraAny" label="About other parameters"
         /></label>
-        <ChipsInput v-model="draft.extraAny" placeholder="e.g. /quota" />
+        <ChipsInput v-model="draft.extraAny" placeholder="e.g. /quota" :aria-labelledby="`${uid}-extra`" />
         <label class="row small"
           ><input v-model="draft.anyParams" type="checkbox" /> Accept any other parameters (not recommended)
           <InfoTip :text="TIPS.anyParams" label="About accepting any parameters"

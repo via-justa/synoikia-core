@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, useId } from 'vue';
 import type { ConnectionSchema, JsonSchemaProp, UiHint } from '../types';
 
 /** Renders a plugin's connection schema (design §8.3). Secrets are never shown, only set/replace/clear;
@@ -11,6 +11,7 @@ const props = defineProps<{
 }>();
 const config = defineModel<Record<string, unknown>>('config', { required: true });
 const secretPatch = defineModel<Record<string, string | null>>('secretPatch', { default: () => ({}) });
+const uid = useId();
 
 interface FieldView {
   name: string;
@@ -49,6 +50,9 @@ const fields = computed<FieldView[]>(() =>
     };
   }),
 );
+
+const helpOf = (f: FieldView) => f.hint.help ?? f.prop.description;
+const helpId = (f: FieldView) => (helpOf(f) ? `${uid}-${f.name}-help` : undefined);
 
 const visible = (f: FieldView) => {
   const when = f.hint.showWhen;
@@ -96,6 +100,7 @@ function setSecret(name: string, value: string) {
           <label>
             <input
               type="checkbox"
+              :aria-describedby="helpId(f)"
               :checked="Boolean(config[f.name] ?? f.prop.default)"
               @change="set(f.name, ($event.target as HTMLInputElement).checked)"
             />
@@ -103,15 +108,29 @@ function setSecret(name: string, value: string) {
           </label>
         </template>
         <template v-else>
-          <label :for="`f-${f.name}`">{{ f.label }}<span v-if="f.required" class="req"> *</span></label>
+          <label :id="`${uid}-${f.name}`" :for="`f-${f.name}`"
+            >{{ f.label }}<span v-if="f.required" class="req"> *</span></label
+          >
 
           <template v-if="f.secret">
-            <div v-if="secretState(f.name) === 'set'" class="row">
+            <div
+              v-if="secretState(f.name) === 'set'"
+              class="row"
+              role="group"
+              :aria-labelledby="`${uid}-${f.name}`"
+              :aria-describedby="helpId(f)"
+            >
               <span class="pill ok">Set{{ secrets?.[f.name]?.hint ? ` · ${secrets[f.name]!.hint}` : '' }}</span>
               <button type="button" class="btn btn-sm" @click="editSecret(f.name)">Replace</button>
               <button type="button" class="btn btn-sm btn-danger" @click="clearSecret(f.name)">Clear</button>
             </div>
-            <div v-else-if="secretState(f.name) === 'clearing'" class="row">
+            <div
+              v-else-if="secretState(f.name) === 'clearing'"
+              class="row"
+              role="group"
+              :aria-labelledby="`${uid}-${f.name}`"
+              :aria-describedby="helpId(f)"
+            >
               <span class="pill warn">Will be cleared</span>
               <button type="button" class="btn btn-sm" @click="keepSecret(f.name)">Undo</button>
             </div>
@@ -121,6 +140,7 @@ function setSecret(name: string, value: string) {
                 class="grow"
                 type="password"
                 autocomplete="new-password"
+                :aria-describedby="helpId(f)"
                 :placeholder="f.hint.placeholder ?? (secretState(f.name) === 'editing' ? 'New value' : 'Not set')"
                 :value="secretPatch[f.name] ?? ''"
                 @input="setSecret(f.name, ($event.target as HTMLInputElement).value)"
@@ -134,6 +154,7 @@ function setSecret(name: string, value: string) {
           <select
             v-else-if="f.widget === 'select'"
             :id="`f-${f.name}`"
+            :aria-describedby="helpId(f)"
             :value="config[f.name] ?? f.prop.default ?? ''"
             @change="set(f.name, ($event.target as HTMLSelectElement).value)"
           >
@@ -141,7 +162,13 @@ function setSecret(name: string, value: string) {
             <option v-for="opt in f.prop.enum ?? []" :key="String(opt)" :value="opt">{{ opt }}</option>
           </select>
 
-          <div v-else-if="f.widget === 'multiselect'" class="row">
+          <div
+            v-else-if="f.widget === 'multiselect'"
+            class="row"
+            role="group"
+            :aria-labelledby="`${uid}-${f.name}`"
+            :aria-describedby="helpId(f)"
+          >
             <label v-for="opt in f.prop.items?.enum ?? []" :key="String(opt)" class="multi">
               <input
                 type="checkbox"
@@ -156,6 +183,7 @@ function setSecret(name: string, value: string) {
             v-else-if="f.widget === 'number'"
             :id="`f-${f.name}`"
             type="number"
+            :aria-describedby="helpId(f)"
             :min="f.prop.minimum"
             :max="f.prop.maximum"
             :placeholder="f.hint.placeholder ?? (f.prop.default !== undefined ? String(f.prop.default) : '')"
@@ -167,12 +195,13 @@ function setSecret(name: string, value: string) {
             v-else
             :id="`f-${f.name}`"
             :type="f.widget === 'url' ? 'url' : 'text'"
+            :aria-describedby="helpId(f)"
             :placeholder="f.hint.placeholder ?? (f.prop.default !== undefined ? String(f.prop.default) : '')"
             :value="config[f.name] ?? ''"
             @input="set(f.name, ($event.target as HTMLInputElement).value || undefined)"
           />
         </template>
-        <p v-if="f.hint.help ?? f.prop.description" class="help">{{ f.hint.help ?? f.prop.description }}</p>
+        <p v-if="helpOf(f)" :id="helpId(f)" class="help">{{ helpOf(f) }}</p>
       </div>
     </template>
   </div>

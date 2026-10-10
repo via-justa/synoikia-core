@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { messageRole } from '../../a11y';
+import { computed, ref, useId } from 'vue';
 import { useRouter } from 'vue-router';
 import { errorText } from '../../api';
 import ChipsInput from '../../components/ChipsInput.vue';
@@ -42,6 +43,7 @@ const form = ref({
   memoryMb: s.memoryMb,
 });
 const message = ref<{ kind: 'ok' | 'error'; text: string }>();
+const uid = useId();
 
 const grants = computed(() => grantsQuery.data.value ?? []);
 const grantError = computed(
@@ -106,8 +108,12 @@ async function remove() {
         </div>
         <div class="field">
           <label for="s-slug">Path</label>
-          <input id="s-slug" v-model.trim="form.slug" />
-          <p v-if="form.slug !== instance.slug" class="help warn">
+          <input
+            id="s-slug"
+            v-model.trim="form.slug"
+            :aria-describedby="form.slug !== instance.slug ? 's-slug-help' : undefined"
+          />
+          <p v-if="form.slug !== instance.slug" id="s-slug-help" class="help warn">
             Clients using /{{ instance.slug }} will stop working.
           </p>
         </div>
@@ -148,8 +154,15 @@ async function remove() {
       <div class="form-grid">
         <div class="field">
           <label for="s-grant">Longest “Approve for this session” (hours)</label>
-          <input id="s-grant" v-model.number="form.sessionGrantMaxHours" type="number" min="0" max="24" />
-          <p class="help">
+          <input
+            id="s-grant"
+            v-model.number="form.sessionGrantMaxHours"
+            type="number"
+            min="0"
+            max="24"
+            aria-describedby="s-grant-help"
+          />
+          <p id="s-grant-help" class="help">
             0 turns it off. While a session approval is active, every Ask operation of that client on this endpoint runs
             without asking, except locked ones and ones that need a typed confirmation.
           </p>
@@ -157,37 +170,50 @@ async function remove() {
       </div>
       <div class="field check">
         <label>
-          <input v-model="form.formApprovals" type="checkbox" />
+          <input
+            v-model="form.formApprovals"
+            type="checkbox"
+            :aria-describedby="form.formApprovals ? 's-form-note' : undefined"
+          />
           Let clients that only show forms approve ordinary writes
         </label>
       </div>
-      <p v-if="form.formApprovals" class="alert warn" role="note">
+      <p v-if="form.formApprovals" id="s-form-note" class="alert warn" role="note">
         Any client connected to this endpoint could then approve its own writes, with nobody checking. Locked operations
         and ones that need a typed confirmation still need the approval page.
       </p>
     </section>
 
     <section class="card">
-      <h2>Active session approvals</h2>
+      <h2 :id="`${uid}-grants`">Active session approvals</h2>
       <p v-if="grantError" class="alert error" role="alert">{{ grantError }}</p>
       <p v-if="!grants.length" class="small muted">
         None. An approver can give one from the approval page with “Approve for this session”.
       </p>
-      <table v-else class="table">
+      <table v-else class="table" :aria-labelledby="`${uid}-grants`">
         <thead>
           <tr>
             <th>Client</th>
             <th>Approved by</th>
             <th>Until</th>
-            <th></th>
+            <th><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="g in grants" :key="g.id">
-            <td>{{ g.client ?? 'unknown client' }}</td>
+            <td :id="`${uid}-${g.id}`">{{ g.client ?? 'unknown client' }}</td>
             <td>{{ g.createdBy }}</td>
             <td>{{ new Date(g.expiresAt).toLocaleString() }}</td>
-            <td><button type="button" class="btn btn-sm btn-danger" @click="revokeGrant(g.id)">Revoke</button></td>
+            <td>
+              <button
+                type="button"
+                class="btn btn-sm btn-danger"
+                :aria-describedby="`${uid}-${g.id}`"
+                @click="revokeGrant(g.id)"
+              >
+                Revoke
+              </button>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -219,12 +245,19 @@ async function remove() {
       </div>
       <div class="field">
         <label for="s-redact">Extra keys to redact</label>
-        <ChipsInput v-model="form.extraRedactKeys" input-id="s-redact" placeholder="api_key" />
-        <p class="help">Added to the plugin's own sensitive keys in audit logs, approvals and results.</p>
+        <ChipsInput
+          v-model="form.extraRedactKeys"
+          input-id="s-redact"
+          aria-describedby="s-redact-help"
+          placeholder="api_key"
+        />
+        <p id="s-redact-help" class="help">
+          Added to the plugin's own sensitive keys in audit logs, approvals and results.
+        </p>
       </div>
     </section>
 
-    <p v-if="message" class="alert" :class="message.kind" role="status">{{ message.text }}</p>
+    <p v-if="message" class="alert" :class="message.kind" :role="messageRole(message.kind)">{{ message.text }}</p>
     <div class="actions">
       <button class="btn btn-primary" type="submit">Save settings</button>
       <span class="grow" />
@@ -242,7 +275,7 @@ async function remove() {
         >
         <input id="del-confirm" v-model="deleting.confirm" autocomplete="off" />
       </div>
-      <p v-if="deleting.note" class="alert error">{{ deleting.note }}</p>
+      <p v-if="deleting.note" class="alert error" role="alert">{{ deleting.note }}</p>
       <template #footer>
         <button class="btn" type="button" @click="deleting = undefined">Cancel</button>
         <button

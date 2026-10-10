@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, useId } from 'vue';
 import { errorText } from '../api';
 import PageHeader from '../components/PageHeader.vue';
 import { useCopy } from '../composables/useCopy';
 import { useOverviewQuery } from '../composables/useOverview';
 import { AUTH_MODE_LABELS, ago } from '../format';
 
-const { data: overview, error: loadError } = useOverviewQuery();
+const { data: overview, error: loadError, isPending: loading } = useOverviewQuery();
 const instances = computed(() => overview.value?.instances ?? []);
 const error = computed(() => (loadError.value ? errorText(loadError.value) : undefined));
 
 const unhealthyPlugins = computed(() => (overview.value?.plugins ?? []).filter((p) => p.status !== 'ok'));
 const { copied, copy } = useCopy();
+const uid = useId();
 </script>
 
 <template>
@@ -30,7 +31,7 @@ const { copied, copy } = useCopy();
       </div>
 
       <div class="table-card">
-        <table class="table">
+        <table class="table" aria-label="Endpoints" :aria-busy="loading">
           <thead>
             <tr>
               <th>Endpoint</th>
@@ -38,19 +39,21 @@ const { copied, copy } = useCopy();
               <th>Status</th>
               <th>Auth</th>
               <th>Last sync</th>
-              <th />
+              <th><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="i in instances" :key="i.id">
               <td>
-                <RouterLink :to="`/endpoints/${i.slug}/connection`" class="mono">/{{ i.slug }}</RouterLink>
+                <RouterLink :id="`${uid}-${i.id}`" :to="`/endpoints/${i.slug}/connection`" class="mono"
+                  >/{{ i.slug }}</RouterLink
+                >
                 <div class="small muted">{{ i.displayName }}</div>
               </td>
               <td>{{ i.plugin.name }}</td>
               <td>
                 <span class="row">
-                  <span class="dot" :class="i.status" />
+                  <span class="dot" :class="i.status" aria-hidden="true" />
                   {{ i.enabled ? i.status : 'disabled' }}
                 </span>
                 <div v-if="i.statusError" class="small err">{{ i.statusError }}</div>
@@ -61,13 +64,20 @@ const { copied, copy } = useCopy();
                 <span v-if="i.lastSyncStatus === 'error'" class="pill danger">failed</span>
               </td>
               <td class="right">
-                <button v-if="i.endpointUrl" class="btn btn-sm" type="button" @click="copy(i.endpointUrl)">
+                <button
+                  v-if="i.endpointUrl"
+                  class="btn btn-sm"
+                  type="button"
+                  :aria-describedby="`${uid}-${i.id}`"
+                  @click="copy(i.endpointUrl)"
+                >
                   {{ copied === i.endpointUrl ? 'Copied' : 'Copy URL' }}
                 </button>
               </td>
             </tr>
           </tbody>
         </table>
+        <p v-if="loading" class="sr-only" role="status">Loading…</p>
         <div v-if="overview && !instances.length" class="empty">
           No endpoints yet. <RouterLink to="/endpoints/new">Create one</RouterLink> from an enabled plugin.
         </div>

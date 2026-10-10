@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, useId } from 'vue';
 import { errorText } from '../api';
 import ModalDialog from '../components/ModalDialog.vue';
 import PageHeader from '../components/PageHeader.vue';
@@ -33,10 +33,12 @@ const { confirm } = useConfirm();
 const tokenError = createTokenMutation.errorText;
 const clientError = registerClient.errorText;
 const showRevoked = ref(false);
+const uid = useId();
 
 // The tables show together, once every list has loaded.
 const loaded = [tokensQuery, clientsQuery, grantsQuery, usersQuery];
 const ready = computed(() => loaded.every((q) => !!q.data.value));
+const loading = computed(() => loaded.some((q) => q.isPending.value));
 const tokens = computed(() => (ready.value ? (tokensQuery.data.value ?? []) : []));
 const clients = computed(() => (ready.value ? (clientsQuery.data.value ?? []) : []));
 const grants = computed(() => (ready.value ? (grantsQuery.data.value ?? []) : []));
@@ -142,11 +144,11 @@ function createClient() {
 
     <section class="stack">
       <div class="row">
-        <h2 class="grow">Bearer tokens</h2>
+        <h2 :id="`${uid}-tokens`" class="grow">Bearer tokens</h2>
         <button class="btn btn-primary btn-sm" type="button" @click="openToken">New token</button>
       </div>
       <div class="table-card">
-        <table class="table">
+        <table class="table" :aria-labelledby="`${uid}-tokens`" :aria-busy="loading">
           <thead>
             <tr>
               <th>Name</th>
@@ -156,12 +158,12 @@ function createClient() {
               <th>Created</th>
               <th>Last used</th>
               <th>Expires</th>
-              <th />
+              <th><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="t in live(tokens)" :key="t.id" :class="{ off: t.revokedAt }">
-              <td>{{ t.name }}</td>
+              <td :id="`${uid}-t-${t.id}`">{{ t.name }}</td>
               <td class="small">{{ (t.createdBy && usernames.get(t.createdBy)) ?? '—' }}</td>
               <td class="mono small">{{ scopeText(t.scope) }}</td>
               <td class="small">{{ ACCESS_LABELS[t.access] }}</td>
@@ -174,6 +176,7 @@ function createClient() {
                   v-else
                   class="btn btn-sm btn-danger"
                   type="button"
+                  :aria-describedby="`${uid}-t-${t.id}`"
                   @click="revoke('tokens', t.id, `token “${t.name}”`)"
                 >
                   Revoke
@@ -186,23 +189,25 @@ function createClient() {
       </div>
 
       <div class="row">
-        <h2 class="grow">OAuth clients</h2>
+        <h2 :id="`${uid}-clients`" class="grow">OAuth clients</h2>
         <button class="btn btn-sm" type="button" @click="openClient">Register client</button>
       </div>
       <div class="table-card">
-        <table class="table">
+        <table class="table" :aria-labelledby="`${uid}-clients`" :aria-busy="loading">
           <thead>
             <tr>
               <th>Name</th>
               <th>Client ID</th>
               <th>Registered</th>
               <th>Redirects</th>
-              <th />
+              <th><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="c in live(clients)" :key="c.id" :class="{ off: c.revokedAt }">
-              <td>{{ c.name }} <span v-if="c.confidential" class="pill">confidential</span></td>
+              <td :id="`${uid}-c-${c.id}`">
+                {{ c.name }} <span v-if="c.confidential" class="pill">confidential</span>
+              </td>
               <td class="mono small">{{ c.clientId }}</td>
               <td class="small">
                 {{ c.registeredVia === 'dcr' ? 'self-registered' : 'by admin' }} · {{ ago(c.createdAt) }}
@@ -216,6 +221,7 @@ function createClient() {
                   v-else
                   class="btn btn-sm btn-danger"
                   type="button"
+                  :aria-describedby="`${uid}-c-${c.id}`"
                   @click="revoke('oauth/clients', c.id, `client “${c.name}”`)"
                 >
                   Revoke
@@ -229,9 +235,9 @@ function createClient() {
         </div>
       </div>
 
-      <h2>OAuth grants</h2>
+      <h2 :id="`${uid}-grants`">OAuth grants</h2>
       <div class="table-card">
-        <table class="table">
+        <table class="table" :aria-labelledby="`${uid}-grants`" :aria-busy="loading">
           <thead>
             <tr>
               <th>Client</th>
@@ -239,13 +245,13 @@ function createClient() {
               <th>Endpoints</th>
               <th>Access</th>
               <th>Granted</th>
-              <th />
+              <th><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="g in live(grants)" :key="g.id" :class="{ off: g.revokedAt }">
-              <td>{{ g.client.name }}</td>
-              <td>{{ g.user.username }}</td>
+              <td :id="`${uid}-${g.id}-client`">{{ g.client.name }}</td>
+              <td :id="`${uid}-${g.id}-user`">{{ g.user.username }}</td>
               <td class="mono small">{{ g.resources.map(resourcePath).join(', ') }}</td>
               <td class="small">{{ ACCESS_LABELS[g.access] }}</td>
               <td class="small">{{ formatDate(g.createdAt) }}</td>
@@ -255,6 +261,7 @@ function createClient() {
                   v-else
                   class="btn btn-sm btn-danger"
                   type="button"
+                  :aria-describedby="`${uid}-${g.id}-client ${uid}-${g.id}-user`"
                   @click="revoke('oauth/grants', g.id, `${g.client.name}'s access`)"
                 >
                   Revoke
@@ -272,8 +279,8 @@ function createClient() {
         <label for="t-name">Name</label>
         <input id="t-name" v-model="newToken.name" placeholder="claude-desktop" />
       </div>
-      <div class="field">
-        <label>Endpoints</label>
+      <div class="field" role="group" :aria-labelledby="`${uid}-t-scope`">
+        <label :id="`${uid}-t-scope`">Endpoints</label>
         <label class="row small"
           ><input v-model="newToken.all" type="checkbox" /> All endpoints, including future ones</label
         >
@@ -293,10 +300,10 @@ function createClient() {
       </fieldset>
       <div class="field">
         <label for="t-exp">Expires</label>
-        <input id="t-exp" v-model="newToken.expiresAt" type="datetime-local" />
-        <p class="help">Leave empty for no expiry.</p>
+        <input id="t-exp" v-model="newToken.expiresAt" type="datetime-local" aria-describedby="t-exp-help" />
+        <p id="t-exp-help" class="help">Leave empty for no expiry.</p>
       </div>
-      <p v-if="tokenError" class="alert error">{{ tokenError }}</p>
+      <p v-if="tokenError" class="alert error" role="alert">{{ tokenError }}</p>
       <template #footer>
         <button class="btn" type="button" @click="newToken = undefined">Cancel</button>
         <button class="btn btn-primary" type="button" :disabled="!canCreateToken" @click="createToken">
@@ -324,7 +331,7 @@ function createClient() {
           ><input v-model="newClient.confidential" type="checkbox" /> Confidential client (gets a client secret)</label
         >
       </div>
-      <p v-if="clientError" class="alert error">{{ clientError }}</p>
+      <p v-if="clientError" class="alert error" role="alert">{{ clientError }}</p>
       <template #footer>
         <button class="btn" type="button" @click="newClient = undefined">Cancel</button>
         <button

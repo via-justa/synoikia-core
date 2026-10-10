@@ -33,7 +33,13 @@ const tabs = [
         <div>
           <h1>
             <span class="mono">/{{ instance.slug }}</span>
-            <span class="dot" :class="instance.status" :title="instance.status" />
+            <span
+              class="dot"
+              :class="instance.status"
+              :title="instance.status"
+              role="img"
+              :aria-label="instance.status"
+            />
           </h1>
           <p class="sub">
             {{ instance.displayName
@@ -43,7 +49,7 @@ const tabs = [
           </p>
         </div>
       </div>
-      <p v-if="instance.statusError" class="alert error">{{ instance.statusError }}</p>
+      <p v-if="instance.statusError" class="alert error" role="alert">{{ instance.statusError }}</p>
       <nav class="tabs" aria-label="Endpoint sections">
         <RouterLink
           v-for="t in tabs"

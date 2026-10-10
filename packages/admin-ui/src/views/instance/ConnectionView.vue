@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { messageRole } from '../../a11y';
 import { computed, ref, watch } from 'vue';
 import { errorText } from '../../api';
 import ConnectClient from '../../components/ConnectClient.vue';
@@ -114,7 +115,7 @@ function sync() {
           :ui="conn.ui"
           :secrets="conn.secrets"
         />
-        <p v-if="message" class="alert" :class="message.kind" role="status">{{ message.text }}</p>
+        <p v-if="message" class="alert" :class="message.kind" :role="messageRole(message.kind)">{{ message.text }}</p>
         <div class="actions">
           <button class="btn btn-primary" type="submit" :disabled="!!busy">
             {{ busy === 'save' ? 'Saving…' : 'Save' }}
@@ -124,7 +125,7 @@ function sync() {
           </button>
         </div>
       </template>
-      <p v-else-if="message" class="alert error">{{ message.text }}</p>
+      <p v-else-if="message" class="alert error" role="alert">{{ message.text }}</p>
     </form>
 
     <aside class="stack">
