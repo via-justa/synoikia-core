@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRaw, watch } from 'vue';
 import { errorText } from '../../api';
+import { useCopy } from '../../composables/useCopy';
 import { useSaveSettings, useSettingsQuery } from '../../composables/useSettings';
 import { AUTH_MODE_LABELS } from '../../format';
 import { AUTH_MODES } from '../../types';
@@ -49,12 +50,7 @@ const CF_REDIRECTS = [
   },
 ];
 
-const copied = ref<string>();
-async function copy(text: string) {
-  await navigator.clipboard?.writeText(text).catch(() => undefined);
-  copied.value = text;
-  setTimeout(() => (copied.value = undefined), 1500);
-}
+const { copied, copy } = useCopy();
 
 const MODE_HELP: Record<string, string> = {
   external: 'A reverse proxy (Cloudflare Access, Authelia, Authentik) authenticates clients. Only use behind one.',

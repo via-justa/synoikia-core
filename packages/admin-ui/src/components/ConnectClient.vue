@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { useCopy } from '../composables/useCopy';
 import { AUTH_MODE_LABELS } from '../format';
 import type { Instance } from '../types';
 
@@ -68,12 +69,7 @@ const desktopConfig = computed(() => {
   return JSON.stringify({ mcpServers: { [slug.value]: server } }, null, 2);
 });
 
-const copied = ref<string>();
-async function copy(text: string) {
-  await navigator.clipboard?.writeText(text).catch(() => undefined);
-  copied.value = text;
-  setTimeout(() => (copied.value = undefined), 1500);
-}
+const { copied, copy } = useCopy();
 </script>
 
 <template>
