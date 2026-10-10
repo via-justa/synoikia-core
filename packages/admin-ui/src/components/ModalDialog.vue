@@ -81,7 +81,7 @@ const stack: symbol[] = [];
 .backdrop {
   position: fixed;
   inset: 0;
-  background: rgb(36 27 18 / 45%);
+  background: var(--backdrop);
   display: flex;
   align-items: flex-start;
   justify-content: center;

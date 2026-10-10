@@ -34,7 +34,7 @@ export function provideConfirm() {
   return { request, settle };
 }
 
-/** Promise-based replacements for `window.confirm` and `window.prompt`. */
+/** Promise-based replacements for the browser's confirm and prompt dialogs. */
 export function useConfirm() {
   const request = inject(KEY);
   if (!request) throw new Error('useConfirm needs provideConfirm() in App.vue');

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { errorText } from '../api';
 import PageHeader from '../components/PageHeader.vue';
+import { useCopy } from '../composables/useCopy';
 import { useMyEndpointsQuery } from '../composables/useMyEndpoints';
 import { AUTH_MODE_LABELS, ago } from '../format';
 import { useSessionStore } from '../stores/session';
@@ -11,12 +12,7 @@ const session = useSessionStore();
 const { endpoints: mine, error: loadError } = useMyEndpointsQuery();
 const error = computed(() => (loadError.value ? errorText(loadError.value) : undefined));
 
-const copied = ref<string>();
-async function copy(url: string) {
-  await navigator.clipboard?.writeText(url).catch(() => undefined);
-  copied.value = url;
-  setTimeout(() => (copied.value = undefined), 1500);
-}
+const { copied, copy } = useCopy();
 </script>
 
 <template>

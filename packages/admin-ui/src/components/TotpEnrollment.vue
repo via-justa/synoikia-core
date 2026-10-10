@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { latestError } from '../composables/useApiMutation';
 import { useBeginTotp, useConfirmTotp } from '../composables/useProfile';
 
 /** TOTP enrollment: show the secret/otpauth URI, confirm with a code, show recovery codes once. */
@@ -10,9 +11,7 @@ const confirmTotp = useConfirmTotp();
 const code = ref('');
 const secret = computed(() => beginTotp.data.value);
 const recovery = computed(() => confirmTotp.data.value?.recoveryCodes);
-const error = computed(() =>
-  confirmTotp.submittedAt.value > beginTotp.submittedAt.value ? confirmTotp.errorText.value : beginTotp.errorText.value,
-);
+const error = computed(() => latestError([beginTotp, confirmTotp]));
 
 const begin = () => beginTotp.mutate();
 const confirm = () => confirmTotp.mutate(code.value.trim(), { onSettled: () => (code.value = '') });

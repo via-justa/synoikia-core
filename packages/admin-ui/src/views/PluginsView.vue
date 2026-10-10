@@ -1,90 +1,112 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { ApiError, errorText, http } from '../api';
+import { computed, ref } from 'vue';
+import { ApiError, errorText } from '../api';
 import ModalDialog from '../components/ModalDialog.vue';
 import PageHeader from '../components/PageHeader.vue';
-import { useRefreshOverview } from '../composables/useOverview';
+import { latestError } from '../composables/useApiMutation';
+import { useConfirm } from '../composables/useConfirm';
+import {
+  useAddRepo,
+  useAvailablePluginsQuery,
+  useConfirmRepoKey,
+  useInstallPlugin,
+  usePluginsQuery,
+  useRefreshRepo,
+  useRemoveRepo,
+  useReposQuery,
+  useRescanPlugins,
+  useTogglePlugin,
+  useUninstallPlugin,
+} from '../composables/usePlugins';
 import { ago } from '../format';
 import type { AvailablePlugin, PluginRow, Repo } from '../types';
 
-const refreshOverview = useRefreshOverview();
+const pluginsQuery = usePluginsQuery();
+const availableQuery = useAvailablePluginsQuery();
+const reposQuery = useReposQuery();
+const togglePlugin = useTogglePlugin();
+const uninstallPlugin = useUninstallPlugin();
+const rescanPlugins = useRescanPlugins();
+const refreshRepo = useRefreshRepo();
+const removeRepo = useRemoveRepo();
+const installPlugin = useInstallPlugin();
+const addRepoMutation = useAddRepo();
+const confirmRepoKey = useConfirmRepoKey();
+const { confirm } = useConfirm();
+const installBusy = installPlugin.isPending;
+const installError = installPlugin.errorText;
+const confirmError = confirmRepoKey.errorText;
 const tab = ref<'installed' | 'available' | 'repos'>('installed');
-const plugins = ref<PluginRow[]>([]);
-const available = ref<AvailablePlugin[]>([]);
-const repos = ref<Repo[]>([]);
-const error = ref<string>();
 const notice = ref<string>();
 
-async function load() {
-  try {
-    [plugins.value, available.value, repos.value] = await Promise.all([
-      http.get<PluginRow[]>('/api/plugins'),
-      http.get<AvailablePlugin[]>('/api/plugin-repos/available'),
-      http.get<Repo[]>('/api/plugin-repos'),
-    ]);
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
-onMounted(load);
+// The three lists show together, once all have loaded.
+const ready = computed(() => !!pluginsQuery.data.value && !!availableQuery.data.value && !!reposQuery.data.value);
+const plugins = computed(() => (ready.value ? (pluginsQuery.data.value ?? []) : []));
+const available = computed(() => (ready.value ? (availableQuery.data.value ?? []) : []));
+const repos = computed(() => (ready.value ? (reposQuery.data.value ?? []) : []));
 
-async function act(fn: () => Promise<unknown>, done?: string) {
-  error.value = undefined;
+// One page alert: the latest action's failure, else a failed load.
+const error = computed(() => {
+  const loadError = pluginsQuery.error.value ?? availableQuery.error.value ?? reposQuery.error.value;
+  return (
+    latestError([togglePlugin, uninstallPlugin, rescanPlugins, refreshRepo, removeRepo]) ??
+    (loadError ? errorText(loadError) : undefined)
+  );
+});
+
+function act<V>(action: { mutate: (vars: V, options: { onSuccess: () => void }) => void }, vars: V, done?: string) {
   notice.value = undefined;
-  try {
-    await fn();
-    await load();
-    void refreshOverview().catch(() => undefined);
-    notice.value = done;
-  } catch (err) {
-    error.value = errorText(err);
-  }
+  action.mutate(vars, { onSuccess: () => (notice.value = done) });
 }
 
-const toggle = (p: PluginRow) => {
+const toggle = async (p: PluginRow) => {
   if (
     p.enabled &&
     p.instances &&
-    !window.confirm(`Disabling ${p.pluginId} stops its ${p.instances} endpoint(s). Continue?`)
+    !(await confirm({
+      title: `Disabling ${p.pluginId} stops its ${p.instances} endpoint(s).`,
+      message: 'Continue?',
+      action: 'Disable',
+      danger: true,
+    }))
   )
     return;
-  void act(() => http.patch(`/api/plugins/${p.id}`, { enabled: !p.enabled }));
+  act(togglePlugin, p);
 };
-const uninstall = (p: PluginRow) => {
-  if (window.confirm(`Uninstall ${p.pluginId}? Its files are deleted.`)) {
-    void act(() => http.del(`/api/plugins/${p.id}`), `${p.pluginId} uninstalled.`);
-  }
+const uninstall = async (p: PluginRow) => {
+  const ok = await confirm({
+    title: `Uninstall ${p.pluginId}?`,
+    message: 'Its files are deleted.',
+    action: 'Uninstall',
+    danger: true,
+  });
+  if (ok) act(uninstallPlugin, p, `${p.pluginId} uninstalled.`);
 };
-const rescan = () => act(() => http.post('/api/plugins/rescan'), 'Plugin directories rescanned.');
+const rescan = () => act(rescanPlugins, undefined, 'Plugin directories rescanned.');
 
 // ── install ──
 
-const installing = ref<{ item: AvailablePlugin; version: string; confirm: string; busy?: boolean; note?: string }>();
+const installing = ref<{ item: AvailablePlugin; version: string; confirm: string }>();
 function openInstall(item: AvailablePlugin) {
+  installPlugin.reset();
   installing.value = { item, version: item.latest ?? item.versions[0]?.version ?? '', confirm: '' };
 }
 const installRepo = computed(() => repos.value.find((r) => r.id === installing.value?.item.repoId));
-async function install() {
+function install() {
   const i = installing.value;
   if (!i) return;
-  installing.value = { ...i, busy: true, note: undefined };
-  try {
-    const row = await http.post<{ enabled: boolean }>('/api/plugins/install', {
-      repoId: i.item.repoId,
-      pluginId: i.item.pluginId,
-      version: i.version,
-      confirm: i.confirm || undefined,
-    });
-    installing.value = undefined;
-    // New installs, and updates that change what the plugin may do, wait for the admin to enable them.
-    notice.value = row.enabled
-      ? `${i.item.pluginId} ${i.version} installed.`
-      : `${i.item.pluginId} ${i.version} installed, disabled. Review its capabilities and network hosts, then Enable it on the Installed tab.`;
-    await load();
-    void refreshOverview().catch(() => undefined);
-  } catch (err) {
-    installing.value = { ...i, busy: false, note: errorText(err) };
-  }
+  installPlugin.mutate(
+    { repoId: i.item.repoId, pluginId: i.item.pluginId, version: i.version, confirm: i.confirm || undefined },
+    {
+      onSuccess: (row) => {
+        installing.value = undefined;
+        // New installs, and updates that change what the plugin may do, wait for the admin to enable them.
+        notice.value = row.enabled
+          ? `${i.item.pluginId} ${i.version} installed.`
+          : `${i.item.pluginId} ${i.version} installed, disabled. Review its capabilities and network hosts, then Enable it on the Installed tab.`;
+      },
+    },
+  );
 }
 
 // ── repositories ──
@@ -96,41 +118,43 @@ const adding = ref<{
   pasted: string;
   note?: string;
 }>();
-async function addRepo() {
+function addRepo() {
   const a = adding.value;
   if (!a) return;
-  try {
-    await http.post('/api/plugin-repos', {
+  addRepoMutation.mutate(
+    {
       url: a.url.trim(),
       signingMode: a.signingMode,
       confirmPublicKey: a.signingMode === 'signed' && a.pasted ? a.pasted : undefined,
-    });
-    adding.value = undefined;
-    notice.value = 'Repository added.';
-    await load();
-  } catch (err) {
-    if (err instanceof ApiError && err.code === 'confirm_key') {
-      const d = err.details as { publicKey: string; keyId: string };
-      adding.value = {
-        ...a,
-        offered: d,
-        note: a.pasted ? 'That key does not match the key this repository publishes.' : undefined,
-      };
-    } else adding.value = { ...a, note: errorText(err) };
-  }
+    },
+    {
+      onSuccess: () => {
+        adding.value = undefined;
+        notice.value = 'Repository added.';
+      },
+      onError: (err) => {
+        if (err instanceof ApiError && err.code === 'confirm_key') {
+          const d = err.details as { publicKey: string; keyId: string };
+          adding.value = {
+            ...a,
+            offered: d,
+            note: a.pasted ? 'That key does not match the key this repository publishes.' : undefined,
+          };
+        } else adding.value = { ...a, note: errorText(err) };
+      },
+    },
+  );
 }
 
-const confirming = ref<{ repo: Repo; pasted: string; note?: string }>();
-async function confirmKey() {
+const confirming = ref<{ repo: Repo; pasted: string }>();
+function openConfirm(repo: Repo) {
+  confirmRepoKey.reset();
+  confirming.value = { repo, pasted: '' };
+}
+function confirmKey() {
   const c = confirming.value;
   if (!c) return;
-  try {
-    await http.post(`/api/plugin-repos/${c.repo.id}/confirm-key`, { publicKey: c.pasted });
-    confirming.value = undefined;
-    await load();
-  } catch (err) {
-    confirming.value = { ...c, note: errorText(err) };
-  }
+  confirmRepoKey.mutate({ id: c.repo.id, publicKey: c.pasted }, { onSuccess: () => (confirming.value = undefined) });
 }
 
 const BLOCKED: Record<string, string> = {
@@ -291,21 +315,15 @@ const BLOCKED: Record<string, string> = {
                   v-if="r.keyStatus === 'key_changed'"
                   class="btn btn-sm btn-danger"
                   type="button"
-                  @click="confirming = { repo: r, pasted: '' }"
+                  @click="openConfirm(r)"
                 >
                   Review key…
                 </button>
-                <button
-                  class="btn btn-sm"
-                  type="button"
-                  @click="act(() => http.post(`/api/plugin-repos/${r.id}/refresh`), 'Refreshed.')"
-                >
-                  Refresh
-                </button>
+                <button class="btn btn-sm" type="button" @click="act(refreshRepo, r.id, 'Refreshed.')">Refresh</button>
                 <button
                   class="btn btn-sm btn-danger"
                   type="button"
-                  @click="act(() => http.del(`/api/plugin-repos/${r.id}`), 'Repository removed.')"
+                  @click="act(removeRepo, r.id, 'Repository removed.')"
                 >
                   Remove
                 </button>
@@ -348,19 +366,18 @@ const BLOCKED: Record<string, string> = {
       <p v-else class="small">
         The download is checked against the index checksum and the repository's pinned signing key.
       </p>
-      <p v-if="installing.note" class="alert error">{{ installing.note }}</p>
+      <p v-if="installError" class="alert error">{{ installError }}</p>
       <template #footer>
         <button class="btn" type="button" @click="installing = undefined">Cancel</button>
         <button
           class="btn btn-primary"
           type="button"
           :disabled="
-            installing.busy ||
-            (installRepo?.signingMode === 'unsigned' && installing.confirm !== installing.item.pluginId)
+            installBusy || (installRepo?.signingMode === 'unsigned' && installing.confirm !== installing.item.pluginId)
           "
           @click="install"
         >
-          {{ installing.busy ? 'Installing…' : 'Install' }}
+          {{ installBusy ? 'Installing…' : 'Install' }}
         </button>
       </template>
     </ModalDialog>
@@ -431,7 +448,7 @@ const BLOCKED: Record<string, string> = {
         <label for="c-key">Publisher's new public key</label>
         <textarea id="c-key" v-model="confirming.pasted" rows="3" placeholder="RW…" />
       </div>
-      <p v-if="confirming.note" class="alert error">{{ confirming.note }}</p>
+      <p v-if="confirmError" class="alert error">{{ confirmError }}</p>
       <template #footer>
         <button class="btn" type="button" @click="confirming = undefined">Cancel</button>
         <button class="btn btn-danger-solid" type="button" :disabled="!confirming.pasted.trim()" @click="confirmKey">

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { errorText } from '../api';
 import PageHeader from '../components/PageHeader.vue';
+import { useCopy } from '../composables/useCopy';
 import { useOverviewQuery } from '../composables/useOverview';
 import { AUTH_MODE_LABELS, ago } from '../format';
 
@@ -10,12 +11,7 @@ const instances = computed(() => overview.value?.instances ?? []);
 const error = computed(() => (loadError.value ? errorText(loadError.value) : undefined));
 
 const unhealthyPlugins = computed(() => (overview.value?.plugins ?? []).filter((p) => p.status !== 'ok'));
-const copied = ref<string>();
-async function copy(url: string) {
-  await navigator.clipboard?.writeText(url).catch(() => undefined);
-  copied.value = url;
-  setTimeout(() => (copied.value = undefined), 1500);
-}
+const { copied, copy } = useCopy();
 </script>
 
 <template>

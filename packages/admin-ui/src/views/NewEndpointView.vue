@@ -1,60 +1,57 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { errorText, http } from '../api';
 import PageHeader from '../components/PageHeader.vue';
 import SchemaForm from '../components/SchemaForm.vue';
-import { useRefreshOverview } from '../composables/useOverview';
+import { useCreateInstance } from '../composables/useInstance';
+import { usePluginsQuery } from '../composables/usePlugins';
 import { AUTH_MODE_LABELS } from '../format';
 import { AUTH_MODES } from '../types';
-import type { AuthMode, Instance, PluginRow } from '../types';
+import type { AuthMode } from '../types';
 
-const refreshOverview = useRefreshOverview();
 const router = useRouter();
-const plugins = ref<PluginRow[]>([]);
+const pluginsQuery = usePluginsQuery();
+const createInstance = useCreateInstance();
+const error = createInstance.errorText;
+const busy = createInstance.isPending;
 const pluginId = ref('');
 const slug = ref('');
 const displayName = ref('');
 const authMode = ref<AuthMode | ''>('');
 const config = ref<Record<string, unknown>>({});
 const secrets = ref<Record<string, string | null>>({});
-const error = ref<string>();
-const busy = ref(false);
 
-const usable = computed(() => plugins.value.filter((p) => p.enabled && p.status === 'ok'));
+const usable = computed(() => (pluginsQuery.data.value ?? []).filter((p) => p.enabled && p.status === 'ok'));
 const plugin = computed(() => usable.value.find((p) => p.pluginId === pluginId.value));
 const slugOk = computed(() => /^[a-z0-9][a-z0-9-]{0,62}$/.test(slug.value));
 
-onMounted(async () => {
-  plugins.value = await http.get<PluginRow[]>('/api/plugins').catch(() => []);
-  if (usable.value.length === 1) pluginId.value = usable.value[0]!.pluginId;
-});
+// A single usable plugin is picked for the user once the list is in.
+watch(
+  () => pluginsQuery.data.value,
+  () => {
+    if (!pluginId.value && usable.value.length === 1) pluginId.value = usable.value[0]!.pluginId;
+  },
+  { immediate: true },
+);
 watch(pluginId, (id) => {
   config.value = {};
   secrets.value = {};
   if (id && !slug.value) slug.value = id;
 });
 
-async function create() {
+function create() {
   if (!plugin.value || !slugOk.value) return;
-  busy.value = true;
-  error.value = undefined;
-  try {
-    const filled = Object.fromEntries(Object.entries(secrets.value).filter(([, v]) => v));
-    const created = await http.post<Instance>('/api/instances', {
+  const filled = Object.fromEntries(Object.entries(secrets.value).filter(([, v]) => v));
+  createInstance.mutate(
+    {
       pluginId: plugin.value.pluginId,
       slug: slug.value,
       displayName: displayName.value || undefined,
       authMode: authMode.value || null,
       connection: { ...config.value, ...filled },
-    });
-    await refreshOverview();
-    await router.push(`/endpoints/${created.slug}/connection`);
-  } catch (err) {
-    error.value = errorText(err);
-  } finally {
-    busy.value = false;
-  }
+    },
+    { onSuccess: (created) => router.push(`/endpoints/${created.slug}/connection`) },
+  );
 }
 </script>
 

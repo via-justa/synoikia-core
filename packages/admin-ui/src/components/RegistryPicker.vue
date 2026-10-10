@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { http, qs } from '../api';
-import type { RegistryEntry, TargetFieldOptions, TargetsDecl } from '../types';
+import { useRegistryKinds, useRegistrySearch } from '../composables/useRegistry';
+import type { TargetFieldOptions, TargetsDecl } from '../types';
 import ChipsInput from './ChipsInput.vue';
 
 /** `$targets` selector (design §8.3), from the plugin's targets and scopes; values are suggested
@@ -13,35 +13,31 @@ const model = defineModel<{ ids: string[]; scopes: Record<string, string[]> }>({
 const scopes = computed(() =>
   props.targets.scopes.filter((s) => !props.options?.scopes || props.options.scopes.includes(s.key)),
 );
-const scopeOptions = ref<Record<string, { value: string; label: string }[]>>({});
-const idOptions = ref<{ value: string; label: string }[]>([]);
 const idQuery = ref('');
-
-const toOption = (e: RegistryEntry) => ({ value: e.id, label: e.name ? `${e.name} (${e.id})` : e.id });
-const registry = (params: Record<string, string | number | undefined>) =>
-  http.get<RegistryEntry[]>(`${props.base}/registry${qs(params)}`).catch(() => []);
+const searchText = ref('');
 const filter = computed(() =>
   Object.fromEntries(Object.entries(props.options?.filter ?? {}).map(([k, v]) => [`scope.${k}`, v])),
 );
 
-async function loadScopes() {
-  for (const s of scopes.value) {
-    if (s.registryKind)
-      scopeOptions.value[s.key] = (await registry({ kind: s.registryKind, limit: 500 })).map(toOption);
-  }
-}
-async function searchIds(text: string) {
-  if (!props.targets.registryKind) return;
-  idOptions.value = (await registry({ kind: props.targets.registryKind, text, limit: 50, ...filter.value })).map(
-    toOption,
-  );
-}
-void loadScopes();
-void searchIds('');
+const kindOptions = useRegistryKinds(
+  () => props.base,
+  () => scopes.value.flatMap((s) => (s.registryKind ? [s.registryKind] : [])),
+);
+const scopeOptions = computed(() =>
+  Object.fromEntries(scopes.value.flatMap((s) => (s.registryKind ? [[s.key, kindOptions.value[s.registryKind]]] : []))),
+);
+const idSearch = useRegistrySearch(
+  () => props.base,
+  () => {
+    const kind = props.targets.registryKind;
+    return kind ? { kind, text: searchText.value, limit: 50, ...filter.value } : undefined;
+  },
+);
+const idOptions = computed(() => idSearch.data.value ?? []);
 let t: ReturnType<typeof setTimeout> | undefined;
 watch(idQuery, (q) => {
   clearTimeout(t);
-  t = setTimeout(() => void searchIds(q), 200);
+  t = setTimeout(() => (searchText.value = q), 200);
 });
 
 function setScope(key: string, values: string[]) {
