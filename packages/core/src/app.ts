@@ -209,7 +209,7 @@ export async function createAppContext(config: Config, opts: AppOptions = {}): P
         try {
           runHousekeeping(ctx);
         } catch (err) {
-          console.error('housekeeping failed', err);
+          ctx.log.error('housekeeping failed', { error: err instanceof Error ? err.message : String(err) });
         }
       };
       hourly();

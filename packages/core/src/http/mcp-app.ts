@@ -14,7 +14,7 @@ const jsonRpcError = (code: number, message: string) => ({
 /** The public MCP listener (design §2.1): endpoints, OAuth and approval pages; no Admin API here. */
 export function createMcpApp(ctx: AppContext): Hono {
   const app = new Hono();
-  app.onError(errorResponse);
+  app.onError((err, c) => errorResponse(err, c, ctx.log));
   // LOG_LEVEL=debug: one line per request, so a client's discovery and sign-in steps can be followed.
   // The path only: query strings carry OAuth state and PKCE values.
   app.use('*', async (c, next) => {
