@@ -2,12 +2,12 @@
 import { onMounted, ref } from 'vue';
 import { errorText, http } from '../../api';
 import ModalDialog from '../../components/ModalDialog.vue';
+import { useInstances } from '../../composables/useOverview';
 import { ago } from '../../format';
-import { useAppStore } from '../../stores/app';
 import { NOTIFY_EVENTS } from '../../types';
 import type { Notifier, NotifyEvent } from '../../types';
 
-const app = useAppStore();
+const instances = useInstances();
 const channels = ref<Notifier[]>([]);
 const error = ref<string>();
 const notice = ref<string>();
@@ -29,7 +29,6 @@ async function load() {
   }
 }
 onMounted(() => {
-  void app.refresh().catch(() => undefined);
   void load();
 });
 
@@ -240,7 +239,7 @@ async function remove(ch: Notifier) {
         <label>Endpoints</label>
         <label class="row small"><input v-model="draft.allInstances" type="checkbox" /> All endpoints</label>
         <template v-if="!draft.allInstances">
-          <label v-for="i in app.instances" :key="i.id" class="row small">
+          <label v-for="i in instances" :key="i.id" class="row small">
             <input v-model="draft.instanceFilter" type="checkbox" :value="i.id" />
             <span class="mono">/{{ i.slug }}</span>
           </label>

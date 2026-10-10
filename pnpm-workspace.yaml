@@ -10,3 +10,6 @@ onlyBuiltDependencies:
 # (which would need Python and a compiler in the image).
 ignoredBuiltDependencies:
   - better-sqlite3
+
+overrides:
+  '@tanstack/match-sorter-utils': 9.1.2

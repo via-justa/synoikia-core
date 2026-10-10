@@ -2,11 +2,11 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { errorText, http, qs } from '../api';
 import PageHeader from '../components/PageHeader.vue';
+import { useInstances } from '../composables/useOverview';
 import { formatDate, pretty } from '../format';
-import { useAppStore } from '../stores/app';
 import type { AuditRow } from '../types';
 
-const app = useAppStore();
+const instances = useInstances();
 const PAGE = 100;
 const filters = reactive({
   kind: '',
@@ -31,7 +31,7 @@ const query = computed(() =>
     to: filters.to ? new Date(filters.to).toISOString() : '',
   }),
 );
-const slugOf = (id: string | null) => (id ? (app.instances.find((i) => i.id === id)?.slug ?? id.slice(0, 8)) : '');
+const slugOf = (id: string | null) => (id ? (instances.value.find((i) => i.id === id)?.slug ?? id.slice(0, 8)) : '');
 
 async function load(reset = true) {
   if (reset) offset.value = 0;
@@ -51,7 +51,6 @@ function page(delta: number) {
   void load(false);
 }
 onMounted(() => {
-  void app.refresh().catch(() => undefined);
   void load();
 });
 
@@ -87,7 +86,7 @@ const DECISION_CLASS = (d: string | null) =>
         <label for="a-inst">Endpoint</label>
         <select id="a-inst" v-model="filters.instance">
           <option value="">All</option>
-          <option v-for="i in app.instances" :key="i.id" :value="i.id">/{{ i.slug }}</option>
+          <option v-for="i in instances" :key="i.id" :value="i.id">/{{ i.slug }}</option>
         </select>
       </div>
       <div class="field">

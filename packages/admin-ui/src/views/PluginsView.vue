@@ -3,11 +3,11 @@ import { computed, onMounted, ref } from 'vue';
 import { ApiError, errorText, http } from '../api';
 import ModalDialog from '../components/ModalDialog.vue';
 import PageHeader from '../components/PageHeader.vue';
+import { useRefreshOverview } from '../composables/useOverview';
 import { ago } from '../format';
-import { useAppStore } from '../stores/app';
 import type { AvailablePlugin, PluginRow, Repo } from '../types';
 
-const app = useAppStore();
+const refreshOverview = useRefreshOverview();
 const tab = ref<'installed' | 'available' | 'repos'>('installed');
 const plugins = ref<PluginRow[]>([]);
 const available = ref<AvailablePlugin[]>([]);
@@ -34,7 +34,7 @@ async function act(fn: () => Promise<unknown>, done?: string) {
   try {
     await fn();
     await load();
-    void app.refresh();
+    void refreshOverview().catch(() => undefined);
     notice.value = done;
   } catch (err) {
     error.value = errorText(err);
@@ -81,7 +81,7 @@ async function install() {
       ? `${i.item.pluginId} ${i.version} installed.`
       : `${i.item.pluginId} ${i.version} installed, disabled. Review its capabilities and network hosts, then Enable it on the Installed tab.`;
     await load();
-    void app.refresh();
+    void refreshOverview().catch(() => undefined);
   } catch (err) {
     installing.value = { ...i, busy: false, note: errorText(err) };
   }

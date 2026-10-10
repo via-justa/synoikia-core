@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { useAppStore } from '../../stores/app';
+import { useInstances, useRefreshOverview } from '../../composables/useOverview';
 
 /** Resolves `/endpoints/:slug/*` to an instance and hands it to the tab views. */
-const app = useAppStore();
+const instances = useInstances();
+const refreshOverview = useRefreshOverview();
 const route = useRoute();
 const slug = computed(() => String(route.params.slug));
-const instance = computed(() => app.bySlug(slug.value));
+const instance = computed(() => instances.value.find((i) => i.slug === slug.value));
 const loaded = ref(false);
 
 async function ensure() {
-  if (!instance.value) await app.refresh().catch(() => undefined);
+  if (!instance.value) await refreshOverview().catch(() => undefined);
   loaded.value = true;
 }
 onMounted(ensure);

@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import { useQueryClient } from '@tanstack/vue-query';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import BrandLockup from '../components/BrandLockup.vue';
+import { useMyEndpointsQuery } from '../composables/useMyEndpoints';
+import { useOverviewQuery } from '../composables/useOverview';
 import { useAppStore } from '../stores/app';
 import { useSessionStore } from '../stores/session';
 
@@ -9,6 +12,12 @@ const session = useSessionStore();
 const app = useAppStore();
 const router = useRouter();
 const route = useRoute();
+const queryClient = useQueryClient();
+// Overview and live events are admin-only; every role has its own endpoint list (design §6.4).
+// Read once, so signing out doesn't start the other query.
+const isAdmin = session.isAdmin;
+const { data: overview } = useOverviewQuery(isAdmin);
+const { endpoints: mine } = useMyEndpointsQuery(!isAdmin);
 
 // Small screens: the sidebar collapses into a top bar with a menu toggle.
 const menuOpen = ref(false);
@@ -17,7 +26,7 @@ watch(
   () => (menuOpen.value = false),
 );
 
-const endpoints = computed(() => app.instances);
+const endpoints = computed(() => overview.value?.instances ?? []);
 const ISSUES_URL = 'https://github.com/via-justa/synoikia-core/issues';
 
 const globalNav = [
@@ -31,11 +40,7 @@ const adminNav = [
 ];
 
 onMounted(() => {
-  // Overview and live events are admin-only; every role has its own endpoint list (design §6.4).
-  if (session.isAdmin) {
-    void app.refresh().catch(() => undefined);
-    app.connect();
-  } else void app.refreshMine().catch(() => undefined);
+  if (isAdmin) app.connect(queryClient);
 });
 onBeforeUnmount(() => app.disconnect());
 
@@ -62,7 +67,7 @@ async function logout() {
         <RouterLink to="/my" class="nav-item" exact-active-class="active"><span>My endpoints</span></RouterLink>
         <div class="nav-section">Endpoints</div>
         <RouterLink
-          v-for="ep in app.mine"
+          v-for="ep in mine"
           :key="ep.id"
           :to="`/my/${ep.id}`"
           class="nav-item mono"
@@ -71,7 +76,7 @@ async function logout() {
           <span>/{{ ep.slug }}</span>
           <span v-if="ep.status" class="dot" :class="ep.status.state" :title="ep.status.state" />
         </RouterLink>
-        <div v-if="app.mine.length === 0" class="nav-empty">No endpoints for your role</div>
+        <div v-if="mine.length === 0" class="nav-empty">No endpoints for your role</div>
         <div class="nav-section" />
         <RouterLink to="/settings/profile" class="nav-item" active-class="active">My profile</RouterLink>
       </nav>
@@ -101,7 +106,7 @@ async function logout() {
       </nav>
 
       <div class="about">
-        <span v-if="app.overview?.version" class="mono">v{{ app.overview.version }}</span>
+        <span v-if="overview?.version" class="mono">v{{ overview.version }}</span>
         <a
           :href="ISSUES_URL"
           class="github"

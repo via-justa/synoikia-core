@@ -2,8 +2,8 @@
 import { computed, onMounted, ref } from 'vue';
 import { errorText, http } from '../../api';
 import ModalDialog from '../../components/ModalDialog.vue';
+import { useRefreshOverview } from '../../composables/useOverview';
 import { LEVEL_HELP, LEVEL_LABELS, OP_LEVEL_HELP, REASON_LABELS, kindSource } from '../../format';
-import { useAppStore } from '../../stores/app';
 import { LEVELS } from '../../types';
 import type { GroupSummary, Instance, Level, LevelView, Operation } from '../../types';
 
@@ -16,7 +16,7 @@ const props = defineProps<{
   scope?: Scope;
   readonly?: boolean;
 }>();
-const app = useAppStore();
+const refreshOverview = useRefreshOverview();
 const base = computed(() =>
   !props.scope
     ? `/api/instances/${props.instance.id}`
@@ -131,7 +131,7 @@ async function act(fn: () => Promise<unknown>) {
   try {
     await fn();
     await load();
-    if (!props.scope) void app.refresh();
+    if (!props.scope) void refreshOverview().catch(() => undefined);
   } catch (err) {
     error.value = errorText(err);
   }

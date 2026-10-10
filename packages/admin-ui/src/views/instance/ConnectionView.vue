@@ -4,12 +4,12 @@ import { errorText, http } from '../../api';
 import ConnectClient from '../../components/ConnectClient.vue';
 import MarkdownLite from '../../components/MarkdownLite';
 import SchemaForm from '../../components/SchemaForm.vue';
+import { useRefreshOverview } from '../../composables/useOverview';
 import { ago } from '../../format';
-import { useAppStore } from '../../stores/app';
 import type { Connection, Instance, Settings } from '../../types';
 
 const props = defineProps<{ instance: Instance }>();
-const app = useAppStore();
+const refreshOverview = useRefreshOverview();
 const conn = ref<Connection>();
 const config = ref<Record<string, unknown>>({});
 const secretPatch = ref<Record<string, string | null>>({});
@@ -54,7 +54,7 @@ const save = () =>
   run('save', async () => {
     await http.put(`/api/instances/${props.instance.id}/connection`, body());
     await load();
-    await app.refresh();
+    await refreshOverview();
     message.value = { kind: 'ok', text: 'Saved. The endpoint restarted with the new connection.' };
   });
 
@@ -77,7 +77,7 @@ const sync = () =>
     const res = await http.post<{ added: number; updated: number; staled: number; pendingReview: string[] }>(
       `/api/instances/${props.instance.id}/sync`,
     );
-    await app.refresh();
+    await refreshOverview();
     message.value = {
       kind: res.pendingReview.length ? 'warn' : 'ok',
       text:
