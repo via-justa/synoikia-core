@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref, useId, watch } from 'vue';
 import { errorText } from '../../api';
 import ChipsInput from '../../components/ChipsInput.vue';
 import InfoTip from '../../components/InfoTip.vue';
@@ -47,6 +47,7 @@ const saveRule = useSaveRule(base);
 const toggleRule = useToggleRule(base);
 const deleteRule = useDeleteRule(base);
 const { confirm } = useConfirm();
+const uid = useId();
 
 // Shown only once every call it needs has answered, as one load.
 const loaded = computed(() => {
@@ -76,6 +77,9 @@ const loaded = computed(() => {
   return { rules, ops, profiles: manifest?.matchProfiles ?? {}, targets: manifest?.targets };
 });
 const rules = computed(() => loaded.value?.rules ?? []);
+const loading = computed(() =>
+  [rulesQuery, viewQuery, formQuery, opsQuery, pluginsQuery].some((q) => q.isLoading.value),
+);
 const ops = computed(() => loaded.value?.ops ?? []);
 const profiles = computed<Record<string, MatchField[]>>(() => loaded.value?.profiles ?? {});
 const targets = computed<TargetsDecl | undefined>(() => loaded.value?.targets);
@@ -328,20 +332,20 @@ const TIPS = {
     <p v-if="error" class="alert error" role="alert">{{ error }}</p>
 
     <div class="table-card">
-      <table class="table">
+      <table class="table" aria-label="Pre-approval rules" :aria-busy="loading">
         <thead>
           <tr>
             <th>Operation</th>
             <th>When</th>
             <th>Limits</th>
             <th>Reason</th>
-            <th />
+            <th><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="r in rules" :key="r.id" :class="{ off: !r.enabled }">
             <td>
-              <span class="mono">{{ r.operation.key }}</span>
+              <span :id="`${uid}-${r.id}`" class="mono">{{ r.operation.key }}</span>
               <span v-if="own && !r.editable" class="pill info">Admin</span>
               <span v-else-if="!own && r.owner" class="pill info">{{ r.owner.username }}</span>
               <div v-if="r.inert" class="pill warn">inert: {{ reasonText(r.inert) }}</div>
@@ -364,11 +368,20 @@ const TIPS = {
             <td class="small">{{ r.reason }}</td>
             <td v-if="own && !r.editable" class="right small muted">Set by an admin</td>
             <td v-else class="right">
-              <button class="btn btn-sm" type="button" @click="toggle(r)">
+              <button class="btn btn-sm" type="button" :aria-describedby="`${uid}-${r.id}`" @click="toggle(r)">
                 {{ r.enabled ? 'Disable' : 'Enable' }}
               </button>
-              <button class="btn btn-sm" type="button" @click="edit(r)">Edit</button>
-              <button class="btn btn-sm btn-danger" type="button" @click="remove(r)">Delete</button>
+              <button class="btn btn-sm" type="button" :aria-describedby="`${uid}-${r.id}`" @click="edit(r)">
+                Edit
+              </button>
+              <button
+                class="btn btn-sm btn-danger"
+                type="button"
+                :aria-describedby="`${uid}-${r.id}`"
+                @click="remove(r)"
+              >
+                Delete
+              </button>
             </td>
           </tr>
         </tbody>

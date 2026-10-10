@@ -40,10 +40,12 @@ const confirmError = confirmRepoKey.errorText;
 const tab = ref<'installed' | 'available' | 'repos'>('installed');
 const uid = useId();
 const tabId = (t: string) => `${uid}-tab-${t}`;
+const rowId = (a: AvailablePlugin) => `${uid}-a-${a.repoId}-${a.pluginId}`;
 const notice = ref<string>();
 
 // The three lists show together, once all have loaded.
 const ready = computed(() => !!pluginsQuery.data.value && !!availableQuery.data.value && !!reposQuery.data.value);
+const loading = computed(() => [pluginsQuery, availableQuery, reposQuery].some((q) => q.isPending.value));
 const plugins = computed(() => (ready.value ? (pluginsQuery.data.value ?? []) : []));
 const available = computed(() => (ready.value ? (availableQuery.data.value ?? []) : []));
 const repos = computed(() => (ready.value ? (reposQuery.data.value ?? []) : []));
@@ -221,7 +223,7 @@ const BLOCKED: Record<string, string> = {
       role="tabpanel"
       :aria-labelledby="tabId('installed')"
     >
-      <table class="table" :aria-labelledby="tabId('installed')" :aria-busy="!ready">
+      <table class="table" :aria-labelledby="tabId('installed')" :aria-busy="loading">
         <thead>
           <tr>
             <th>Plugin</th>
@@ -275,7 +277,7 @@ const BLOCKED: Record<string, string> = {
           </tr>
         </tbody>
       </table>
-      <p v-if="!ready" class="sr-only" role="status">Loading…</p>
+      <p v-if="loading" class="sr-only" role="status">Loading…</p>
     </div>
 
     <div
@@ -285,7 +287,7 @@ const BLOCKED: Record<string, string> = {
       role="tabpanel"
       :aria-labelledby="tabId('available')"
     >
-      <table class="table" :aria-labelledby="tabId('available')" :aria-busy="!ready">
+      <table class="table" :aria-labelledby="tabId('available')" :aria-busy="loading">
         <thead>
           <tr>
             <th>Plugin</th>
@@ -298,8 +300,7 @@ const BLOCKED: Record<string, string> = {
         <tbody>
           <tr v-for="a in available" :key="`${a.repoId}:${a.pluginId}`">
             <td>
-              <strong :id="`${uid}-a-${a.repoId}-${a.pluginId}`">{{ a.name }}</strong>
-              <span class="mono small muted">{{ a.pluginId }}</span>
+              <strong :id="rowId(a)">{{ a.name }}</strong> <span class="mono small muted">{{ a.pluginId }}</span>
               <div v-if="a.description" class="small muted">{{ a.description }}</div>
             </td>
             <td>
@@ -318,7 +319,7 @@ const BLOCKED: Record<string, string> = {
                 class="btn btn-sm btn-primary"
                 type="button"
                 :disabled="!a.latest"
-                :aria-describedby="`${uid}-a-${a.repoId}-${a.pluginId}`"
+                :aria-describedby="rowId(a)"
                 @click="openInstall(a)"
               >
                 {{
@@ -346,7 +347,7 @@ const BLOCKED: Record<string, string> = {
         </button>
       </div>
       <div class="table-card">
-        <table class="table" :aria-labelledby="tabId('repos')" :aria-busy="!ready">
+        <table class="table" :aria-labelledby="tabId('repos')" :aria-busy="loading">
           <thead>
             <tr>
               <th>Repository</th>

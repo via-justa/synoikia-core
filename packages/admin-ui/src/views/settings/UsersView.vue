@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, useId } from 'vue';
 import { errorText } from '../../api';
 import ModalDialog from '../../components/ModalDialog.vue';
 import { latestError } from '../../composables/useApiMutation';
@@ -23,6 +23,8 @@ const passwordError = setPassword.errorText;
 
 // Both lists show together, once both have loaded.
 const ready = computed(() => !!usersQuery.data.value && !!rolesQuery.data.value);
+const loading = computed(() => usersQuery.isPending.value || rolesQuery.isPending.value);
+const uid = useId();
 const users = computed(() => (ready.value ? (usersQuery.data.value ?? []) : []));
 const roles = computed(() => (ready.value ? (rolesQuery.data.value ?? []) : []));
 const adding = ref<{ username: string; password: string; roleId: string }>();
@@ -98,19 +100,19 @@ function reset() {
     </div>
     <p v-if="error" class="alert error" role="alert">{{ error }}</p>
     <div class="table-card">
-      <table class="table">
+      <table class="table" aria-label="Users" :aria-busy="loading">
         <thead>
           <tr>
             <th>User</th>
             <th>Role</th>
             <th>Sign-in</th>
             <th>Last sign-in</th>
-            <th />
+            <th><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="u in users" :key="u.id" :class="{ off: u.disabled }">
-            <td>
+            <td :id="`${uid}-${u.id}`">
               {{ u.username }} <span v-if="u.id === session.user?.id" class="pill info">you</span>
               <span v-if="u.disabled" class="pill">disabled</span>
             </td>
@@ -131,13 +133,24 @@ function reset() {
             </td>
             <td class="small">{{ ago(u.lastLoginAt) }}</td>
             <td class="right">
-              <button class="btn btn-sm" type="button" @click="openReset(u)">Set password</button>
-              <button v-if="u.totpEnabled" class="btn btn-sm" type="button" @click="askResetTotp(u)">Reset 2FA</button>
+              <button class="btn btn-sm" type="button" :aria-describedby="`${uid}-${u.id}`" @click="openReset(u)">
+                Set password
+              </button>
+              <button
+                v-if="u.totpEnabled"
+                class="btn btn-sm"
+                type="button"
+                :aria-describedby="`${uid}-${u.id}`"
+                @click="askResetTotp(u)"
+              >
+                Reset 2FA
+              </button>
               <button
                 v-if="u.id !== session.user?.id"
                 class="btn btn-sm"
                 :class="{ 'btn-danger': !u.disabled }"
                 type="button"
+                :aria-describedby="`${uid}-${u.id}`"
                 @click="toggleDisabled(u)"
               >
                 {{ u.disabled ? 'Enable' : 'Disable' }}
@@ -146,6 +159,7 @@ function reset() {
           </tr>
         </tbody>
       </table>
+      <p v-if="loading" class="sr-only" role="status">Loading…</p>
     </div>
 
     <ModalDialog v-if="adding" title="Add user" @close="adding = undefined">
@@ -155,8 +169,14 @@ function reset() {
       </div>
       <div class="field">
         <label for="u-pass">Password</label>
-        <input id="u-pass" v-model="adding.password" type="password" autocomplete="new-password" />
-        <p class="help">At least 12 characters. Leave empty for a single-sign-on-only account.</p>
+        <input
+          id="u-pass"
+          v-model="adding.password"
+          type="password"
+          autocomplete="new-password"
+          aria-describedby="u-pass-help"
+        />
+        <p id="u-pass-help" class="help">At least 12 characters. Leave empty for a single-sign-on-only account.</p>
       </div>
       <div class="field">
         <label for="u-role">Role</label>
@@ -176,8 +196,14 @@ function reset() {
     <ModalDialog v-if="resetting" :title="`Set password for ${resetting.user.username}`" @close="resetting = undefined">
       <div class="field">
         <label for="r-pass">New password</label>
-        <input id="r-pass" v-model="resetting.password" type="password" autocomplete="new-password" />
-        <p class="help">Their existing sessions are signed out.</p>
+        <input
+          id="r-pass"
+          v-model="resetting.password"
+          type="password"
+          autocomplete="new-password"
+          aria-describedby="r-pass-help"
+        />
+        <p id="r-pass-help" class="help">Their existing sessions are signed out.</p>
       </div>
       <p v-if="passwordError" class="alert error" role="alert">{{ passwordError }}</p>
       <template #footer>

@@ -8,6 +8,7 @@ const props = defineProps<{
   suggestions?: { value: string; label: string }[];
   inputId?: string;
   ariaLabelledby?: string;
+  ariaDescribedby?: string;
 }>();
 const model = defineModel<string[]>({ required: true });
 const draft = ref('');
@@ -50,6 +51,7 @@ const labelOf = (v: string) => props.suggestions?.find((s) => s.value === v)?.la
       :id="inputId"
       v-model="draft"
       :aria-labelledby="ariaLabelledby"
+      :aria-describedby="ariaDescribedby"
       :placeholder="placeholder"
       :list="suggestions?.length ? listId : undefined"
       @keydown.enter.prevent="add()"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, useId } from 'vue';
 import { errorText } from '../../api';
 import ModalDialog from '../../components/ModalDialog.vue';
 import { useConfirm } from '../../composables/useConfirm';
@@ -22,6 +22,7 @@ const error = computed(() => {
   return actionError.value ?? (loadError ? errorText(loadError) : undefined);
 });
 const notice = ref<string>();
+const uid = useId();
 
 const EVENT_LABELS: Record<NotifyEvent, string> = {
   'instance.error': 'Endpoint went down',
@@ -122,19 +123,19 @@ async function remove(ch: Notifier) {
     <p v-if="notice" class="alert ok" role="status">{{ notice }}</p>
 
     <div class="table-card">
-      <table class="table">
+      <table class="table" aria-label="Notification channels" :aria-busy="notifiersQuery.isPending.value">
         <thead>
           <tr>
             <th>Channel</th>
             <th>Events</th>
             <th>Last sent</th>
-            <th />
+            <th><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="ch in channels" :key="ch.id" :class="{ off: !ch.enabled }">
             <td>
-              <strong>{{ ch.name }}</strong> <span class="pill">{{ ch.kind }}</span>
+              <strong :id="`${uid}-${ch.id}`">{{ ch.name }}</strong> <span class="pill">{{ ch.kind }}</span>
               <div class="small mono muted">
                 {{ ch.kind === 'ntfy' ? `${ch.config.server}/${ch.config.topic}` : ch.config.url }}
               </div>
@@ -147,9 +148,20 @@ async function remove(ch: Notifier) {
             </td>
             <td class="small">{{ ago(ch.lastSentAt) }}</td>
             <td class="right">
-              <button class="btn btn-sm" type="button" @click="test(ch)">Test</button>
-              <button class="btn btn-sm" type="button" @click="edit(ch)">Edit</button>
-              <button class="btn btn-sm btn-danger" type="button" @click="remove(ch)">Delete</button>
+              <button class="btn btn-sm" type="button" :aria-describedby="`${uid}-${ch.id}`" @click="test(ch)">
+                Test
+              </button>
+              <button class="btn btn-sm" type="button" :aria-describedby="`${uid}-${ch.id}`" @click="edit(ch)">
+                Edit
+              </button>
+              <button
+                class="btn btn-sm btn-danger"
+                type="button"
+                :aria-describedby="`${uid}-${ch.id}`"
+                @click="remove(ch)"
+              >
+                Delete
+              </button>
             </td>
           </tr>
         </tbody>
@@ -183,8 +195,10 @@ async function remove(ch: Notifier) {
         </div>
         <div class="field">
           <label for="n-topic">Topic</label>
-          <input id="n-topic" v-model="draft.topic" placeholder="homelab-a8f3" />
-          <p class="help">On public servers, anyone who knows the topic can read it: pick something unguessable.</p>
+          <input id="n-topic" v-model="draft.topic" placeholder="homelab-a8f3" aria-describedby="n-topic-help" />
+          <p id="n-topic-help" class="help">
+            On public servers, anyone who knows the topic can read it: pick something unguessable.
+          </p>
         </div>
         <div class="field">
           <label for="n-tok">Access token</label>
@@ -213,8 +227,9 @@ async function remove(ch: Notifier) {
             type="password"
             autocomplete="new-password"
             :placeholder="draft.secretsSet.hmacSecret ? 'Set — leave empty to keep' : 'Optional'"
+            aria-describedby="n-hmac-help"
           />
-          <p class="help">
+          <p id="n-hmac-help" class="help">
             Sent as <span class="mono">x-synoikia-signature: sha256=HMAC(secret, timestamp + "." + body)</span>.
           </p>
           <label v-if="draft.secretsSet.hmacSecret" class="row small"
@@ -222,14 +237,14 @@ async function remove(ch: Notifier) {
           >
         </div>
       </div>
-      <div class="field">
-        <label>Events</label>
+      <div class="field" role="group" aria-labelledby="n-events">
+        <label id="n-events">Events</label>
         <label v-for="e in NOTIFY_EVENTS" :key="e" class="row small">
           <input v-model="draft.events" type="checkbox" :value="e" /> {{ EVENT_LABELS[e] }}
         </label>
       </div>
-      <div class="field">
-        <label>Endpoints</label>
+      <div class="field" role="group" aria-labelledby="n-endpoints">
+        <label id="n-endpoints">Endpoints</label>
         <label class="row small"><input v-model="draft.allInstances" type="checkbox" /> All endpoints</label>
         <template v-if="!draft.allInstances">
           <label v-for="i in instances" :key="i.id" class="row small">

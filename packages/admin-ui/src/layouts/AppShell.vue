@@ -107,7 +107,14 @@ async function logout() {
           :aria-current="$route.path === `/my/${ep.id}` ? 'page' : undefined"
         >
           <span>/{{ ep.slug }}</span>
-          <span v-if="ep.status" class="dot" :class="ep.status.state" :title="ep.status.state" />
+          <span
+            v-if="ep.status"
+            class="dot"
+            :class="ep.status.state"
+            :title="ep.status.state"
+            role="img"
+            :aria-label="ep.status.state"
+          />
         </RouterLink>
         <div v-if="mine.length === 0" class="nav-empty">No endpoints for your role</div>
         <div class="nav-section" />
@@ -128,7 +135,7 @@ async function logout() {
           :aria-current="$route.path.startsWith(`/endpoints/${ep.slug}/`) ? 'page' : undefined"
         >
           <span>/{{ ep.slug }}</span>
-          <span class="dot" :class="ep.status" :title="ep.status" />
+          <span class="dot" :class="ep.status" :title="ep.status" role="img" :aria-label="ep.status" />
         </RouterLink>
         <div v-if="endpoints.length === 0" class="nav-empty">No endpoints yet</div>
         <RouterLink to="/endpoints/new" class="nav-item add" exact-active-class="active">+ New endpoint</RouterLink>

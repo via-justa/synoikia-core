@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, useId } from 'vue';
 import { errorText } from '../api';
 import { useConfirm } from '../composables/useConfirm';
 import { useCreateMyToken, useMyGrantsQuery, useMyTokensQuery, useRevokeMine } from '../composables/useMyCredentials';
@@ -14,6 +14,7 @@ const endpointsQuery = useMyEndpointsQuery();
 const createToken = useCreateMyToken();
 const revokeMine = useRevokeMine();
 const { confirm } = useConfirm();
+const uid = useId();
 // The three lists show together, once all have loaded.
 const ready = computed(() => !!tokensQuery.data.value && !!grantsQuery.data.value && !!endpointsQuery.data.value);
 const tokens = computed(() => (ready.value ? (tokensQuery.data.value ?? []) : []));
@@ -66,7 +67,7 @@ async function revoke(kind: 'tokens' | 'grants', id: string, what: string) {
 
 <template>
   <section class="card">
-    <h2>My tokens</h2>
+    <h2 :id="`${uid}-tokens`">My tokens</h2>
     <p class="small muted">
       Bearer tokens for MCP clients. A token reaches only your role's endpoints, at your levels, and only you can
       approve its calls.
@@ -76,18 +77,25 @@ async function revoke(kind: 'tokens' | 'grants', id: string, what: string) {
       Copy the token now; it is not shown again: <span class="mono">{{ created }}</span>
       <button class="btn btn-sm" type="button" @click="created = undefined">Done</button>
     </div>
-    <table v-if="live.length" class="table">
+    <table v-if="live.length" class="table" :aria-labelledby="`${uid}-tokens`">
       <tbody>
         <tr v-for="t in live" :key="t.id">
           <td>
-            <strong>{{ t.name }}</strong>
+            <strong :id="`${uid}-${t.id}`">{{ t.name }}</strong>
             <div class="small muted">
               {{ t.scope.map(slugOf).join(', ') }} · {{ t.access === 'write' ? 'read & write' : 'read only' }}
             </div>
           </td>
           <td class="small muted">used {{ ago(t.lastUsedAt) }}</td>
           <td class="right">
-            <button class="btn btn-sm btn-danger" type="button" @click="revoke('tokens', t.id, t.name)">Revoke</button>
+            <button
+              class="btn btn-sm btn-danger"
+              type="button"
+              :aria-describedby="`${uid}-${t.id}`"
+              @click="revoke('tokens', t.id, t.name)"
+            >
+              Revoke
+            </button>
           </td>
         </tr>
       </tbody>
@@ -97,7 +105,7 @@ async function revoke(kind: 'tokens' | 'grants', id: string, what: string) {
         <label for="t-name">Name</label>
         <input id="t-name" v-model="draft.name" maxlength="100" />
       </div>
-      <div class="field">
+      <div class="field" role="group" aria-label="Endpoints">
         <label class="row small check"><input v-model="draft.all" type="checkbox" /> All my endpoints</label>
         <template v-if="!draft.all">
           <label v-for="e in endpoints" :key="e.id" class="row small check">
@@ -137,20 +145,25 @@ async function revoke(kind: 'tokens' | 'grants', id: string, what: string) {
       New token
     </button>
 
-    <h2 class="next">My OAuth connections</h2>
+    <h2 :id="`${uid}-grants`" class="next">My OAuth connections</h2>
     <p v-if="!liveGrants.length" class="small muted">No client has connected with your consent.</p>
-    <table v-else class="table">
+    <table v-else class="table" :aria-labelledby="`${uid}-grants`">
       <tbody>
         <tr v-for="g in liveGrants" :key="g.id">
           <td>
-            <strong>{{ g.client.name }}</strong>
+            <strong :id="`${uid}-${g.id}`">{{ g.client.name }}</strong>
             <div class="small muted">
               {{ g.resources.join(', ') }} · {{ g.access === 'write' ? 'read & write' : 'read only' }}
             </div>
           </td>
           <td class="small muted">since {{ ago(g.createdAt) }}</td>
           <td class="right">
-            <button class="btn btn-sm btn-danger" type="button" @click="revoke('grants', g.id, g.client.name)">
+            <button
+              class="btn btn-sm btn-danger"
+              type="button"
+              :aria-describedby="`${uid}-${g.id}`"
+              @click="revoke('grants', g.id, g.client.name)"
+            >
               Revoke
             </button>
           </td>

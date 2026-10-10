@@ -1,6 +1,6 @@
 import { flushPromises } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fakeApi, mountAt, signedIn } from './helpers';
+import { fakeApi, json, mountAt, signedIn } from './helpers';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -213,5 +213,132 @@ describe('Radio groups', () => {
     expect(document.activeElement).toBe(radios[0]);
     expect(radios[2]!.getAttribute('aria-checked')).toBe('true');
     expect(calls.filter((c) => c.method !== 'GET')).toEqual([]);
+  });
+});
+
+describe('Tables', () => {
+  const token = {
+    id: 't1',
+    createdBy: 'u1',
+    name: 'laptop',
+    scope: ['*'],
+    access: 'read',
+    createdAt: '2026-01-01T00:00:00Z',
+    expiresAt: null,
+    lastUsedAt: null,
+    revokedAt: null,
+  };
+  const clientsApi = (extra: Record<string, unknown> = {}) =>
+    fakeApi({
+      'GET /api/session': signedIn,
+      'GET /api/overview': overview,
+      'GET /api/tokens': [token],
+      'GET /api/oauth/clients': [],
+      'GET /api/oauth/grants': [],
+      'GET /api/users': [signedIn.user],
+      ...extra,
+    });
+
+  it('are named by their heading, name the action column and tie row buttons to their row', async () => {
+    clientsApi();
+    await mountAt('/clients');
+    const tables = [...document.querySelectorAll('table')];
+    expect(tables.map((t) => refText(t, 'aria-labelledby'))).toEqual([
+      'Bearer tokens',
+      'OAuth clients',
+      'OAuth grants',
+    ]);
+    expect(tables.map((t) => t.querySelector('th:last-child')!.textContent)).toEqual(['Actions', 'Actions', 'Actions']);
+    const revoke = [...tables[0]!.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Revoke')!;
+    expect(refText(revoke, 'aria-describedby')).toBe('laptop');
+  });
+
+  it('say they are busy while loading, with a spoken Loading where nothing shows', async () => {
+    const { fetchMock } = fakeApi({
+      'GET /api/session': signedIn,
+      'GET /api/overview': overview,
+      'GET /api/roles': [],
+      'GET /api/users': [signedIn.user],
+    });
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const real = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      if (input.startsWith('/api/users')) await held;
+      return real(input, init);
+    });
+    await mountAt('/settings/users');
+    const table = document.querySelector('table[aria-label="Users"]')!;
+    expect(table.getAttribute('aria-busy')).toBe('true');
+    expect(document.querySelector('.table-card [role="status"]')!.textContent).toBe('Loading…');
+
+    release();
+    await flushPromises();
+    expect(table.getAttribute('aria-busy')).toBe('false');
+    expect(document.querySelector('.table-card [role="status"]')).toBeNull();
+    const reset = [...table.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Set password')!;
+    expect(refText(reset, 'aria-describedby')).toContain('admin');
+  });
+});
+
+describe('Alerts and notices', () => {
+  it('announce a failed dialog action as an alert', async () => {
+    fakeApi({
+      'GET /api/session': signedIn,
+      'GET /api/overview': overview,
+      'GET /api/tokens': [],
+      'GET /api/oauth/clients': [],
+      'GET /api/oauth/grants': [],
+      'GET /api/users': [signedIn.user],
+      'POST /api/tokens': json(400, { error: 'invalid', message: 'Name taken' }),
+    });
+    await mountAt('/clients');
+    [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New token')!.click();
+    await flushPromises();
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const group = dialog.querySelector('[role="group"]')!;
+    expect(refText(group, 'aria-labelledby')).toBe('Endpoints');
+    expect(refText(dialog.querySelector('#t-exp')!, 'aria-describedby')).toBe('Leave empty for no expiry.');
+    (dialog.querySelector('#t-name') as HTMLInputElement).value = 'desk';
+    dialog.querySelector('#t-name')!.dispatchEvent(new Event('input'));
+    (dialog.querySelector('input[type="checkbox"]') as HTMLInputElement).click();
+    await flushPromises();
+    [...dialog.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Create token')!.click();
+    await flushPromises();
+    expect(dialog.querySelector('[role="alert"]')!.textContent).toBe('Name taken');
+  });
+
+  it('give a saved notice the status role and a failed save the alert role', async () => {
+    let fail = false;
+    fakeApi({
+      'GET /api/session': signedIn,
+      'GET /api/overview': overview,
+      'GET /api/settings': {
+        security: {},
+        mcp: {
+          defaultAuthMode: 'oauth',
+          allowDynamicRegistration: true,
+          cfAccess: { teamDomain: '', aud: '' },
+          trustedIdentityHeader: '',
+          accessTokenTtlMinutes: 60,
+          refreshTokenTtlDays: 30,
+        },
+        audit: { retentionDays: null },
+        oidc: null,
+        forceLocalLogin: false,
+        publicMcpUrl: null,
+        publicAdminUrl: null,
+      },
+      'PUT /api/settings/mcp': (b: unknown) => (fail ? json(400, { error: 'invalid', message: 'Bad value' }) : b),
+    });
+    await mountAt('/settings/mcp');
+    const form = document.querySelector('form')!;
+    form.requestSubmit();
+    await flushPromises();
+    expect(form.querySelector('[role="status"]')!.textContent).toBe('Saved.');
+    fail = true;
+    form.requestSubmit();
+    await flushPromises();
+    expect(form.querySelector('[role="alert"]')!.textContent).toBe('Bad value');
   });
 });
