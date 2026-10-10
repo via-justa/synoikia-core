@@ -25,7 +25,7 @@ const NON_SPA_PREFIXES = ['/api', '/auth', '/.well-known', '/healthz'];
 /** The LAN-only admin listener (design §2.1): Vue SPA + Admin API + login/OIDC. */
 export function createAdminApp(ctx: AppContext, { uiDir }: AdminAppOptions = {}): Hono<AdminEnv> {
   const app = new Hono<AdminEnv>();
-  app.onError(errorResponse);
+  app.onError((err, c) => errorResponse(err, c, ctx.log));
 
   // The SPA loads only its own bundle; nothing may frame the portal (clickjacking on approvals).
   app.use('*', async (c, next) => {

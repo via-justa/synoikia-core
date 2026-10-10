@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { loadConfig } from '../src/config/env.js';
-import { clientIp } from '../src/http/common.js';
+import { clientIp, errorResponse } from '../src/http/common.js';
+import { createLogger, type LogLevel } from '../src/log.js';
 import { isValidSlug, RESERVED_SLUGS } from '../src/endpoints/slug.js';
 
 describe('loadConfig', () => {
@@ -55,5 +56,31 @@ describe('clientIp', () => {
     expect(await ipOf(2, '6.6.6.6, 203.0.113.9, 10.0.0.2')).toBe('203.0.113.9');
     // Untrusted: the header is ignored.
     expect(await ipOf(0, '6.6.6.6')).toBe('none');
+  });
+});
+
+describe('errorResponse', () => {
+  it('logs an unexpected error through the logger, by route pattern, and answers a bare 500', async () => {
+    const lines: [LogLevel, string][] = [];
+    const log = createLogger('debug', (line, level) => lines.push([level, line]));
+    const app = new Hono();
+    app.onError((err, c) => errorResponse(err, c, log));
+    app.get('/a/:token', () => {
+      throw new Error('boom');
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const res = await app.request('/a/secret-link-token');
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ error: 'internal', message: 'Internal error' });
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+    expect(lines).toHaveLength(1);
+    const [level, line] = lines[0]!;
+    expect(level).toBe('error');
+    expect(line).toMatch(/^ERROR request failed method=GET route=\/a\/:token error="Error: boom/);
+    expect(line).not.toContain('secret-link-token');
   });
 });
