@@ -1,18 +1,28 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
-import { errorText, http } from '../../api';
+import { computed, ref, watch } from 'vue';
+import { errorText } from '../../api';
 import ChipsInput from '../../components/ChipsInput.vue';
 import InfoTip from '../../components/InfoTip.vue';
 import ModalDialog from '../../components/ModalDialog.vue';
 import RegistryPicker from '../../components/RegistryPicker.vue';
+import { accessBase, useLevelViewQuery, useOperationsQuery } from '../../composables/useAccess';
+import { latestError } from '../../composables/useApiMutation';
+import { useConfirm } from '../../composables/useConfirm';
+import { usePluginsQuery } from '../../composables/usePlugins';
+import {
+  useDeleteRule,
+  useRuleFormQuery,
+  useRuleOptions,
+  useRulesQuery,
+  useSaveRule,
+  useToggleRule,
+} from '../../composables/useRules';
 import { REASON_LABELS, ago, formatDate } from '../../format';
 import type {
   Instance,
-  LevelView,
   MatchCondition,
   MatchField,
   Operation,
-  PluginRow,
   Rule,
   TargetFieldOptions,
   TargetsDecl,
@@ -26,53 +36,55 @@ const props = defineProps<{
 }>();
 // `own`: a user's own rules on `/api/me` (design §6.4); admin rules show there read-only.
 const base = computed(() =>
-  props.own ? `/api/me/endpoints/${props.instance.id}` : `/api/instances/${props.instance.id}`,
+  accessBase({ instanceId: props.instance.id, scope: props.own ? { kind: 'own' } : undefined }),
 );
+const rulesQuery = useRulesQuery(base);
+const viewQuery = useLevelViewQuery(base, () => !!props.own);
+const formQuery = useRuleFormQuery(base, () => !!props.own);
+const opsQuery = useOperationsQuery(base, () => !props.own);
+const pluginsQuery = usePluginsQuery(() => !props.own);
+const saveRule = useSaveRule(base);
+const toggleRule = useToggleRule(base);
+const deleteRule = useDeleteRule(base);
+const { confirm } = useConfirm();
 
-const rules = ref<Rule[]>([]);
-const ops = ref<Operation[]>([]);
-const profiles = ref<Record<string, MatchField[]>>({});
-const targets = ref<TargetsDecl>();
-const error = ref<string>();
-
-async function load() {
-  try {
-    if (props.own) {
-      const [r, view, form] = await Promise.all([
-        http.get<Rule[]>(`${base.value}/rules`),
-        http.get<LevelView>(`${base.value}/access`),
-        http.get<{ matchProfiles: Record<string, MatchField[]>; targets: TargetsDecl | null }>(
-          `${base.value}/rule-form`,
-        ),
-      ]);
-      rules.value = r;
-      ops.value = view.operations.map(
+// Shown only once every call it needs has answered, as one load.
+const loaded = computed(() => {
+  const rules = rulesQuery.data.value;
+  if (props.own) {
+    const view = viewQuery.data.value;
+    const form = formQuery.data.value;
+    if (!rules || !view || !form) return undefined;
+    return {
+      rules,
+      ops: view.operations.map(
         (o) =>
           ({
             ...o,
             classification: o.classification === 'locked' ? 'write' : o.classification,
             locked: o.classification === 'locked',
           }) as unknown as Operation,
-      );
-      profiles.value = form.matchProfiles;
-      targets.value = form.targets ?? undefined;
-      return;
-    }
-    const [r, o, plugins] = await Promise.all([
-      http.get<Rule[]>(`${base.value}/rules`),
-      http.get<Operation[]>(`${base.value}/operations`),
-      http.get<PluginRow[]>('/api/plugins'),
-    ]);
-    rules.value = r;
-    ops.value = o;
-    const manifest = plugins.find((p) => p.id === props.instance.plugin?.id)?.manifest;
-    profiles.value = manifest?.matchProfiles ?? {};
-    targets.value = manifest?.targets;
-  } catch (err) {
-    error.value = errorText(err);
+      ),
+      profiles: form.matchProfiles,
+      targets: form.targets ?? undefined,
+    };
   }
-}
-onMounted(load);
+  const ops = opsQuery.data.value;
+  const plugins = pluginsQuery.data.value;
+  if (!rules || !ops || !plugins) return undefined;
+  const manifest = plugins.find((p) => p.id === props.instance.plugin?.id)?.manifest;
+  return { rules, ops, profiles: manifest?.matchProfiles ?? {}, targets: manifest?.targets };
+});
+const rules = computed(() => loaded.value?.rules ?? []);
+const ops = computed(() => loaded.value?.ops ?? []);
+const profiles = computed<Record<string, MatchField[]>>(() => loaded.value?.profiles ?? {});
+const targets = computed<TargetsDecl | undefined>(() => loaded.value?.targets);
+
+// One page alert: the latest change's failure, else a failed load.
+const error = computed(() => {
+  const loadError = [rulesQuery, viewQuery, formQuery, opsQuery, pluginsQuery].find((q) => q.error.value)?.error.value;
+  return latestError([toggleRule, deleteRule]) ?? (loadError ? errorText(loadError) : undefined);
+});
 
 const eligible = computed(() => ops.value.filter((o) => o.classification === 'write' && !o.locked));
 
@@ -104,7 +116,6 @@ interface Draft {
   note?: string;
 }
 const draft = ref<Draft>();
-const options = ref<Record<string, { value: string; label: string }[]>>({});
 
 const emptyValue = (): FieldValue => ({
   text: '',
@@ -120,16 +131,9 @@ const fields = computed<MatchField[]>(() =>
   draftOp.value?.matchProfile ? (profiles.value[draftOp.value.matchProfile] ?? []) : [],
 );
 
-watch(fields, async (fs) => {
-  for (const f of fs) {
-    if (f.optionsSource && !options.value[f.optionsSource]) {
-      const opts = await http
-        .get<{ value: string; label: string }[]>(`${base.value}/options/${f.optionsSource}`)
-        .catch(() => []);
-      options.value = { ...options.value, [f.optionsSource]: opts };
-    }
-  }
-});
+const options = useRuleOptions(base, () => [
+  ...new Set(fields.value.flatMap((f) => (f.optionsSource ? [f.optionsSource] : []))),
+]);
 
 function localDateTime(iso: string | null) {
   if (!iso) return '';
@@ -225,7 +229,7 @@ function buildMatch(): MatchCondition[] {
   return out;
 }
 
-async function save() {
+function save() {
   const d = draft.value;
   if (!d) return;
   const body = {
@@ -237,31 +241,19 @@ async function save() {
     reason: d.reason,
     enabled: d.enabled,
   };
-  try {
-    if (d.id) await http.patch(`${base.value}/rules/${d.id}`, body);
-    else await http.post(`${base.value}/rules`, body);
-    draft.value = undefined;
-    await load();
-  } catch (err) {
-    draft.value = { ...d, note: errorText(err) };
-  }
+  saveRule.mutate(
+    { id: d.id, body },
+    {
+      onSuccess: () => (draft.value = undefined),
+      onError: (err) => (draft.value = { ...d, note: errorText(err) }),
+    },
+  );
 }
 
-async function toggle(rule: Rule) {
-  try {
-    await http.patch(`${base.value}/rules/${rule.id}`, { enabled: !rule.enabled });
-    await load();
-  } catch (err) {
-    error.value = errorText(err);
-  }
-}
+const toggle = (rule: Rule) => toggleRule.mutate(rule);
 async function remove(rule: Rule) {
-  if (!window.confirm(`Delete the rule for ${rule.operation.key}?`)) return;
-  try {
-    await http.del(`${base.value}/rules/${rule.id}`);
-    await load();
-  } catch (err) {
-    error.value = errorText(err);
+  if (await confirm({ title: `Delete the rule for ${rule.operation.key}?`, action: 'Delete', danger: true })) {
+    deleteRule.mutate(rule.id);
   }
 }
 

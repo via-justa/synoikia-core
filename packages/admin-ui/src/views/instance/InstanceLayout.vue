@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { useInstances, useRefreshOverview } from '../../composables/useOverview';
+import { useOverviewQuery } from '../../composables/useOverview';
 
 /** Resolves `/endpoints/:slug/*` to an instance and hands it to the tab views. */
-const instances = useInstances();
-const refreshOverview = useRefreshOverview();
+const overview = useOverviewQuery();
 const route = useRoute();
 const slug = computed(() => String(route.params.slug));
-const instance = computed(() => instances.value.find((i) => i.slug === slug.value));
+const instance = computed(() => overview.data.value?.instances.find((i) => i.slug === slug.value));
 const loaded = ref(false);
 
+// A slug the cache doesn't know may be new: fetch once more (joining a fetch in flight) before saying so.
 async function ensure() {
-  if (!instance.value) await refreshOverview().catch(() => undefined);
+  if (!instance.value) await overview.refetch({ cancelRefetch: false });
   loaded.value = true;
 }
 onMounted(ensure);

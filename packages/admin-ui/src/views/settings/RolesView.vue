@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { errorText } from '../../api';
+import { latestError } from '../../composables/useApiMutation';
 import { useConfirm } from '../../composables/useConfirm';
 import { useOverviewQuery } from '../../composables/useOverview';
 import {
@@ -27,11 +28,8 @@ const newName = ref('');
 
 // One page alert: the latest action's failure, else a failed load.
 const error = computed(() => {
-  const latest = [createRole, update, del, setInstances]
-    .map((m) => ({ at: m.submittedAt.value, text: m.errorText.value }))
-    .reduce((a, b) => (b.at > a.at ? b : a));
   const loadError = rolesQuery.error.value ?? overviewQuery.error.value;
-  return latest.text ?? (loadError ? errorText(loadError) : undefined);
+  return latestError([createRole, update, del, setInstances]) ?? (loadError ? errorText(loadError) : undefined);
 });
 
 const SWITCHES = [
