@@ -1,6 +1,6 @@
 {
   "name": "@synoikia/core",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Core process: MCP endpoints, Admin API, plugin host, permission gate",
   "license": "MIT",
   "repository": {

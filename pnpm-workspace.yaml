@@ -10,6 +10,8 @@ onlyBuiltDependencies:
 # (which would need Python and a compiler in the image).
 ignoredBuiltDependencies:
   - better-sqlite3
+  # vue-demi's postinstall only switches Vue 2/3 builds; its default lib already targets Vue 3.
+  - vue-demi
 
 overrides:
   '@tanstack/match-sorter-utils': 9.1.2
