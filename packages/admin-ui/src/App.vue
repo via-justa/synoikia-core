@@ -2,6 +2,7 @@
 import { useQueryClient } from '@tanstack/vue-query';
 import { watch } from 'vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
+import { announcement } from './composables/useAnnounce';
 import { provideConfirm } from './composables/useConfirm';
 import { useSessionStore } from './stores/session';
 
@@ -19,4 +20,8 @@ watch(
 <template>
   <RouterView />
   <ConfirmDialog v-if="request" :request="request" @done="settle" />
+  <!-- Outside #app, which an open dialog makes inert. -->
+  <Teleport to="body">
+    <div class="sr-only" aria-live="polite">{{ announcement }}</div>
+  </Teleport>
 </template>

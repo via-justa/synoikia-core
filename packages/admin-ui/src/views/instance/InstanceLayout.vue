@@ -44,7 +44,7 @@ const tabs = [
         </div>
       </div>
       <p v-if="instance.statusError" class="alert error">{{ instance.statusError }}</p>
-      <nav class="tabs">
+      <nav class="tabs" aria-label="Endpoint sections">
         <RouterLink
           v-for="t in tabs"
           :key="t.path"

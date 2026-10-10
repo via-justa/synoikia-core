@@ -218,8 +218,8 @@ async function remove() {
         </div>
       </div>
       <div class="field">
-        <label>Extra keys to redact</label>
-        <ChipsInput v-model="form.extraRedactKeys" placeholder="api_key" />
+        <label for="s-redact">Extra keys to redact</label>
+        <ChipsInput v-model="form.extraRedactKeys" input-id="s-redact" placeholder="api_key" />
         <p class="help">Added to the plugin's own sensitive keys in audit logs, approvals and results.</p>
       </div>
     </section>

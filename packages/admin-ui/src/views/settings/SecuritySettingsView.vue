@@ -212,8 +212,8 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
       </p>
       <h2>Who may sign in</h2>
       <div class="field">
-        <label>Allowed emails</label>
-        <ChipsInput v-model="oidc.allowPolicy.emails" placeholder="me@example.com" />
+        <label for="o-emails">Allowed emails</label>
+        <ChipsInput v-model="oidc.allowPolicy.emails" input-id="o-emails" placeholder="me@example.com" />
       </div>
       <div class="form-grid">
         <div class="field">
@@ -226,8 +226,8 @@ const callbackUrl = () => `${adminUrl.value ?? window.location.origin}/auth/oidc
         </div>
       </div>
       <div class="field">
-        <label>Allowed subjects</label>
-        <ChipsInput v-model="oidc.allowPolicy.subjects" placeholder="subject id" />
+        <label for="o-subjects">Allowed subjects</label>
+        <ChipsInput v-model="oidc.allowPolicy.subjects" input-id="o-subjects" placeholder="subject id" />
       </div>
       <div class="field check">
         <label

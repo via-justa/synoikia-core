@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import type { RouteRecordRaw, RouterHistory } from 'vue-router';
 import { setUnauthenticatedHandler } from './api';
+import { pageTitle } from './format';
 import AppShell from './layouts/AppShell.vue';
 import { useSessionStore } from './stores/session';
 import AuditView from './views/AuditView.vue';
@@ -97,7 +98,8 @@ export function createAppRouter(history: RouterHistory = createWebHistory()) {
     return true;
   });
   router.afterEach((to) => {
-    if (typeof document !== 'undefined') document.title = to.meta.title ? `${to.meta.title} · Synoikia` : 'Synoikia';
+    const title = pageTitle(to);
+    if (typeof document !== 'undefined') document.title = title ? `${title} · Synoikia` : 'Synoikia';
   });
 
   // A session that expires mid-use: back to the login page, keeping the current page.
