@@ -14,7 +14,7 @@ const floor = (lines: number, functions: number, branches: number, statements: n
 export default mergeConfig(
   shared,
   defineConfig({
-    plugins: [quickpickle()],
+    plugins: [quickpickle({ todoTags: ['@todo', '@wip', '@backlog'] })],
     test: {
       // Feature files run as tests (docs/workflow.md). Only they load the World, so test files keep their vi.mock calls.
       projects: [

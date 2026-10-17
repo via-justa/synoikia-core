@@ -1,2 +1,9 @@
 import './world.js';
 import '../access/steps/access-levels.steps.js';
+import '../access/steps/role-access.steps.js';
+import '../catalog/steps/catalog-search.steps.js';
+import '../call-path/steps/attestation.steps.js';
+import '../call-path/steps/call-pipeline.steps.js';
+import '../call-path/steps/call-targets.steps.js';
+import '../call-path/steps/rate-limits.steps.js';
+import '../call-path/steps/config-write.steps.js';

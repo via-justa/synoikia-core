@@ -1,0 +1,8 @@
+# The default rules, plus the fake credentials of the test World.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake credentials of the feature World's upstream"
+regexTarget = "match"
+regexes = ['''acme-tok-9f8e7d6c''']
