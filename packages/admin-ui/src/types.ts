@@ -37,6 +37,10 @@ export interface RoleRow extends PublicRole {
 export interface PublicUser {
   id: string;
   username: string;
+  /** `local` signs in with a password, `sso` only with single sign-on (ADR-0025). */
+  kind: 'local' | 'sso';
+  /** The address an SSO account waits for until its first sign-in. */
+  oidcEmail: string | null;
   totpEnabled: boolean;
   oidcLinked: boolean;
   hasPassword: boolean;
@@ -53,6 +57,9 @@ export interface NewUser {
   username: string;
   password?: string;
   roleId: string;
+  kind?: 'local' | 'sso';
+  /** For an SSO account: the address the identity provider verifies at the first sign-in. */
+  oidcEmail?: string;
 }
 
 /** `PATCH /api/users/:id`. */

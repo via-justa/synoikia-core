@@ -26,25 +26,35 @@ export const roles = sqliteTable('roles', {
   updatedAt: ts('updated_at'),
 });
 
-export const users = sqliteTable('users', {
-  id: id(),
-  username: text('username').notNull().unique(),
-  passwordHash: text('password_hash'),
-  totpSecretEnc: blob('totp_secret_enc', { mode: 'buffer' }),
-  totpEnabled: flag('totp_enabled').notNull().default(false),
-  /** Last accepted TOTP time step, so a code can't be replayed within its window. */
-  totpLastStep: integer('totp_last_step'),
-  recoveryCodesHash: json('recovery_codes_hash').$type<string[]>(),
-  oidcIssuer: text('oidc_issuer'),
-  oidcSubject: text('oidc_subject'),
-  createdAt: createdAt(),
-  lastLoginAt: ts('last_login_at'),
-  disabled: flag('disabled').notNull().default(false),
-  /** References `roles`; SQLite can't add that constraint to an existing table, so RoleService keeps it. */
-  roleId: text('role_id').notNull().default(ADMIN_ROLE_ID),
-  /** How the user came to exist without an admin (ADR-0010); null: an admin or setup made it. */
-  registeredVia: text('registered_via', { enum: ['oidc', 'external', 'signup'] }),
-});
+export const users = sqliteTable(
+  'users',
+  {
+    id: id(),
+    username: text('username').notNull().unique(),
+    passwordHash: text('password_hash'),
+    totpSecretEnc: blob('totp_secret_enc', { mode: 'buffer' }),
+    totpEnabled: flag('totp_enabled').notNull().default(false),
+    /** Last accepted TOTP time step, so a code can't be replayed within its window. */
+    totpLastStep: integer('totp_last_step'),
+    recoveryCodesHash: json('recovery_codes_hash').$type<string[]>(),
+    /** `local` signs in with a password, `sso` only with OIDC; fixed for life (ADR-0025). */
+    kind: text('kind', { enum: ['local', 'sso'] })
+      .notNull()
+      .default('local'),
+    /** The address an admin gave an SSO account; the first verified sign-in with it binds the subject and clears it. */
+    oidcEmail: text('oidc_email'),
+    oidcIssuer: text('oidc_issuer'),
+    oidcSubject: text('oidc_subject'),
+    createdAt: createdAt(),
+    lastLoginAt: ts('last_login_at'),
+    disabled: flag('disabled').notNull().default(false),
+    /** References `roles`; SQLite can't add that constraint to an existing table, so RoleService keeps it. */
+    roleId: text('role_id').notNull().default(ADMIN_ROLE_ID),
+    /** How the user came to exist without an admin (ADR-0010); null: an admin or setup made it. */
+    registeredVia: text('registered_via', { enum: ['oidc', 'external', 'signup'] }),
+  },
+  (t) => [uniqueIndex('users_oidc_email_idx').on(sql`lower(${t.oidcEmail})`)],
+);
 
 export const sessions = sqliteTable(
   'sessions',

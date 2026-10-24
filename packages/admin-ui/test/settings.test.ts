@@ -176,10 +176,12 @@ describe('My profile', () => {
       ...extra,
     });
 
-  it('says when an SSO link expired or the session changed', async () => {
-    profileApi({ 'GET /api/profile': { ...me, oidcLinked: true } });
-    const { wrapper } = await mountAt('/profile?error=session_changed');
-    expect(wrapper.text()).toContain('Linking expired or your session changed. Try again.');
+  it('shows an SSO account no password and no two-factor setup', async () => {
+    profileApi({ 'GET /api/profile': { ...me, kind: 'sso', oidcLinked: true, hasPassword: false } });
+    const { wrapper } = await mountAt('/profile');
+    expect(wrapper.text()).toContain('You sign in with');
+    expect(wrapper.text()).not.toContain('Change password');
+    expect(wrapper.text()).not.toContain('Two-factor authentication');
   });
 
   it('revokes a token or a grant only after the dialog confirms it', async () => {

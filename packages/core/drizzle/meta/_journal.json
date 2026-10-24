@@ -141,6 +141,13 @@
       "when": 1792796412460,
       "tag": "0019_typed_confirmation_locks",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1792851410158,
+      "tag": "0020_account_kinds",
+      "breakpoints": true
     }
   ]
 }

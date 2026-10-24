@@ -38,7 +38,7 @@ Feature: OAuth consent
 
     Scenario: A person whom Acme ID does not let in here is refused
       Given the admin set up single sign-on with Acme ID
-      When user 12 opens the sign-in of "Acme Chat" and signs in with an Acme ID that no user linked
+      When user 12 opens the sign-in of "Acme Chat" and signs in with an Acme ID that no account has
       Then user 12 is told that their account is not allowed to sign in here
 
   Rule: The person picks instances, or denies

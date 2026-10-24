@@ -213,3 +213,14 @@ Then('the row of the admin offers no delete and no disable', async (world: Porta
   await seen(own.getByRole('button', { name: 'Set password' }));
   expect(await own.getByRole('button', { name: /^(Delete|Disable)$/ }).count()).toBe(0);
 });
+
+// ── an SSO account (ADR-0025) ──
+
+Then(
+  'the row of user {int} shows {string} and offers no {string}',
+  async (world: PortalWorld, n: number, pill: string, action: string) => {
+    const user = row(world, `user ${n}`);
+    await seen(user.getByText(pill, { exact: true }));
+    expect(await user.getByRole('button', { name: action }).count()).toBe(0);
+  },
+);

@@ -31,7 +31,7 @@ Feature: Self-registration
   Rule: Sign-up closes when password sign-in is off
 
     Scenario: Without password sign-in, nobody signs up
-      Given user 12 linked their Acme ID with single sign-on on
+      Given the admin set up single sign-on with Acme ID, and user 21 has an SSO account
       And the admin lets people sign up with the role "family"
       And password sign-in is off
       When someone signs up as "newbie@acme.example"

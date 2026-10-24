@@ -86,7 +86,7 @@ Then(
 );
 
 When(
-  'user {int} opens the sign-in of {string} and signs in with an Acme ID that no user linked',
+  'user {int} opens the sign-in of {string} and signs in with an Acme ID that no account has',
   async (world: SynoikiaWorld, user: number, name: string) => {
     const flow = flowFor(app(world, name));
     flow.browser = world.pageBrowser();

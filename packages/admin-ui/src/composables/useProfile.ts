@@ -37,10 +37,6 @@ export function useDisableTotp() {
   return useApiMutation((code: string) => http.post('/api/profile/totp/disable', { code }), changed);
 }
 
-export function useUnlinkOidc() {
-  return useApiMutation(() => http.post('/api/profile/oidc/unlink'), changed);
-}
-
 export function useSignOutApprovalBrowsers() {
   return useApiMutation(() => http.post('/api/profile/approval-sessions/revoke'), changed);
 }

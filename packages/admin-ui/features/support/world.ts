@@ -116,6 +116,8 @@ export interface Person {
   password: string;
   /** The base32 secret of their authenticator app, once they set one up. */
   totpSecret?: string;
+  /** An SSO account signs in only with the identity provider (ADR-0025). */
+  sso?: boolean;
 }
 
 /** A fresh core for each scenario, with the built portal, the "Acme Tasks" service, and a person's browser on it. */
@@ -254,6 +256,7 @@ export class PortalWorld extends QuickPickleWorld {
   /** The Admin API session of a person with a password; a person with an app gives its current code. */
   async apiAs(name: string) {
     const who = this.person(name);
+    if (who.sso) return this.ssoApi(name);
     const client = await this.apiSession();
     const res = await this.expectOk(client.post('/auth/login', who), `sign in as ${name}`);
     if (res.status === 'totp_required')
@@ -475,7 +478,7 @@ export class PortalWorld extends QuickPickleWorld {
   async singleSignOn(label: string) {
     const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'acme-id-1', alg: 'RS256', use: 'sig' };
-    const codes = new Map<string, { nonce: string; sub: string }>();
+    const codes = new Map<string, { nonce: string; sub: string; email?: string }>();
     const b64 = (part: object) => Buffer.from(JSON.stringify(part)).toString('base64url');
     const idp = await this.fakeService({
       'GET /.well-known/openid-configuration': () => ({
@@ -493,7 +496,7 @@ export class PortalWorld extends QuickPickleWorld {
       'GET /jwks': () => ({ body: { keys: [jwk] } }),
       'GET /authorize': (req) => {
         const code = randomBytes(12).toString('hex');
-        codes.set(code, { nonce: req.query.get('nonce')!, sub: this.acmeNext });
+        codes.set(code, { nonce: req.query.get('nonce')!, sub: this.acmeNext, email: this.acmeNextEmail });
         const back = new URL(req.query.get('redirect_uri')!);
         back.searchParams.set('code', code);
         back.searchParams.set('state', req.query.get('state')!);
@@ -504,7 +507,15 @@ export class PortalWorld extends QuickPickleWorld {
         const grant = codes.get(new URLSearchParams(String(req.body)).get('code') ?? '');
         if (!grant) return { status: 400, body: { error: 'invalid_grant' } };
         const now = Math.floor(Date.now() / 1000);
-        const claims = { iss: idp.url, sub: grant.sub, aud: 'synoikia', nonce: grant.nonce, iat: now, exp: now + 300 };
+        const claims = {
+          iss: idp.url,
+          sub: grant.sub,
+          aud: 'synoikia',
+          nonce: grant.nonce,
+          iat: now,
+          exp: now + 300,
+          ...(grant.email ? { email: grant.email, email_verified: true } : {}),
+        };
         const input = `${b64({ alg: 'RS256', kid: 'acme-id-1', typ: 'JWT' })}.${b64(claims)}`;
         const signature = createSign('RSA-SHA256').update(input).sign(privateKey).toString('base64url');
         return { body: { access_token: 'acme-at', token_type: 'Bearer', id_token: `${input}.${signature}` } };
@@ -524,22 +535,42 @@ export class PortalWorld extends QuickPickleWorld {
   /** The subject the identity provider signs in next. */
   acmeNext = 'acme-admin';
 
-  /** The admin links their own account to the identity provider from their Admin API session. */
-  async linkSingleSignOn() {
-    const admin = await this.adminApi();
-    let at = new URL('/auth/oidc/link', this.base);
+  /** The verified address the identity provider signs in next, if any. */
+  acmeNextEmail: string | undefined;
+
+  /** An SSO account that the admin made for the person's address (ADR-0025). */
+  async ssoUser(name: string, role: { name: string }) {
+    const known = this.people.get(name);
+    if (known) return known;
+    const roleId = await this.role(role.name);
+    const username = `${name.replace(/\s+/g, '')}@acme.example`;
+    await this.expectOk(
+      (await this.adminApi()).post('/api/users', { username, kind: 'sso', oidcEmail: username, roleId }),
+      'create SSO account',
+    );
+    const p = { username, password: '', sso: true };
+    this.people.set(name, p);
+    return p;
+  }
+
+  /** The Admin API session of an SSO account, signed in through the identity provider. */
+  private async ssoApi(name: string) {
+    const client = await this.apiSession();
+    this.acmeNext = `acme-${name.replace(/\D+/g, '') || name}`;
+    this.acmeNextEmail = this.person(name).username;
+    let at = new URL('/auth/oidc/start', this.base);
     for (let hop = 0; hop < 10; hop++) {
-      const own = at.origin === this.base;
-      if (own && !at.pathname.startsWith('/auth/')) return at;
-      const res = own ? await admin.get(at.pathname + at.search) : await fetch(at, { redirect: 'manual' });
-      // The link callback answers with a page that refreshes to the next address.
-      const next =
-        res.headers.get('location') ??
-        /http-equiv="refresh" content="0;url=([^"]+)"/.exec(await res.text())?.[1]?.replace(/&amp;/g, '&');
-      if (!next) throw new Error(`link single sign-on stopped at ${at.pathname}: ${res.status}`);
+      if (at.origin === this.base && !at.pathname.startsWith('/auth/')) {
+        if (at.pathname !== '/') throw new Error(`single sign-on of ${name} ended at ${at.pathname}${at.search}`);
+        return client;
+      }
+      const res =
+        at.origin === this.base ? await client.get(at.pathname + at.search) : await fetch(at, { redirect: 'manual' });
+      const next = res.headers.get('location');
+      if (!next) throw new Error(`single sign-on of ${name} stopped at ${at.pathname}: ${res.status}`);
       at = new URL(next, at);
     }
-    throw new Error('link single sign-on: too many redirects');
+    throw new Error('single sign-on: too many redirects');
   }
 
   // ── the browser ──

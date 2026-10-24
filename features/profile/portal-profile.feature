@@ -1,21 +1,16 @@
 @id:portal-profile
 Feature: My profile in the portal
-  Each person keeps their own sign-in methods, tokens and look of the portal on My profile.
+  Each person keeps their own tokens, look of the portal and, for a local account, sign-in methods on My profile.
   A revoke asks first. New recovery codes stay on screen until the person saved them.
   The portal checks that a new password matches before it sends it.
 
-  Rule: Linking single sign-on says how it went
+  Rule: An SSO account has no password in the portal
 
-    Scenario: The admin links "Acme ID" to their account
+    Scenario: User 12 sees no password on their profile
       Given the admin set up single sign-on with "Acme ID"
-      When the admin links "Acme ID" from their profile
-      Then the profile says "Single sign-on linked."
-
-    Scenario: An Acme ID account that another user has is refused
-      Given the admin set up single sign-on with "Acme ID", and linked their account to it
-      And user 12 has the role "family"
-      When user 12 links the same Acme ID account from their profile
-      Then the profile says "That single sign-on account is already linked to another user."
+      And user 12 has an SSO account with the role "family"
+      When user 12 opens their profile
+      Then the profile shows no password and no two-factor setup, and says that user 12 signs in with "Acme ID"
 
   Rule: Own tokens revoke after a question
 

@@ -21,14 +21,6 @@ const CSRF_HEADER = 'x-csrf-token';
 const MFA_COOKIE = 'syn_mfa';
 const OIDC_COOKIE = 'syn_oidc';
 const MFA_TTL_MS = 5 * 60_000;
-const LINK_TTL_MS = 2 * 60_000;
-// The state key signs other payloads too, so a link token must have exactly this shape.
-const LinkTokenSchema = z.object({
-  purpose: z.literal('oidc_link'),
-  userId: z.string(),
-  issuer: z.string(),
-  subject: z.string(),
-});
 
 export function sessionLimits(ctx: AppContext): SessionLimits {
   const s = getSettings(ctx.db, 'security');
@@ -298,23 +290,6 @@ export function registerAuthRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     return c.redirect(url);
   });
 
-  app.get('/auth/oidc/link', requireUser(ctx), async (c) => {
-    const { url, stateToken } = await ctx.oidc.begin({
-      purpose: 'admin_link',
-      redirectUri: adminCallbackUrl(c, ctx),
-      returnTo: '/profile',
-      userId: c.get('user').id,
-    });
-    setCookie(c, OIDC_COOKIE, stateToken, {
-      httpOnly: true,
-      secure: isSecure(c, ctx.config.TRUST_PROXY),
-      sameSite: 'Lax',
-      path: '/auth',
-      maxAge: 600,
-    });
-    return c.redirect(url);
-  });
-
   app.get('/auth/oidc/callback', async (c) => {
     const fail = (code: string) => c.redirect(`/login?error=${encodeURIComponent(code)}`);
     let result;
@@ -332,23 +307,6 @@ export function registerAuthRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
       deleteCookie(c, OIDC_COOKIE, { path: '/auth' });
     }
     const { identity, state } = result;
-    if (state.purpose === 'admin_link') {
-      if (!state.userId) return fail('wrong_flow');
-      if (!ctx.oidc.isAllowed(identity)) return c.redirect('/profile?error=oidc_not_allowed');
-      // The IdP's cross-site redirect carries no SameSite=Strict session; a same-origin hop does.
-      const token = signPayload(
-        ctx.keys.state,
-        { purpose: 'oidc_link', userId: state.userId, issuer: identity.issuer, subject: identity.subject },
-        LINK_TTL_MS,
-        ctx.now().getTime(),
-      );
-      const next = `/auth/oidc/link/finish?t=${encodeURIComponent(token)}`;
-      c.header('Cache-Control', 'no-store');
-      c.header('Referrer-Policy', 'no-referrer');
-      return c.html(
-        `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${next}"><title>Linking…</title><a href="${next}">Continue</a>`,
-      );
-    }
     if (state.purpose !== 'admin_login') return fail('wrong_flow');
     const user = await ctx.oidc.resolveUser(ctx.users, identity);
     if (!user) {
@@ -362,21 +320,6 @@ export function registerAuthRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     }
     startSession(c, ctx, user, 'oidc');
     return c.redirect(safeReturnTo(state.returnTo));
-  });
-
-  // Linking requires the same signed-in user who started it; this request is same-site, so the session cookie comes.
-  app.get('/auth/oidc/link/finish', (c) => {
-    const session = ctx.sessions.validate(readSessionCookie(c), 'admin', sessionLimits(ctx));
-    if (!session) return c.redirect('/login?error=session_changed');
-    const link = LinkTokenSchema.safeParse(verifyPayload(ctx.keys.state, c.req.query('t'), ctx.now().getTime())).data;
-    if (!link || link.userId !== session.user.id) return c.redirect('/profile?error=session_changed');
-    try {
-      ctx.users.linkOidc(session.user.id, link.issuer, link.subject);
-    } catch (err) {
-      if (err instanceof ConflictError) return c.redirect('/profile?error=oidc_taken');
-      throw err;
-    }
-    return c.redirect('/profile?linked=1');
   });
 }
 
@@ -449,9 +392,4 @@ export function registerProfileRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
       (recoveryCodes) => c.json({ recoveryCodes }),
     ),
   );
-
-  app.post('/api/profile/oidc/unlink', (c) => {
-    ctx.users.unlinkOwnOidc(c.get('user'));
-    return c.json({ status: 'ok' });
-  });
 }

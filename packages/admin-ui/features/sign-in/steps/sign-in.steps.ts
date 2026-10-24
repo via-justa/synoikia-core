@@ -88,9 +88,8 @@ Given('the admin set up single sign-on with {string}', async (world: PortalWorld
   await world.singleSignOn(label);
 });
 
-Given('the admin linked their account to it and turned off the password sign-in', async (world: PortalWorld) => {
-  const end = await world.linkSingleSignOn();
-  expect(end.pathname + end.search).toBe('/profile?linked=1');
+Given('user 12 has an SSO account, and the admin turned off the password sign-in', async (world: PortalWorld) => {
+  await world.ssoUser('user 12', { name: 'family' });
   const admin = await world.adminApi();
   await world.expectOk(admin.put('/api/settings/security', { disableLocalLogin: true }), 'turn off password sign-in');
 });

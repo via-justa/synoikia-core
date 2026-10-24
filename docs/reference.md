@@ -226,13 +226,13 @@ Core keeps credentials, users, levels, catalogs and instances in memory, and rea
 
 **Identity and admin authentication**
 
-| Table         | Holds                                                                                                                                                                                                                                                                         |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `users`       | `username` (unique), `password_hash`, `totp_secret_enc`, `totp_enabled`, `totp_last_step`, `recovery_codes_hash`, `oidc_issuer`, `oidc_subject`, `last_login_at`, `disabled`, `role_id`, `registered_via` (`oidc`, `external`, `signup`, or NULL when an admin made the user) |
-| `roles`       | `name` (unique), `built_in` (the Admin role, id `admin`), `can_see_other_endpoints`                                                                                                                                                                                           |
-| `sessions`    | `id_hash` (key), `user_id`, `kind` (`admin`, `oauth_ui`, `approval_ui`), `last_seen_at`, `expires_at`, `ip`, `user_agent`                                                                                                                                                     |
-| `settings`    | `key`, `value` (JSON): authentication defaults, rate limits, flags                                                                                                                                                                                                            |
-| `oidc_config` | One row: `issuer`, `client_id`, `client_secret_enc`, `scopes`, `allow_policy`, `auto_provision`, `enabled`                                                                                                                                                                    |
+| Table         | Holds                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users`       | `username` (unique), `kind` (`local` or `sso`, ADR-0025), `oidc_email` (the address an SSO account waits for, unique without case), `password_hash`, `totp_secret_enc`, `totp_enabled`, `totp_last_step`, `recovery_codes_hash`, `oidc_issuer`, `oidc_subject`, `last_login_at`, `disabled`, `role_id`, `registered_via` (`oidc`, `external`, `signup`, or NULL when an admin made the user) |
+| `roles`       | `name` (unique), `built_in` (the Admin role, id `admin`), `can_see_other_endpoints`                                                                                                                                                                                                                                                                                                          |
+| `sessions`    | `id_hash` (key), `user_id`, `kind` (`admin`, `oauth_ui`, `approval_ui`), `last_seen_at`, `expires_at`, `ip`, `user_agent`                                                                                                                                                                                                                                                                    |
+| `settings`    | `key`, `value` (JSON): authentication defaults, rate limits, flags                                                                                                                                                                                                                                                                                                                           |
+| `oidc_config` | One row: `issuer`, `client_id`, `client_secret_enc`, `scopes`, `allow_policy`, `auto_provision`, `enabled`                                                                                                                                                                                                                                                                                   |
 
 **Plugins**
 
@@ -338,22 +338,22 @@ The sidebar above is the one of an admin. A user with another role (ADR-0010) se
 
 Each page reads and changes data only through the Admin API (Admin API, below). The Admin API decides who can do what. The portal only hides what a role cannot use.
 
-| Page                   | Content                                                                                                                                             | Feature files                                                 |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| **Sign in**            | Password, the TOTP step, OIDC, lockout messages, and the sign-up form while it is on (ADR-0010).                                                    | `@id:sign-in`                                                 |
-| **Setup**              | Only while there are no users: the first admin.                                                                                                     | `@id:sign-in`                                                 |
-| **My endpoints**       | For every user: the endpoints of the role, their operations and the level in force. Personal levels and own rules as the switches allow (ADR-0010). | `@id:portal-my-instances`                                     |
-| **Overview**           | Admin only. A card for each instance, plugin child and notifier health, and how to connect a client.                                                | `@id:portal-shell`                                            |
-| **New endpoint**       | Plugin, slug, display name, client auth methods, in-session approval (ADR-0006), and the connection form (ADR-0018).                                | `@id:portal-instances`                                        |
-| **Connection**         | The connection form (ADR-0018), Test connection, the status and the last sync.                                                                      | `@id:portal-instances`                                        |
-| **Access**             | The levels of the endpoint (ADR-0004), or the role maximums of another role.                                                                        | `@id:portal-instances`, `@id:portal-roles`                    |
-| **Pre-Approval Rules** | The rules of the endpoint (ADR-0003). Locked operations are not in the picker.                                                                      | `@id:portal-instances`                                        |
-| **Endpoint Settings**  | The settings of the instance: client auth methods, approvals, session grants (ADR-0006), limits, extra redaction keys, and delete.                  | `@id:portal-instances`                                        |
-| **Audit Log**          | All instances, with filters and CSV export.                                                                                                         | `@id:portal-audit`                                            |
-| **Plugins**            | Installed plugins, install from file (ADR-0013), available plugins and repositories (ADR-0013).                                                     | `@id:portal-plugins`                                          |
-| **Clients & Tokens**   | Bearer tokens, OAuth clients and OAuth grants (ADR-0009).                                                                                           | `@id:portal-tokens`                                           |
-| **Settings**           | Admin only. Six tabs: Client auth, User auth, Users, Roles, Notifications and Server settings.                                                      | `@id:portal-settings`, `@id:portal-users`, `@id:portal-roles` |
-| **My profile**         | Every user, at `/profile`. Own bearer tokens and OAuth grants, password, TOTP and new recovery codes, OIDC link, theme, and approval browsers.      | `@id:portal-profile`                                          |
+| Page                   | Content                                                                                                                                                         | Feature files                                                 |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| **Sign in**            | Password, the TOTP step, OIDC, lockout messages, and the sign-up form while it is on (ADR-0010).                                                                | `@id:sign-in`                                                 |
+| **Setup**              | Only while there are no users: the first admin.                                                                                                                 | `@id:sign-in`                                                 |
+| **My endpoints**       | For every user: the endpoints of the role, their operations and the level in force. Personal levels and own rules as the switches allow (ADR-0010).             | `@id:portal-my-instances`                                     |
+| **Overview**           | Admin only. A card for each instance, plugin child and notifier health, and how to connect a client.                                                            | `@id:portal-shell`                                            |
+| **New endpoint**       | Plugin, slug, display name, client auth methods, in-session approval (ADR-0006), and the connection form (ADR-0018).                                            | `@id:portal-instances`                                        |
+| **Connection**         | The connection form (ADR-0018), Test connection, the status and the last sync.                                                                                  | `@id:portal-instances`                                        |
+| **Access**             | The levels of the endpoint (ADR-0004), or the role maximums of another role.                                                                                    | `@id:portal-instances`, `@id:portal-roles`                    |
+| **Pre-Approval Rules** | The rules of the endpoint (ADR-0003). Locked operations are not in the picker.                                                                                  | `@id:portal-instances`                                        |
+| **Endpoint Settings**  | The settings of the instance: client auth methods, approvals, session grants (ADR-0006), limits, extra redaction keys, and delete.                              | `@id:portal-instances`                                        |
+| **Audit Log**          | All instances, with filters and CSV export.                                                                                                                     | `@id:portal-audit`                                            |
+| **Plugins**            | Installed plugins, install from file (ADR-0013), available plugins and repositories (ADR-0013).                                                                 | `@id:portal-plugins`                                          |
+| **Clients & Tokens**   | Bearer tokens, OAuth clients and OAuth grants (ADR-0009).                                                                                                       | `@id:portal-tokens`                                           |
+| **Settings**           | Admin only. Six tabs: Client auth, User auth, Users, Roles, Notifications and Server settings.                                                                  | `@id:portal-settings`, `@id:portal-users`, `@id:portal-roles` |
+| **My profile**         | Every user, at `/profile`. Own bearer tokens and OAuth grants, theme and approval browsers. A local account also has its password, TOTP and new recovery codes. | `@id:portal-profile`                                          |
 
 Keyboard and screen reader use: `@id:portal-accessibility`.
 
@@ -365,12 +365,12 @@ Only an admin can use a route (ADR-0010), with these exceptions: `/api/session`,
 
 ```
 POST   /auth/login | /auth/totp | /auth/logout | /auth/register (sign-up form, ADR-0010)
-GET    /auth/oidc/start | /auth/oidc/callback | /auth/oidc/link
+GET    /auth/oidc/start | /auth/oidc/callback
 GET    /api/session              POST /api/setup (only while there are no users)
 GET    /api/overview             GET  /api/events (SSE: instance status, sync progress, lockouts)
-GET    /api/profile              POST /api/profile/password | /totp/begin | /totp/confirm | /totp/disable | /oidc/unlink
+GET    /api/profile              POST /api/profile/password | /totp/begin | /totp/confirm | /totp/disable (local accounts only, ADR-0025)
 POST   /api/profile/totp/recovery-codes {code}   (new recovery codes, ADR-0008)
-GET/POST /api/users              PATCH /api/users/:id         POST /api/users/:id/reset-totp
+GET/POST /api/users {kind, oidcEmail}   PATCH /api/users/:id   POST /api/users/:id/reset-totp
 GET    /api/settings             PUT  /api/settings/:section   PUT /api/settings/oidc
 GET    /api/settings/mcp/clients-seen (client names seen at initialize, @id:client-policy)
 PUT    /api/settings/runtime {runsAtOnce} (total of sandbox runs at once, 2 to 256; null is 16 for each CPU, ADR-0003)

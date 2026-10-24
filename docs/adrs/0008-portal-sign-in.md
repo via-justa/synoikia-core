@@ -25,7 +25,7 @@ The admin portal changes every security setting: access levels, credentials, rol
 
 Chosen option: "Local users with optional TOTP and OIDC". An install works on its own, and single sign-on stays optional.
 
-**Local users.** Core stores users in the `users` table with an argon2id password hash (`m=64 MiB, t=3, p=1`). Each user has one role (ADR-0010).
+**Local users.** Core stores users in the `users` table. A local account has an argon2id password hash (`m=64 MiB, t=3, p=1`), and an SSO account has none (ADR-0025). Each user has one role (ADR-0010).
 
 **First user.**
 
@@ -38,7 +38,7 @@ Chosen option: "Local users with optional TOTP and OIDC". An install works on it
 - Core makes ten single-use recovery codes and stores them as hashes. The profile shows how many are left.
 - The user can replace all recovery codes (`POST /api/profile/totp/recovery-codes`). This needs a current code from the app, with the replay guard of the code step.
 - Core refuses a recovery code there. A wrong code gives `401 invalid_code`, and without TOTP core answers `409 totp_disabled`. Core audits `totp_recovery_rotated`.
-- With `security.requireTotp`, each user must enroll at the next sign-in.
+- With `security.requireTotp`, each local account must enroll at the next sign-in. An SSO account has no TOTP (ADR-0025).
 
 **OIDC (optional).** The admin configures it on Settings → User auth.
 
@@ -46,16 +46,15 @@ Chosen option: "Local users with optional TOTP and OIDC". An install works on it
 - An allow policy: e-mail addresses, `sub` values and a required group claim value. An e-mail address counts only if the ID token has `email_verified: true`.
 - An e-mail entry is an exact address or `*@domain`, compared without case. `*@domain` accepts that domain after the last `@`, but not its subdomains. Core refuses other wildcard forms.
 - The flow is the authorization code flow with PKCE, `state` and `nonce`.
-- `autoProvision` is off by default. Then a user must link an OIDC identity first (Profile → "Link OIDC identity"). With `autoProvision` and self-registration on (ADR-0010), core creates a user for each accepted identity.
+- An identity signs in only to its SSO account (ADR-0025). `autoProvision` is off by default. Then the admin makes the SSO account first. With `autoProvision` and self-registration on (ADR-0010), core creates an SSO account for each accepted identity.
 - After an OIDC sign-in, core returns only to a path of the portal. The path starts with one `/` and holds no `\`, no space and no control character. Core returns to `/` for any other path.
 - An automatic user gets the name from the identity. Core compares names without case. When the name is taken, core adds `-2`, `-3` and so on.
-- The IdP redirect is cross-site, so the browser does not send the session cookie. The callback opens the link step on the same site, which links the identity only for the user who started the link.
 
 **Local sign-in fallback.**
 
 - Local password sign-in is always available, unless `security.disableLocalLogin` is true.
-- The admin can set it only while OIDC is on and at least one enabled user is linked to it.
-- While it is set, core refuses with 409 `local_login_disabled`: turning OIDC off, unlinking, or disabling or deleting the last enabled linked user.
+- The admin can set it only while OIDC is on and at least one enabled SSO account exists.
+- While it is set, core refuses with 409 `local_login_disabled`: turning OIDC off, or disabling or deleting the last enabled SSO account.
 - `ADMIN_FORCE_LOCAL_LOGIN=true` turns local sign-in on again.
 
 **Sessions.**
@@ -77,7 +76,7 @@ Chosen option: "Local users with optional TOTP and OIDC". An install works on it
 
 **Delete a user.** An admin deletes a user (`DELETE /api/users/:id`). The delete is permanent.
 
-- Core refuses to delete the admin who asks, the last user or the last enabled admin. While local sign-in is off, it also keeps the last enabled linked user.
+- Core refuses to delete the admin who asks, the last user or the last enabled admin. While local sign-in is off, it also keeps the last enabled SSO account.
 - First, core takes every credential of the user away: sessions, OAuth grants and bearer tokens. It also ends their pending approvals and the session grants that they gave (ADR-0006).
 - Then, in one transaction, core deletes the user, their personal levels and their own pre-approval rules. It keeps the shared rows that name the user and clears that name. It writes the audit event `user_deleted`.
 - Core does not change the audit log. The log reads the user name of a deleted user from `user_deleted`.

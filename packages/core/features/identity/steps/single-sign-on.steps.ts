@@ -1,7 +1,7 @@
 import { Given, Then, When } from 'quickpickle';
 import { expect } from 'vitest';
 import type { AcmeIdentity, SynoikiaWorld } from '../../support/world.js';
-import { consentPage, consentSignIn, identity, keep, newPortal, passwordStep } from './identity.js';
+import { consentPage, consentSignIn, identity, keep, newPortal } from './identity.js';
 
 type Portal = Awaited<ReturnType<SynoikiaWorld['portalBrowser']>>;
 
@@ -45,29 +45,6 @@ async function landsInPortal(world: SynoikiaWorld, end: ReturnType<typeof lastEn
   expect(session).toMatchObject({ authenticated: true, user: { username } });
   return session.user as { role: { name: string } };
 }
-
-/** `person` starts to link Acme ID in their portal and comes back with the proof of the link, not yet used. */
-async function linkProof(world: SynoikiaWorld, who: string, identityOf = who) {
-  (await world.acmeId()).next = world.acmeIdentityOf(identityOf);
-  const end = await world.follow(
-    world.person(who).portal!,
-    '/auth/oidc/link',
-    (at) => at.pathname === '/auth/oidc/link/finish',
-  );
-  return end.url;
-}
-
-const finish = async (world: SynoikiaWorld, portal: Portal, proof: URL) =>
-  (await world.follow(portal, proof.pathname + proof.search)).url;
-
-async function link(world: SynoikiaWorld, who: string, identityOf = who) {
-  const proof = await linkProof(world, who, identityOf);
-  if (proof.pathname !== '/auth/oidc/link/finish') return proof;
-  return finish(world, world.person(who).portal!, proof);
-}
-
-const profileOf = (world: SynoikiaWorld, who: string) =>
-  world.expectOk(world.person(who).portal!.get('/api/profile'), 'read profile');
 
 async function setPolicy(world: SynoikiaWorld, policy: Record<string, unknown>) {
   await world.setUpAcmeId({ allowPolicy: { emails: [], subjects: [], group: '', ...policy } });
@@ -258,7 +235,7 @@ When(
   },
 );
 
-When('someone signs in with the Acme ID {string} that no user linked', async (world: SynoikiaWorld, sub: string) => {
+When('someone signs in with the Acme ID {string} that no account has', async (world: SynoikiaWorld, sub: string) => {
   await ssoSignIn(world, { sub, email: 'stranger@acme.example', email_verified: true, groups: [] });
 });
 
@@ -396,101 +373,79 @@ Then('user {int} sees {string}', (world: SynoikiaWorld, _user: number, text: str
   expect(seen.get(world)![0]).toContain(text);
 });
 
-// ── linking ──
+// ── local and SSO accounts (ADR-0025) ──
 
-Given('user {int} linked their Acme ID', async (world: SynoikiaWorld, user: number) => {
-  expect((await link(world, person(user))).search).toBe('?linked=1');
-});
+const firstAccount = new WeakMap<SynoikiaWorld, string>();
+const sessionUser = async (end: ReturnType<typeof lastEnd>) =>
+  ((await (await end.browser.get('/api/session')).json()) as { user?: { id: string; username: string } }).user;
 
-Given('user {int} linked the Acme ID of user {int}', async (world: SynoikiaWorld, user: number, other: number) => {
-  expect((await link(world, person(user), person(other))).search).toBe('?linked=1');
-});
-
-When('user {int} links their Acme ID in their profile', async (world: SynoikiaWorld, user: number) => {
-  const end = await link(world, person(user));
-  seen.set(world, [end.pathname + end.search]);
-});
-
-Then('user {int} comes back to their profile, linked to Acme ID', async (world: SynoikiaWorld, user: number) => {
-  expect(seen.get(world)).toEqual(['/profile?linked=1']);
-  expect(await profileOf(world, person(user))).toMatchObject({ oidcLinked: true });
-});
-
-When(
-  'user {int} starts to link their Acme ID, and the link is finished where nobody or user {int} is signed in',
-  async (world: SynoikiaWorld, user: number, other: number) => {
-    const proof = await linkProof(world, person(user));
-    const nobody = await finish(world, await newPortal(world), proof);
-    const someoneElse = await finish(world, world.person(person(other)).portal!, proof);
-    seen.set(world, [nobody.pathname + nobody.search, someoneElse.pathname + someoneElse.search]);
+Given(
+  'user {int} has an SSO account with the role {string}',
+  async (world: SynoikiaWorld, user: number, role: string) => {
+    await world.ssoUser(person(user), role);
   },
 );
 
-Then('both browsers are told that the session changed, and nobody is linked', async (world: SynoikiaWorld) => {
-  expect(seen.get(world)).toEqual(['/login?error=session_changed', '/profile?error=session_changed']);
-  for (const who of [person(12), person(15)]) expect(await profileOf(world, who)).toMatchObject({ oidcLinked: false });
-});
+Given(
+  'user {int} has a local account with the role {string}',
+  async (world: SynoikiaWorld, user: number, role: string) => {
+    await world.user(person(user), role);
+  },
+);
 
-When(
-  'user {int} finishes a link with a changed proof, an expired proof and the proof of their code step',
-  async (world: SynoikiaWorld, user: number) => {
-    const portal = world.person(person(user)).portal!;
-    const ended: URL[] = [];
-    const changed = await linkProof(world, person(user));
-    changed.searchParams.set('t', flip(changed.searchParams.get('t')!));
-    ended.push(await finish(world, portal, changed));
-    const expired = await linkProof(world, person(user));
-    world.passTime(3 * 60_000);
-    ended.push(await finish(world, portal, expired));
-    const codeStep = await passwordStep(world, person(user));
-    const foreign = new URL('/auth/oidc/link/finish', world.adminBase);
-    foreign.searchParams.set('t', codeStep.jar.get('syn_mfa')!);
-    ended.push(await finish(world, portal, foreign));
-    seen.set(
-      world,
-      ended.map((u) => u.pathname + u.search),
+Given(
+  'the admin made an SSO account for {string} with the role {string}',
+  async (world: SynoikiaWorld, email: string, role: string) => {
+    const roleId = await world.role(role);
+    await world.expectOk(
+      world.admin.post('/api/users', { username: email, kind: 'sso', oidcEmail: email, roleId }),
+      'create SSO account',
     );
   },
 );
 
-Then(
-  'user {int} is told each time that the session changed, and is not linked',
-  async (world: SynoikiaWorld, user: number) => {
-    expect(seen.get(world)).toEqual(Array(3).fill('/profile?error=session_changed'));
-    expect(await profileOf(world, person(user))).toMatchObject({ oidcLinked: false });
+When('user {int} signs in with Acme ID as {string}', async (world: SynoikiaWorld, user: number, email: string) => {
+  await ssoSignIn(world, { ...world.acmeIdentityOf(person(user)), email });
+});
+
+Given(
+  'user {int} signed in once with Acme ID as {string}',
+  async (world: SynoikiaWorld, user: number, email: string) => {
+    await ssoSignIn(world, { ...world.acmeIdentityOf(person(user)), email });
+    await landsInPortal(world, lastEnd(world), email);
+    firstAccount.set(world, (await sessionUser(lastEnd(world)))!.id);
   },
 );
 
 Then(
-  'user {int} is told that the identity is not allowed, and is not linked',
-  async (world: SynoikiaWorld, user: number) => {
-    expect(seen.get(world)).toEqual(['/profile?error=oidc_not_allowed']);
-    expect(await profileOf(world, person(user))).toMatchObject({ oidcLinked: false });
+  'user {int} lands in the portal with the role {string}',
+  async (world: SynoikiaWorld, user: number, role: string) => {
+    const signedIn = await landsInPortal(world, lastEnd(world), `${person(user).replace(/\s+/g, '')}@acme.example`);
+    expect(signedIn.role.name).toBe(role);
   },
 );
 
-Then('user {int} is told that the identity is taken, and is not linked', async (world: SynoikiaWorld, user: number) => {
-  expect(seen.get(world)).toEqual(['/profile?error=oidc_taken']);
-  expect(await profileOf(world, person(user))).toMatchObject({ oidcLinked: false });
+Then('user {int} lands in the same account', async (world: SynoikiaWorld, _user: number) => {
+  expect(lastEnd(world).url.pathname).toBe('/');
+  expect((await sessionUser(lastEnd(world)))?.id).toBe(firstAccount.get(world));
 });
 
-// ── unlinking ──
-
-When('{string} unlinks their Acme ID', async (world: SynoikiaWorld, _username: string) => {
-  await keep(world, lastEnd(world).browser.post('/api/profile/oidc/unlink'));
+When('someone signs in with Acme ID as {string}', async (world: SynoikiaWorld, email: string) => {
+  await ssoSignIn(world, { sub: 'acme-someone', email, email_verified: true, groups: [] });
 });
 
-When('user {int} unlinks their Acme ID', async (world: SynoikiaWorld, user: number) => {
-  await keep(world, world.person(person(user)).portal!.post('/api/profile/oidc/unlink'));
+Then('the sign-in with Acme ID is refused as not allowed, and nobody is signed in', async (world: SynoikiaWorld) => {
+  expect(lastEnd(world).url.pathname + lastEnd(world).url.search).toBe('/login?error=oidc_not_allowed');
+  expect(await sessionUser(lastEnd(world))).toBeUndefined();
 });
 
-Then('{string} is told {string}', (world: SynoikiaWorld, _username: string, message: string) => {
-  const { answer } = identity(world);
-  expect(answer.status).toBeGreaterThanOrEqual(400);
-  expect(answer.text).toContain(message);
+Then('user {int} lands in the portal without setting up an app', async (world: SynoikiaWorld, user: number) => {
+  await landsInPortal(world, lastEnd(world), world.person(person(user)).username);
+  const session = await world.expectOk(lastEnd(world).browser.get('/api/session'), 'read session');
+  expect(session).toMatchObject({ mustEnrollTotp: false });
 });
 
-Then('user {int} is no longer linked to Acme ID', async (world: SynoikiaWorld, user: number) => {
-  expect(identity(world).answer.status).toBe(200);
-  expect(await profileOf(world, person(user))).toMatchObject({ oidcLinked: false });
+Given('the admin set up single sign-on with Acme ID, and user 21 has an SSO account', async (world: SynoikiaWorld) => {
+  await world.setUpAcmeId();
+  await world.ssoUser(person(21), 'family');
 });

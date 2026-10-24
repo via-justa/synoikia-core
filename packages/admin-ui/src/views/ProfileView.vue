@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { messageRole, rovingKeydown } from '../a11y';
-import { computed, onMounted, ref, useId } from 'vue';
-import { useRoute } from 'vue-router';
+import { computed, ref, useId } from 'vue';
 import { errorText } from '../api';
 import ModalDialog from '../components/ModalDialog.vue';
 import MyCredentials from '../components/MyCredentials.vue';
@@ -16,7 +15,6 @@ import {
   useRefreshProfile,
   useRotateRecoveryCodes,
   useSignOutApprovalBrowsers,
-  useUnlinkOidc,
 } from '../composables/useProfile';
 import { useSessionStore } from '../stores/session';
 import { THEME_PREFS, getTheme, setTheme } from '../theme';
@@ -25,13 +23,11 @@ import type { ThemePref } from '../theme';
 type Message = { kind: 'ok' | 'error'; text: string };
 
 const session = useSessionStore();
-const route = useRoute();
 const profileQuery = useProfileQuery();
 const browsersQuery = useApprovalBrowsersQuery();
 const refreshProfile = useRefreshProfile();
 const changePw = useChangePassword();
 const disable = useDisableTotp();
-const unlinkOidc = useUnlinkOidc();
 const signOutBrowsers = useSignOutApprovalBrowsers();
 const rotate = useRotateRecoveryCodes();
 const me = computed(() => profileQuery.data.value);
@@ -56,18 +52,6 @@ function pickTheme(pref: ThemePref) {
   theme.value = pref;
   setTheme(pref);
 }
-
-const OIDC_RESULT: Record<string, Message> = {
-  linked: { kind: 'ok', text: 'Single sign-on linked.' },
-  oidc_not_allowed: { kind: 'error', text: 'That single sign-on account is not allowed by the policy.' },
-  oidc_taken: { kind: 'error', text: 'That single sign-on account is already linked to another user.' },
-  session_changed: { kind: 'error', text: 'Linking expired or your session changed. Try again.' },
-};
-
-onMounted(() => {
-  const q = route.query.linked ? 'linked' : typeof route.query.error === 'string' ? route.query.error : undefined;
-  if (q && OIDC_RESULT[q]) notes.value = { ...notes.value, oidc: OIDC_RESULT[q]! };
-});
 
 const setMsg = (key: string, kind: 'ok' | 'error', text: string) =>
   (notes.value = { ...notes.value, [key]: { kind, text } });
@@ -100,12 +84,6 @@ function disableTotp() {
       setMsg('totp', 'ok', 'Two-factor authentication is off.');
     },
     onError: failed('totp'),
-  });
-}
-function unlink() {
-  unlinkOidc.mutate(undefined, {
-    onSuccess: () => setMsg('oidc', 'ok', 'Single sign-on unlinked.'),
-    onError: failed('oidc'),
   });
 }
 function openRotate() {
@@ -160,7 +138,14 @@ async function enrolled() {
         </div>
       </section>
 
-      <section class="card">
+      <section v-if="me.kind === 'sso'" class="card">
+        <h2>Sign-in</h2>
+        <p class="small">
+          You sign in with {{ session.oidcLabel }}. {{ session.oidcLabel }} keeps your password and two-factor sign-in.
+        </p>
+      </section>
+
+      <section v-if="me.kind === 'local'" class="card">
         <h2>Password</h2>
         <form class="form-grid" @submit.prevent="changePassword">
           <div v-if="me.hasPassword" class="field">
@@ -184,7 +169,7 @@ async function enrolled() {
         </p>
       </section>
 
-      <section class="card">
+      <section v-if="me.kind === 'local'" class="card">
         <h2>Two-factor authentication</h2>
         <RecoveryCodes v-if="newCodes" :codes="newCodes" @saved="savedNewCodes" />
         <template v-else-if="me.totpEnabled && !showingCodes">
@@ -240,27 +225,6 @@ async function enrolled() {
           :role="messageRole(messages.approval.kind)"
         >
           {{ messages.approval.text }}
-        </p>
-      </section>
-
-      <section v-if="session.oidcEnabled || me.oidcLinked" class="card">
-        <h2>Single sign-on</h2>
-        <template v-if="me.oidcLinked">
-          <p class="small"><span class="pill info">Linked</span> You can sign in with {{ session.oidcLabel }}.</p>
-          <button
-            class="btn"
-            type="button"
-            :disabled="!me.hasPassword"
-            :aria-describedby="me.hasPassword ? undefined : 'unlink-help'"
-            @click="unlink"
-          >
-            Unlink
-          </button>
-          <p v-if="!me.hasPassword" id="unlink-help" class="help small muted">Set a password before unlinking.</p>
-        </template>
-        <a v-else class="btn" href="/auth/oidc/link">Link {{ session.oidcLabel }}</a>
-        <p v-if="messages.oidc" class="alert" :class="messages.oidc.kind" :role="messageRole(messages.oidc.kind)">
-          {{ messages.oidc.text }}
         </p>
       </section>
     </div>

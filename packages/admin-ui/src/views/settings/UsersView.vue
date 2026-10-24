@@ -29,7 +29,7 @@ const loading = computed(() => usersQuery.isPending.value || rolesQuery.isPendin
 const uid = useId();
 const users = computed(() => (ready.value ? (usersQuery.data.value ?? []) : []));
 const roles = computed(() => (ready.value ? (rolesQuery.data.value ?? []) : []));
-const adding = ref<{ username: string; password: string; roleId: string }>();
+const adding = ref<{ kind: 'local' | 'sso'; username: string; password: string; oidcEmail: string; roleId: string }>();
 const resetting = ref<{ user: PublicUser; password: string }>();
 const deleting = ref<{ user: PublicUser; confirm: string }>();
 
@@ -68,14 +68,16 @@ async function toggleDisabled(u: PublicUser) {
 
 function openAdd() {
   create.reset();
-  adding.value = { username: '', password: '', roleId: 'admin' };
+  adding.value = { kind: 'local', username: '', password: '', oidcEmail: '', roleId: 'admin' };
 }
 
 function add() {
   const a = adding.value;
   if (!a) return;
   create.mutate(
-    { username: a.username.trim(), password: a.password || undefined, roleId: a.roleId },
+    a.kind === 'sso'
+      ? { username: a.username.trim(), kind: 'sso', oidcEmail: a.oidcEmail.trim(), roleId: a.roleId }
+      : { username: a.username.trim(), password: a.password || undefined, roleId: a.roleId },
     { onSuccess: () => (adding.value = undefined) },
   );
 }
@@ -141,13 +143,22 @@ function confirmDelete() {
               </select>
             </td>
             <td class="small">
-              <span v-if="u.hasPassword" class="pill">password</span>
-              <span v-if="u.totpEnabled" class="pill ok">2FA</span>
-              <span v-if="u.oidcLinked" class="pill info">SSO</span>
+              <span v-if="u.kind === 'sso'" class="pill info">SSO</span>
+              <template v-else>
+                <span v-if="u.hasPassword" class="pill">password</span>
+                <span v-if="u.totpEnabled" class="pill ok">2FA</span>
+              </template>
+              <span v-if="u.oidcEmail" class="pill" :title="`Waits for ${u.oidcEmail}`">not signed in yet</span>
             </td>
             <td class="small">{{ ago(u.lastLoginAt) }}</td>
             <td class="right">
-              <button class="btn btn-sm" type="button" :aria-describedby="`${uid}-${u.id}`" @click="openReset(u)">
+              <button
+                v-if="u.kind === 'local'"
+                class="btn btn-sm"
+                type="button"
+                :aria-describedby="`${uid}-${u.id}`"
+                @click="openReset(u)"
+              >
                 Set password
               </button>
               <button
@@ -186,11 +197,27 @@ function confirmDelete() {
     </div>
 
     <ModalDialog v-if="adding" title="Add user" @close="adding = undefined">
+      <fieldset class="field">
+        <legend>Sign-in</legend>
+        <label><input v-model="adding.kind" type="radio" value="local" /> Local account</label>
+        <label><input v-model="adding.kind" type="radio" value="sso" /> SSO account ({{ session.oidcLabel }})</label>
+      </fieldset>
       <div class="field">
         <label for="u-name">Username</label>
         <input id="u-name" v-model="adding.username" autocomplete="off" />
       </div>
-      <div class="field">
+      <div v-if="adding.kind === 'sso'" class="field">
+        <label for="u-email">Address at {{ session.oidcLabel }}</label>
+        <input
+          id="u-email"
+          v-model="adding.oidcEmail"
+          type="email"
+          autocomplete="off"
+          aria-describedby="u-email-help"
+        />
+        <p id="u-email-help" class="help">The first sign-in with this verified address takes the account.</p>
+      </div>
+      <div v-else class="field">
         <label for="u-pass">Password</label>
         <input
           id="u-pass"
@@ -199,7 +226,7 @@ function confirmDelete() {
           autocomplete="new-password"
           aria-describedby="u-pass-help"
         />
-        <p id="u-pass-help" class="help">At least 12 characters. Leave empty for a single-sign-on-only account.</p>
+        <p id="u-pass-help" class="help">At least 12 characters. Leave empty for an account that a proxy signs in.</p>
       </div>
       <div class="field">
         <label for="u-role">Role</label>

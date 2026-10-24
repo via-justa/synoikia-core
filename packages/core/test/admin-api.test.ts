@@ -46,57 +46,59 @@ async function signedIn(t: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('setup, login and sessions', () => {
-  it('links an OIDC identity through a same-site hop, since the IdP redirect carries no session cookie', async () => {
+  it('signs in to the SSO account the admin made, binds its subject, and never signs in a local account', async () => {
     const t = await setup();
-    const b = await signedIn(t);
-    const { user } = (await (await b.get('/api/session')).json()) as { user: { id: string } };
-    const identity = { issuer: 'https://idp.example.com', subject: 'sub-1', groups: [] };
-    const state = {
-      purpose: 'admin_link' as const,
-      userId: user.id,
-      verifier: 'v',
-      state: 's',
-      nonce: 'n',
-      redirectUri: 'https://admin.lan/auth/oidc/callback',
+    await signedIn(t);
+    await t.ctx.users.create({ username: 'user15', password: PASSWORD, roleId: 'admin' });
+    const sso = await t.ctx.users.create({ username: 'user21', kind: 'sso', oidcEmail: 'User21@acme.example' });
+    const state = { purpose: 'admin_login' as const, verifier: 'v', state: 's', nonce: 'n', redirectUri: 'r' };
+    const complete = vi.spyOn(t.ctx.oidc, 'complete');
+    const signIn = async (subject: string, email: string) => {
+      complete.mockResolvedValue({
+        identity: { issuer: 'https://idp.example.com', subject, email, groups: [] },
+        state,
+      });
+      return (await (await t.client()).get('/auth/oidc/callback?code=c&state=s')).headers.get('location');
     };
-    vi.spyOn(t.ctx.oidc, 'complete').mockResolvedValue({ identity, state });
-    const allowed = vi.spyOn(t.ctx.oidc, 'isAllowed').mockReturnValue(false);
-    // A cross-site redirect from the IdP: the SameSite=Strict session cookie is not sent.
-    const crossSite = await t.client();
-    const callback = () => crossSite.get('/auth/oidc/callback?code=c&state=s');
 
-    expect((await callback()).headers.get('location')).toBe('/profile?error=oidc_not_allowed');
-    allowed.mockReturnValue(true);
-    const hop = await callback();
-    expect(hop.headers.get('cache-control')).toBe('no-store');
-    expect(hop.headers.get('referrer-policy')).toBe('no-referrer');
-    const finish = /url=([^"]+)"/.exec(await hop.text())?.[1];
-    expect(finish).toMatch(/^\/auth\/oidc\/link\/finish\?t=/);
-    expect(t.ctx.users.get(user.id).oidcSubject).toBeNull();
+    expect(await signIn('sub-15', 'user15@acme.example')).toBe('/login?error=oidc_not_allowed');
+    expect(await signIn('sub-21', 'user21@acme.example')).toBe('/');
+    expect(t.ctx.users.get(sso.id)).toMatchObject({ oidcSubject: 'sub-21', oidcEmail: null });
+    // Once bound, only the subject counts: another identity with the old address gets nothing.
+    expect(await signIn('sub-99', 'user21@acme.example')).toBe('/login?error=oidc_not_allowed');
+    expect(await signIn('sub-21', 'u21@acme.example')).toBe('/');
 
-    // Without the session (or as another user) the hop links nothing.
-    expect((await crossSite.get(finish!)).headers.get('location')).toBe('/login?error=session_changed');
-    await t.ctx.users.create({ username: 'other', password: PASSWORD, roleId: 'admin' });
-    const other = await t.client();
-    await other.post('/auth/login', { username: 'other', password: PASSWORD });
-    expect((await other.get(finish!)).headers.get('location')).toBe('/profile?error=session_changed');
-    expect(t.ctx.users.get(user.id).oidcSubject).toBeNull();
-
-    expect((await b.get(finish!)).headers.get('location')).toBe('/profile?linked=1');
-    expect(t.ctx.users.get(user.id)).toMatchObject({ oidcSubject: 'sub-1' });
+    // A disabled SSO account that waits for its address takes no identity, so nobody claims it meanwhile.
+    const off = await t.ctx.users.create({ username: 'user22', kind: 'sso', oidcEmail: 'user22@acme.example' });
+    t.ctx.users.setDisabled(off.id, true);
+    expect(await signIn('sub-22', 'user22@acme.example')).toBe('/login?error=oidc_not_allowed');
+    expect(t.ctx.users.get(off.id)).toMatchObject({ oidcSubject: null, oidcEmail: 'user22@acme.example' });
   });
 
-  it('refuses a link callback whose state names no user', async () => {
+  it('counts only an SSO account that signed in as a way in once local login is off', async () => {
     const t = await setup();
-    const b = await signedIn(t);
-    const { user } = (await (await b.get('/api/session')).json()) as { user: { id: string } };
-    const state = { purpose: 'admin_link' as const, verifier: 'v', state: 's', nonce: 'n', redirectUri: 'r' };
-    const identity = { issuer: 'https://idp.example.com', subject: 'sub-1', groups: [] };
-    vi.spyOn(t.ctx.oidc, 'complete').mockResolvedValue({ identity, state });
-    vi.spyOn(t.ctx.oidc, 'isAllowed').mockReturnValue(true);
-    const res = await (await t.client()).get('/auth/oidc/callback?code=c&state=s');
-    expect(res.headers.get('location')).toBe('/login?error=wrong_flow');
-    expect(t.ctx.users.get(user.id).oidcSubject).toBeNull();
+    await signedIn(t);
+    const sso = await t.ctx.users.create({ username: 'user21', kind: 'sso', oidcEmail: 'user21@acme.example' });
+    expect(t.ctx.users.hasSsoAccount()).toBe(false);
+    t.ctx.users.bindOidc(sso.id, 'https://idp.example.com', 'sub-21');
+    expect(t.ctx.users.hasSsoAccount()).toBe(true);
+  });
+
+  it('gives an SSO account no password and no app', async () => {
+    const t = await setup();
+    await signedIn(t);
+    await expect(t.ctx.users.create({ username: 'uu', kind: 'sso', password: PASSWORD })).rejects.toMatchObject({
+      code: 'sso_account',
+    });
+    await expect(t.ctx.users.create({ username: 'vv', oidcEmail: 'v@acme.example' })).rejects.toMatchObject({
+      code: 'local_account',
+    });
+    const sso = await t.ctx.users.create({ username: 'user21', kind: 'sso', oidcEmail: 'user21@acme.example' });
+    await expect(
+      t.ctx.users.create({ username: 'ww', kind: 'sso', oidcEmail: 'USER21@acme.example' }),
+    ).rejects.toMatchObject({ code: 'oidc_email_taken' });
+    await expect(t.ctx.users.setPassword(sso.id, PASSWORD)).rejects.toMatchObject({ code: 'sso_account' });
+    expect(() => t.ctx.users.beginTotp(sso.id)).toThrow(expect.objectContaining({ code: 'sso_account' }));
   });
 });
 
@@ -237,12 +239,8 @@ describe('deleting users', () => {
     const viewer = await t.add('viewer', t.ctx.roles.create({ name: 'Viewer' }).id);
     expect(() => t.ctx.users.delete(t.me)).toThrow(expect.objectContaining({ code: 'last_admin' }));
 
-    const sso = await t.add('sso');
-    t.ctx.db
-      .update(users)
-      .set({ oidcIssuer: 'https://idp.example.com', oidcSubject: 'sub-1' })
-      .where(eq(users.id, sso))
-      .run();
+    const sso = (await t.ctx.users.create({ username: 'sso', kind: 'sso', oidcEmail: 'sso@acme.example' })).id;
+    t.ctx.users.bindOidc(sso, 'https://idp.example.com', 'sub-1');
     updateSettings(t.ctx.db, 'security', { disableLocalLogin: true });
     await refused(sso, 'local_login_disabled');
     expect((await t.b.del(`/api/users/${viewer}`)).status).toBe(204);

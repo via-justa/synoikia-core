@@ -461,3 +461,55 @@ describe('0019 typed confirmation locks migration', () => {
     ]);
   });
 });
+
+describe('0020 account kinds migration', () => {
+  it('makes each identity that still signs in an SSO account, and keeps the password where the identity cannot', () => {
+    const { dir, sqlite } = databaseAt('0019_typed_confirmation_locks');
+    sqlite.exec(`
+      INSERT INTO oidc_config (id, issuer, client_id, enabled) VALUES (1, 'https://idp.example.com/', 'synoikia', 1);
+      INSERT INTO users (id, username, password_hash, totp_enabled, recovery_codes_hash, oidc_issuer, oidc_subject, created_at)
+        VALUES
+          ('both', 'user30', 'hash', 1, '["r"]', 'https://idp.example.com', 'sub-30', 1000),
+          ('app', 'user31', NULL, 1, '["r"]', 'https://idp.example.com', 'sub-31', 1500),
+          ('sso', 'user12', NULL, 0, NULL, 'https://idp.example.com', 'sub-12', 2000),
+          ('stale', 'user40', 'hash', 0, NULL, 'https://old-idp.example.com', 'sub-40', 2500),
+          ('local', 'user15', 'hash', 0, NULL, NULL, NULL, 3000);
+    `);
+    sqlite.close();
+
+    const db = openDatabase({ dataDir: dir });
+    const user = (id: string) => db.select().from(schema.users).where(eq(schema.users.id, id)).get();
+    const removed = { kind: 'sso', passwordHash: null, totpEnabled: false, recoveryCodesHash: null };
+    expect(user('both')).toMatchObject({ ...removed, oidcSubject: 'sub-30' });
+    expect(user('app')).toMatchObject({ ...removed, oidcSubject: 'sub-31' });
+    expect(user('sso')).toMatchObject({ kind: 'sso', oidcSubject: 'sub-12' });
+    expect(user('stale')).toMatchObject({ kind: 'local', passwordHash: 'hash', oidcIssuer: null, oidcSubject: null });
+    expect(user('local')).toMatchObject({ kind: 'local', passwordHash: 'hash' });
+    const audit = db.select().from(schema.auditLog).all();
+    expect(audit.map((r) => [r.decision, r.actorId])).toEqual([
+      ['password_removed_sso_account', 'both'],
+      ['password_removed_sso_account', 'app'],
+      ['oidc_identity_removed', 'stale'],
+    ]);
+    expect(audit[0]).toMatchObject({
+      detail: { username: 'user30', passwordRemoved: true, totpRemoved: true, migration: '0020_account_kinds' },
+    });
+  });
+
+  it('keeps every password while single sign-on is off', () => {
+    const { dir, sqlite } = databaseAt('0019_typed_confirmation_locks');
+    sqlite.exec(`
+      INSERT INTO oidc_config (id, issuer, client_id, enabled) VALUES (1, 'https://idp.example.com', 'synoikia', 0);
+      INSERT INTO users (id, username, password_hash, oidc_issuer, oidc_subject, created_at)
+        VALUES ('admin', 'admin', 'hash', 'https://idp.example.com', 'sub-1', 1000);
+    `);
+    sqlite.close();
+
+    const db = openDatabase({ dataDir: dir });
+    expect(db.select().from(schema.users).get()).toMatchObject({
+      kind: 'local',
+      passwordHash: 'hash',
+      oidcSubject: null,
+    });
+  });
+});

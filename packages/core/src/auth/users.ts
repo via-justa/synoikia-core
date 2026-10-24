@@ -36,9 +36,14 @@ const RECOVERY_CODES = 10;
 
 export type UserRow = typeof users.$inferSelect;
 
+export type AccountKind = 'local' | 'sso';
+
 export interface PublicUser {
   id: string;
   username: string;
+  kind: AccountKind;
+  /** The address an SSO account waits for until its first sign-in (ADR-0025). */
+  oidcEmail: string | null;
   totpEnabled: boolean;
   oidcLinked: boolean;
   hasPassword: boolean;
@@ -54,6 +59,8 @@ export type RegistrationSource = 'oidc' | 'external' | 'signup';
 const toPublicUser = (u: UserRow, role: PublicRole): PublicUser => ({
   id: u.id,
   username: u.username,
+  kind: u.kind,
+  oidcEmail: u.oidcEmail,
   totpEnabled: u.totpEnabled,
   oidcLinked: !!u.oidcSubject,
   hasPassword: !!u.passwordHash,
@@ -151,6 +158,15 @@ export class UserService {
       .get();
   }
 
+  /** The SSO account an admin made for this address and nobody signed in to yet (ADR-0025). */
+  byPendingOidcEmail(email: string): UserRow | undefined {
+    return this.db
+      .select()
+      .from(users)
+      .where(and(eq(users.kind, 'sso'), sql`lower(${users.oidcEmail}) = lower(${email})`))
+      .get();
+  }
+
   byOidc(issuer: string, subject: string): UserRow | undefined {
     return this.db
       .select()
@@ -160,7 +176,7 @@ export class UserService {
   }
 
   async create(
-    input: { username: string; password?: string; roleId?: string },
+    input: { username: string; password?: string; roleId?: string; kind?: AccountKind; oidcEmail?: string },
     actor: { userId?: string } = {},
     opts: { onlyIfFirst?: boolean; source?: RegistrationSource } = {},
   ): Promise<PublicUser> {
@@ -176,10 +192,24 @@ export class UserService {
     }
     // Unique regardless of case: proxy identities match names that way (ADR-0009).
     if (this.byUsernameInsensitive(username)) throw new ConflictError('username_taken', 'That username is taken');
+    const kind = input.kind ?? 'local';
+    // An SSO account never has a password, so a session alone can never add a way in (ADR-0025).
+    if (kind === 'sso' && input.password !== undefined)
+      throw new ValidationError('sso_account', 'An SSO account signs in only with single sign-on, and has no password');
+    if (kind === 'local' && input.oidcEmail !== undefined)
+      throw new ValidationError('local_account', 'A local account has no single sign-on address');
+    const oidcEmail = input.oidcEmail?.trim();
+    if (oidcEmail !== undefined) {
+      if (!/^[^\s@]+@[^\s@]+$/.test(oidcEmail)) throw new ValidationError('invalid_email', 'That is not an address');
+      if (this.byPendingOidcEmail(oidcEmail))
+        throw new ConflictError('oidc_email_taken', 'Another SSO account waits for that address');
+    }
     if (input.password !== undefined) checkPasswordPolicy(input.password);
     const row = {
       id: randomUUID(),
       username,
+      kind,
+      oidcEmail: oidcEmail ?? null,
       passwordHash: input.password ? await hash(input.password, this.hashCost) : null,
       createdAt: new Date(),
       roleId,
@@ -204,14 +234,17 @@ export class UserService {
         decision: opts.source ? 'user_registered' : 'user_created',
         actorKind: actor.userId ? 'user' : 'system',
         actorId: actor.userId,
-        detail: { username, roleId, ...(opts.source ? { source: opts.source } : {}) },
+        detail: { username, roleId, kind, ...(opts.source ? { source: opts.source } : {}) },
       });
     });
     return this.toPublic(this.get(row.id));
   }
 
   /** Self-registration (ADR-0010): only while an admin has set a default role, which the user gets. */
-  async register(input: { username: string; password?: string }, source: RegistrationSource): Promise<PublicUser> {
+  async register(
+    input: { username: string; password?: string; kind?: AccountKind },
+    source: RegistrationSource,
+  ): Promise<PublicUser> {
     const roleId = getSettings(this.db, 'security').defaultRoleId;
     if (!roleId) throw new ConflictError('registration_closed', 'This server does not accept new accounts');
     // `:` names Cloudflare service tokens (`service:<id>`); only the proxy may bring such a name.
@@ -274,7 +307,7 @@ export class UserService {
 
   async verifyPassword(username: string, password: string): Promise<UserRow | null> {
     const user = this.byUsername(username);
-    if (!user?.passwordHash || user.disabled) {
+    if (!user?.passwordHash || user.kind !== 'local' || user.disabled) {
       this.dummyHash ??= hash(randomToken(), this.hashCost);
       await verify(await this.dummyHash, password).catch(() => false);
       return null;
@@ -284,6 +317,8 @@ export class UserService {
 
   async setPassword(userId: string, password: string, opts: { currentPassword?: string; actorId?: string } = {}) {
     const user = this.get(userId);
+    if (user.kind === 'sso')
+      throw new ConflictError('sso_account', 'This account signs in only with single sign-on, and has no password');
     if (opts.currentPassword !== undefined && user.passwordHash) {
       if (!(await verify(user.passwordHash, opts.currentPassword).catch(() => false))) {
         throw new ValidationError('wrong_password', 'Current password is incorrect');
@@ -378,9 +413,9 @@ export class UserService {
     });
   }
 
-  /** Local-password users must have TOTP when the admin requires it (OIDC-only users rely on the IdP). */
+  /** Local accounts must have TOTP when the admin requires it; the IdP owns the factors of an SSO account. */
   mustEnrollTotp(u: UserRow): boolean {
-    return getSettings(this.db, 'security').requireTotp && !!u.passwordHash && !u.totpEnabled;
+    return getSettings(this.db, 'security').requireTotp && u.kind === 'local' && !u.totpEnabled;
   }
 
   // ── TOTP ─────────────────────────────────────────────────────────────────────────────────────────
@@ -393,6 +428,8 @@ export class UserService {
   /** Starts (or restarts) enrollment. TOTP stays off until `confirmTotp` succeeds. */
   beginTotp(userId: string): { secret: string; uri: string } {
     const user = this.get(userId);
+    if (user.kind === 'sso')
+      throw new ConflictError('sso_account', 'This account signs in only with single sign-on, and has no app here');
     if (user.totpEnabled) throw new ConflictError('totp_enabled', 'TOTP is already enabled; reset it first');
     const secret = generateTotpSecret();
     this.db
@@ -513,41 +550,33 @@ export class UserService {
     return true;
   }
 
-  // ── OIDC links ───────────────────────────────────────────────────────────────────────────────────
+  // ── OIDC identities (ADR-0025) ──
 
-  linkOidc(userId: string, issuer: string, subject: string) {
-    const existing = this.byOidc(issuer, subject);
-    if (existing && existing.id !== userId)
-      throw new ConflictError('oidc_taken', 'That identity is linked to another user');
+  /** Binds an SSO account to its identity at its first sign-in; from then on only the subject counts. */
+  bindOidc(userId: string, issuer: string, subject: string) {
+    const user = this.get(userId);
+    if (user.kind !== 'sso' || user.oidcSubject)
+      throw new ConflictError('oidc_bound', 'Only a new SSO account takes an identity');
+    if (this.byOidc(issuer, subject)) throw new ConflictError('oidc_taken', 'That identity has another account');
     this.db.transaction((tx) => {
-      tx.update(users).set({ oidcIssuer: issuer, oidcSubject: subject }).where(eq(users.id, userId)).run();
+      tx.update(users)
+        .set({ oidcIssuer: issuer, oidcSubject: subject, oidcEmail: null })
+        .where(eq(users.id, userId))
+        .run();
       writeAudit(tx, {
         kind: 'auth',
-        decision: 'oidc_linked',
-        actorKind: 'user',
+        decision: 'oidc_bound',
+        actorKind: 'system',
         actorId: userId,
-        detail: { issuer, subject },
+        detail: { username: user.username, issuer, subject },
       });
     });
   }
 
-  unlinkOidc(userId: string, actor: { userId?: string } = {}) {
-    this.db.transaction((tx) => {
-      tx.update(users).set({ oidcIssuer: null, oidcSubject: null }).where(eq(users.id, userId)).run();
-      writeAudit(tx, { kind: 'auth', decision: 'oidc_unlinked', actorKind: 'user', actorId: actor.userId ?? userId });
-    });
-  }
-
-  unlinkOwnOidc(u: UserRow) {
-    if (!u.passwordHash) throw new ConflictError('last_login_method', 'Set a password before unlinking single sign-on');
-    this.assertSsoRemains({ losingUser: u.id });
-    this.unlinkOidc(u.id);
-  }
-
-  /** While local login is off, refuse any change that would leave no enabled user linked to SSO (ADR-0008). */
+  /** While local login is off, refuse any change that would leave no enabled SSO account (ADR-0008). */
   assertSsoRemains(change: { oidcOff?: boolean; losingUser?: string }) {
     if (!getSettings(this.db, 'security').disableLocalLogin) return;
-    if (change.oidcOff || !this.hasOidcLinkedUser(change.losingUser)) {
+    if (change.oidcOff || !this.hasSsoAccount(change.losingUser)) {
       throw new ConflictError(
         'local_login_disabled',
         'Local login is disabled, so this would lock everyone out. Re-enable local login first.',
@@ -555,12 +584,13 @@ export class UserService {
     }
   }
 
-  hasOidcLinkedUser(except?: string): boolean {
+  hasSsoAccount(except?: string): boolean {
     return this.db
       .select()
       .from(users)
       .all()
-      .some((u) => !!u.oidcSubject && !u.disabled && u.id !== except);
+      // An account that waits for its first sign-in is no way in yet: its address may never arrive.
+      .some((u) => u.kind === 'sso' && !!u.oidcSubject && !u.disabled && u.id !== except);
   }
 
   // ── the user's own endpoints (ADR-0010) ──

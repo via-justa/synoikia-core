@@ -33,7 +33,7 @@ Feature: Sign-in to the portal
 
     Scenario: With "Acme ID" and no password sign-in, the visitor only gets "Sign in with Acme ID"
       Given the admin set up single sign-on with "Acme ID"
-      And the admin linked their account to it and turned off the password sign-in
+      And user 12 has an SSO account, and the admin turned off the password sign-in
       When a visitor opens the sign-in page
       Then the visitor is offered "Sign in with Acme ID"
       And the visitor is not asked for a password

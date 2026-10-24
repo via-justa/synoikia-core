@@ -330,6 +330,8 @@ interface Person {
   id: string;
   username: string;
   password: string;
+  /** An SSO account signs in only with Acme ID, so it has no password (ADR-0025). */
+  sso?: boolean;
   portal?: Portal;
 }
 
@@ -519,11 +521,21 @@ export class SynoikiaWorld extends QuickPickleWorld {
 
   /** Every person of the World signs in to the portal again in their own browser. */
   async signInAgain() {
-    for (const p of this.people.values())
-      await this.expectOk(
-        p.portal!.post('/auth/login', { username: p.username, password: p.password }),
-        'sign in again',
-      );
+    for (const [name, p] of this.people) {
+      if (p.sso) await this.ssoSignInTo(p.portal!, name);
+      else
+        await this.expectOk(
+          p.portal!.post('/auth/login', { username: p.username, password: p.password }),
+          'sign in again',
+        );
+    }
+  }
+
+  /** `person` signs in with Acme ID in `portal`, and lands in the portal. */
+  async ssoSignInTo(portal: Portal, person: string) {
+    (await this.acmeId()).next = this.acmeIdentityOf(person);
+    const end = await this.follow(portal, '/auth/oidc/start');
+    if (end.url.pathname !== '/') throw new Error(`${person} did not sign in with Acme ID: ${end.url.href}`);
   }
 
   /** Moves core's clock ahead; the portals sign in again, as their sessions time out. */
@@ -1342,6 +1354,29 @@ export class SynoikiaWorld extends QuickPickleWorld {
     const portal = await this.portal(username, password);
     const p = { id: created.id as string, username, password, portal };
     this.people.set(person, p);
+    return p;
+  }
+
+  /** An SSO account that the admin made for the person's address, signed in once with Acme ID in their own browser. */
+  async ssoUser(person: string, roleName: string) {
+    const known = this.people.get(person);
+    if (known) return known;
+    const settings = (await this.expectOk(this.admin.get('/api/settings'), 'read settings')) as {
+      oidc: { enabled?: boolean } | null;
+    };
+    await this.setUpAcmeId();
+    const roleId = await this.role(roleName);
+    const username = `${person.replace(/\s+/g, '')}@acme.example`;
+    const created = await this.expectOk(
+      this.admin.post('/api/users', { username, kind: 'sso', oidcEmail: username, roleId }),
+      'create SSO account',
+    );
+    const portal = await this.portalBrowser();
+    const p = { id: created.id as string, username, password: '', sso: true, portal };
+    this.people.set(person, p);
+    await this.ssoSignInTo(portal, person);
+    // The account exists now; single sign-on stays as the scenario had it.
+    if (!settings.oidc?.enabled) await this.setUpAcmeId({ enabled: false });
     return p;
   }
 

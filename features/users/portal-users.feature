@@ -21,6 +21,14 @@ Feature: Users in the portal
       When the admin opens the user list
       Then the portal shows why the user list did not load
 
+  Rule: An SSO account gets no password on the user list
+
+    Scenario: The user list offers no password for user 12
+      Given the admin set up single sign-on with "Acme ID"
+      And user 12 has an SSO account with the role "family"
+      When the admin opens the user list
+      Then the row of user 12 shows "SSO" and offers no "Set password"
+
   Rule: Row actions ask in a dialog, and Cancel puts the focus back
 
     Scenario: Disabling user 12 asks first and ends their sessions

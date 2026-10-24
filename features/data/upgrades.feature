@@ -10,3 +10,15 @@ Feature: Upgrades
       And the admin made the user "user15@acme.example"
       When core restarts
       Then the admin still has the user "user15@acme.example" with the role "family", and the instance "tasks"
+
+  Rule: An upgrade keeps Acme ID for a user who had a password and a link
+
+    Scenario: User 30 keeps only Acme ID after the upgrade
+      Given user 30 had a password and a linked Acme ID before the upgrade
+      When the server starts on the new release
+      Then user 30 signs in with Acme ID, and their old password no longer signs in
+
+    Scenario: The upgrade is in the audit log
+      Given user 30 had a password and a linked Acme ID before the upgrade
+      When the server starts on the new release
+      Then the audit log says that the upgrade removed the password of user 30, because the account signs in with Acme ID

@@ -15,30 +15,26 @@ export async function profile(world: PortalWorld) {
   await seen(world.page.getByText('Signed in as'));
 }
 
-async function linkFromProfile(world: PortalWorld, label: string) {
-  await seen(world.page.getByRole('heading', { name: 'My profile', level: 1 }));
-  await world.page.getByRole('link', { name: `Link ${label}` }).click();
-}
+// ── an SSO account (ADR-0025) ──
 
-// ── single sign-on ──
-
-When('the admin links {string} from their profile', async (world: PortalWorld, label: string) => {
-  await profile(world);
-  await linkFromProfile(world, label);
+Given('user 12 has an SSO account with the role {string}', async (world: PortalWorld, role: string) => {
+  await world.ssoUser('user 12', { name: role });
 });
 
-Given(
-  'the admin set up single sign-on with {string}, and linked their account to it',
+When('user 12 opens their profile', async (world: PortalWorld) => {
+  await world.openAs('user 12', '/profile');
+  await seen(world.page.getByRole('heading', { name: 'My profile', level: 1 }));
+  await seen(world.page.getByText('Signed in as'));
+});
+
+Then(
+  'the profile shows no password and no two-factor setup, and says that user 12 signs in with {string}',
   async (world: PortalWorld, label: string) => {
-    await world.singleSignOn(label);
-    await world.linkSingleSignOn();
+    await seen(world.page.getByText(`You sign in with ${label}.`));
+    expect(await world.page.getByRole('heading', { name: 'Password' }).count()).toBe(0);
+    expect(await world.page.getByRole('heading', { name: 'Two-factor authentication' }).count()).toBe(0);
   },
 );
-
-When('user 12 links the same Acme ID account from their profile', async (world: PortalWorld) => {
-  await world.openAs('user 12', '/profile');
-  await linkFromProfile(world, 'Acme ID');
-});
 
 Then('the profile says {string}', async (world: PortalWorld, text: string) => {
   await seen(world.page.getByText(text));

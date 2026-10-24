@@ -178,7 +178,13 @@ export function registerSystemRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
   app.post('/api/users', async (c) => {
     const body = await readJson(
       c,
-      z.object({ username: z.string(), password: z.string().optional(), roleId: z.string().min(1) }),
+      z.object({
+        username: z.string(),
+        password: z.string().optional(),
+        roleId: z.string().min(1),
+        kind: z.enum(['local', 'sso']).optional(),
+        oidcEmail: z.string().max(320).optional(),
+      }),
     );
     return c.json(await ctx.users.create(body, actor(c)), 201);
   });
@@ -260,10 +266,10 @@ export function registerSystemRoutes(app: Hono<AdminEnv>, ctx: AppContext) {
     if (section === 'security' && typeof body.defaultRoleId === 'string') ctx.roles.get(body.defaultRoleId);
     // Disabling local login locks everyone out unless SSO works and someone can use it (ADR-0008).
     if (section === 'security' && body.disableLocalLogin === true) {
-      if (!ctx.oidc.isEnabled() || !ctx.users.hasOidcLinkedUser()) {
+      if (!ctx.oidc.isEnabled() || !ctx.users.hasSsoAccount()) {
         throw new ValidationError(
           'oidc_required',
-          'Enable OIDC and link at least one user before disabling local login',
+          'Enable OIDC and add at least one SSO account before disabling local login',
         );
       }
     }

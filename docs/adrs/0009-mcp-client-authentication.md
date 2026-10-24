@@ -72,7 +72,7 @@ The admin enables a set of methods (Settings → Client auth, `mcp.clientAuth`).
 - **Authorization-server metadata** (RFC 8414) is at `/.well-known/oauth-authorization-server`.
 - **Dynamic client registration** (RFC 7591) is at `/oauth/register`. The admin can turn it off (`oauth.allowDynamicRegistration`), and then registers clients on the Clients & Tokens page.
 - **`/oauth/authorize`** uses the authorization code flow with PKCE `S256`. The `resource` parameter (RFC 8707) must give one or more endpoint URLs.
-- The user signs in on the MCP listener page with a password and TOTP, or with OIDC. With `security.requireTotp`, core refuses a user without TOTP.
+- The user signs in on the MCP listener page with a password and TOTP, or with OIDC. With `security.requireTotp`, core refuses a local account without TOTP.
 - The consent page shows the client name, the host of its redirect URI, and the requested endpoints of the user's role. The user can remove endpoints and selects the access ceiling.
 - **`/oauth/token`.** Access tokens are opaque, stored as hashes, and valid for 1 hour by default. Their audience is the granted resources.
 - Refresh tokens change at each use, with a sliding window of 30 days by default. If core sees a used refresh token again, it revokes the full token family.

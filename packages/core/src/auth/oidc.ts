@@ -54,13 +54,12 @@ export type OidcSettings = z.infer<typeof OidcSettingsSchema>;
 
 // The state key also signs other payloads, so a verified token must still have this shape.
 const OidcStateSchema = z.object({
-  purpose: z.enum(['admin_login', 'admin_link', 'mcp_login']),
+  purpose: z.enum(['admin_login', 'mcp_login']),
   verifier: z.string(),
   state: z.string(),
   nonce: z.string(),
   redirectUri: z.url({ protocol: /^https?$/ }),
   returnTo: z.string().optional(),
-  userId: z.string().optional(),
 });
 export type OidcState = z.infer<typeof OidcStateSchema>;
 export type OidcPurpose = OidcState['purpose'];
@@ -194,7 +193,7 @@ export class OidcService {
   }
 
   /** Returns the IdP URL to redirect to and a signed state token to keep in a short-lived cookie. */
-  async begin(input: { purpose: OidcPurpose; redirectUri: string; returnTo?: string; userId?: string }) {
+  async begin(input: { purpose: OidcPurpose; redirectUri: string; returnTo?: string }) {
     const config = await this.configuration();
     const settings = this.getSettings()!;
     const verifier = oidc.randomPKCECodeVerifier();
@@ -205,7 +204,6 @@ export class OidcService {
       nonce: oidc.randomNonce(),
       redirectUri: input.redirectUri,
       returnTo: input.returnTo,
-      userId: input.userId,
     };
     const url = oidc.buildAuthorizationUrl(config, {
       redirect_uri: input.redirectUri,
@@ -263,18 +261,26 @@ export class OidcService {
 
   isAllowed(identity: OidcIdentity): boolean {
     const policy = this.getSettings()?.allowPolicy;
-    if (!policy || policyIsEmpty(policy)) return true; // linking alone decides
+    if (!policy || policyIsEmpty(policy)) return true; // the SSO accounts alone decide
     if (policy.subjects.includes(identity.subject)) return true;
     if (identity.email && emailAllowed(policy.emails, identity.email)) return true;
     if (policy.group && identity.groups.includes(policy.group)) return true;
     return false;
   }
 
-  /** The local user for a sign-in (linked, or new with auto-provision); null when not allowed or linked. */
+  /** The SSO account of a sign-in (ADR-0025): bound by subject, made by an admin for the verified address, or new
+   * with auto-provision; null when not allowed. A local account never signs in here. */
   async resolveUser(users: UserService, identity: OidcIdentity): Promise<UserRow | null> {
     if (!this.isAllowed(identity)) return null;
-    const linked = users.byOidc(identity.issuer, identity.subject);
-    if (linked) return linked.disabled ? null : linked;
+    const bound = users.byOidc(identity.issuer, identity.subject);
+    if (bound) return bound.kind === 'sso' && !bound.disabled ? bound : null;
+    const waiting = identity.email ? users.byPendingOidcEmail(identity.email) : undefined;
+    // A disabled account takes no identity, so nobody can claim it while the admin keeps it off.
+    if (waiting?.disabled) return null;
+    if (waiting && !waiting.oidcSubject) {
+      users.bindOidc(waiting.id, identity.issuer, identity.subject);
+      return users.get(waiting.id);
+    }
     const settings = this.getSettings();
     // Auto-provisioning is self-registration: it needs a default role too (ADR-0010).
     if (!settings?.autoProvision || policyIsEmpty(settings.allowPolicy) || !users.registrationOpen()) return null;
@@ -283,8 +289,8 @@ export class OidcService {
       'user';
     let username = base.length >= 2 ? base : `${base}-sso`;
     for (let i = 2; users.byUsernameInsensitive(username); i++) username = `${base}-${i}`;
-    const created = await users.register({ username }, 'oidc');
-    users.linkOidc(created.id, identity.issuer, identity.subject);
+    const created = await users.register({ username, kind: 'sso' }, 'oidc');
+    users.bindOidc(created.id, identity.issuer, identity.subject);
     return users.get(created.id);
   }
 }
